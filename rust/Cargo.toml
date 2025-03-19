@@ -1,0 +1,40 @@
+[package]
+name = "mcp-agent"
+version = "0.1.0"
+edition = "2024"
+authors = ["Ralf Anton Beier <ralf_beier@me.com>"]
+description = "Pure Rust implementation of Model Context Protocol (MCP) agent framework"
+license = "Apache-2.0"
+
+[dependencies]
+# Core dependencies for Phase 1
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_bytes = "0.11"
+thiserror = "1.0"
+async-trait = "0.1"
+futures = "0.3"
+tokio = { version = "1.0", features = ["full", "test-util"] }
+
+# Zero-copy and performance
+bytes = "1.5"
+bytemuck = { version = "1.14", features = ["derive"] }
+
+# Validation and type safety
+validator = { version = "0.16", features = ["derive"] }
+chrono = { version = "0.4", features = ["serde"] }
+
+# Testing
+proptest = "1.3"
+tokio-test = "0.4"
+criterion = "0.5"
+uuid = { version = "1.7", features = ["v4", "serde"] }
+
+[dev-dependencies]
+tokio-test = "0.4"
+proptest = "1.3"
+criterion = "0.5"
+
+[features]
+default = []
+test-util = ["tokio/test-util"]

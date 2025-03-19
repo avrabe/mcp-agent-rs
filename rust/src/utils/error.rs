@@ -1,40 +1,36 @@
 use thiserror::Error;
 
+/// A specialized Result type for MCP operations.
+pub type McpResult<T> = Result<T, McpError>;
+
 /// Represents errors that can occur during MCP protocol operations.
 #[derive(Debug, Error)]
 pub enum McpError {
-    /// Error related to protocol operations, with a descriptive message.
-    #[error("Protocol error: {0}")]
-    Protocol(String),
-
-    /// Error related to message validation, with a descriptive message.
-    #[error("Validation error: {0}")]
-    Validation(String),
-
-    /// Error during serialization or deserialization of messages.
-    #[error("Serialization error: {0}")]
-    Serialization(#[from] serde_json::Error),
-
-    /// Input/Output error during message transmission.
-    #[error("IO error: {0}")]
-    Io(#[from] std::io::Error),
-
-    /// Error indicating an invalid or malformed message.
+    /// Invalid message format or content
     #[error("Invalid message: {0}")]
     InvalidMessage(String),
 
-    /// Error indicating a timeout during an operation.
-    #[error("Timeout: {0}")]
-    Timeout(String),
+    /// IO error during read/write operations
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
 
-    /// Error indicating a connection-related issue.
-    #[error("Connection error: {0}")]
-    Connection(String),
+    /// UTF-8 encoding/decoding error
+    #[error("UTF-8 error: {0}")]
+    Utf8(#[from] std::str::Utf8Error),
 
-    /// Error indicating an authentication failure.
-    #[error("Authentication error: {0}")]
-    Authentication(String),
-}
+    /// Connection failed
+    #[error("Connection failed: {0}")]
+    ConnectionFailed(String),
 
-/// A specialized Result type for MCP operations.
-pub type McpResult<T> = Result<T, McpError>; 
+    /// Not connected to the remote endpoint
+    #[error("Not connected")]
+    NotConnected,
+
+    /// Operation timed out
+    #[error("Operation timed out")]
+    Timeout,
+
+    /// Feature not implemented
+    #[error("Feature not implemented")]
+    NotImplemented,
+} 

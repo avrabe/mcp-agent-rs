@@ -18,5 +18,9 @@ pub mod mcp;
 /// Utility modules for error handling and common functionality.
 pub mod utils;
 
-pub use mcp::{Message, MessageId, MessageType, Priority, McpProtocol, MessageEnvelope};
-pub use utils::error::{McpError, McpResult};
+pub use mcp::{
+    connection::{Connection, ConnectionConfig},
+    error::{McpError, RetryConfig, CircuitBreaker},
+    protocol::McpProtocol,
+    types::{Message, MessageType, Priority},
+};

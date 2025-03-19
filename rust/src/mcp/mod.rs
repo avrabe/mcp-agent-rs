@@ -1,8 +1,24 @@
-mod types;
-mod protocol;
+//! MCP (Message Control Protocol) implementation
+//! 
+//! This module provides a robust implementation of the Message Control Protocol,
+//! including connection management, error handling, and message processing.
 
-pub use types::{Message, MessageId, MessageType, Priority, MessageHeader, MessageEnvelope};
+/// Connection management module
+pub mod connection;
+
+/// Error handling and recovery mechanisms
+pub mod error;
+
+/// Protocol implementation and message handling
+pub mod protocol;
+
+/// Core types and data structures
+pub mod types;
+
+pub use connection::{Connection, ConnectionConfig};
+pub use error::{McpError, RetryConfig, CircuitBreaker};
 pub use protocol::McpProtocol;
+pub use types::{Message, MessageId, MessageType, Priority};
 
 #[cfg(test)]
 mod tests {

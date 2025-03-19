@@ -36,6 +36,8 @@ pub enum MessageType {
     Event,
     /// An error message indicating a failure
     Error,
+    /// A keep-alive message to maintain connection
+    KeepAlive,
 }
 
 /// Priority level of a message
@@ -144,13 +146,11 @@ pub struct MessageHeader {
     /// Priority as a u8
     pub priority: u8,
     /// Padding to ensure proper alignment
-    _pad: [u8; 6],
-    /// Timestamp as Unix timestamp
-    pub timestamp: i64,
+    _pad: [u8; 2],
     /// Payload length
     pub payload_len: u32,
-    /// Additional padding to ensure proper alignment
-    _pad2: [u8; 4],
+    /// Timestamp as Unix timestamp
+    pub timestamp: i64,
 }
 
 /// Represents a message envelope for zero-copy operations
@@ -158,6 +158,10 @@ pub struct MessageHeader {
 pub struct MessageEnvelope<'a> {
     /// The message header
     pub header: MessageHeader,
+    /// The message ID
+    pub id: &'a MessageId,
+    /// The correlation ID, if any
+    pub correlation_id: Option<&'a MessageId>,
     /// The message payload as bytes
     pub payload: &'a [u8],
 }
@@ -169,11 +173,12 @@ impl<'a> MessageEnvelope<'a> {
             header: MessageHeader {
                 message_type: message.message_type as u8,
                 priority: message.priority as u8,
-                _pad: [0; 6],
-                timestamp: message.timestamp.timestamp(),
+                _pad: [0; 2],
                 payload_len: message.payload.len() as u32,
-                _pad2: [0; 4],
+                timestamp: message.timestamp.timestamp(),
             },
+            id: &message.id,
+            correlation_id: message.correlation_id.as_ref(),
             payload: &message.payload,
         }
     }
@@ -181,12 +186,13 @@ impl<'a> MessageEnvelope<'a> {
     /// Attempts to create a message from the envelope
     pub fn to_message(&self) -> Result<Message, crate::utils::error::McpError> {
         Ok(Message {
-            id: MessageId::new(uuid::Uuid::new_v4().to_string()),
+            id: MessageId::new(self.id.as_str().to_string()),
             message_type: match self.header.message_type {
                 0 => MessageType::Request,
                 1 => MessageType::Response,
                 2 => MessageType::Event,
                 3 => MessageType::Error,
+                4 => MessageType::KeepAlive,
                 _ => return Err(crate::utils::error::McpError::InvalidMessage("Invalid message type".into())),
             },
             priority: match self.header.priority {
@@ -198,7 +204,7 @@ impl<'a> MessageEnvelope<'a> {
             },
             timestamp: DateTime::from_timestamp(self.header.timestamp, 0)
                 .ok_or_else(|| crate::utils::error::McpError::InvalidMessage("Invalid timestamp".into()))?,
-            correlation_id: None,
+            correlation_id: self.correlation_id.map(|id| MessageId::new(id.as_str().to_string())),
             payload: self.payload.to_vec(),
             metadata: None,
         })

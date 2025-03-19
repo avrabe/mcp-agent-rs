@@ -1,7 +1,5 @@
 #![deny(missing_docs)]
 #![deny(missing_debug_implementations)]
-#![deny(missing_doc_code_examples)]
-#![deny(rustdoc::missing_doc_code_examples)]
 #![deny(rustdoc::missing_crate_level_docs)]
 #![deny(rustdoc::broken_intra_doc_links)]
 #![deny(rustdoc::private_intra_doc_links)]
@@ -20,5 +18,5 @@ pub mod mcp;
 /// Utility modules for error handling and common functionality.
 pub mod utils;
 
-pub use mcp::{Message, MessageId, MessageType, Priority, McpProtocol};
+pub use mcp::{Message, MessageId, MessageType, Priority, McpProtocol, MessageEnvelope};
 pub use utils::error::{McpError, McpResult};

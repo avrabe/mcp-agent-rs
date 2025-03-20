@@ -20,7 +20,8 @@ pub mod utils;
 
 pub use mcp::{
     connection::{Connection, ConnectionConfig},
-    error::{McpError, RetryConfig, CircuitBreaker},
     protocol::McpProtocol,
     types::{Message, MessageType, Priority},
 };
+
+pub use utils::error::{McpError, McpResult};

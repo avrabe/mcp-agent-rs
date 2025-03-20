@@ -1,212 +1,259 @@
 use serde::{Deserialize, Serialize};
-use std::borrow::Cow;
-use validator::Validate;
-use chrono::{DateTime, Utc};
+use std::fmt;
+use uuid::Uuid;
 
-/// Represents a unique identifier for MCP messages
-#[derive(Debug, Clone, Hash, Eq, PartialEq, Serialize, Deserialize)]
-pub struct MessageId(Cow<'static, str>);
+use crate::utils::error::{McpError, McpResult};
+
+/// A unique identifier for a message
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct MessageId(pub [u8; 16]);
 
 impl MessageId {
-    /// Creates a new MessageId with a static string
-    pub const fn new_static(id: &'static str) -> Self {
-        Self(Cow::Borrowed(id))
+    /// Creates a new message ID
+    pub fn new() -> Self {
+        let uuid = Uuid::new_v4();
+        Self(uuid.into_bytes())
     }
 
-    /// Creates a new MessageId with an owned string
-    pub fn new(id: String) -> Self {
-        Self(Cow::Owned(id))
+    /// Creates a message ID from raw bytes
+    pub fn from_bytes(bytes: [u8; 16]) -> Self {
+        Self(bytes)
     }
 
-    /// Returns the string representation of the ID
-    pub fn as_str(&self) -> &str {
-        &self.0
+    /// Returns the string representation of the message ID
+    pub fn to_string(&self) -> String {
+        Uuid::from_bytes(self.0).to_string()
     }
 }
 
-/// Type of message in the MCP protocol
+/// The type of message being sent
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
 pub enum MessageType {
-    /// A request message that expects a response
+    /// A request message
     Request,
-    /// A response message to a previous request
+    /// A response message
     Response,
-    /// An event message that doesn't expect a response
+    /// An event message
     Event,
-    /// An error message indicating a failure
-    Error,
-    /// A keep-alive message to maintain connection
+    /// A keep-alive message
     KeepAlive,
 }
 
-/// Priority level of a message
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Priority {
-    /// Low priority message, can be processed when convenient
-    Low,
-    /// Normal priority message, should be processed in order
-    Normal,
-    /// High priority message, should be processed before normal messages
-    High,
-    /// Critical priority message, should be processed immediately
-    Critical,
+impl MessageType {
+    /// Converts a u8 to a MessageType
+    pub fn from_u8(value: u8) -> Option<Self> {
+        match value {
+            0 => Some(Self::Request),
+            1 => Some(Self::Response),
+            2 => Some(Self::Event),
+            3 => Some(Self::KeepAlive),
+            _ => None,
+        }
+    }
+
+    /// Converts a MessageType to a u8
+    pub fn as_u8(&self) -> u8 {
+        match self {
+            Self::Request => 0,
+            Self::Response => 1,
+            Self::Event => 2,
+            Self::KeepAlive => 3,
+        }
+    }
 }
 
-/// Represents the core MCP message structure
-#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
-pub struct Message {
-    /// Unique identifier for the message
-    pub id: MessageId,
-    
-    /// Type of the message
+/// The priority level of a message
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Priority {
+    /// Low priority messages
+    Low,
+    /// Normal priority messages
+    Normal,
+    /// High priority messages
+    High,
+}
+
+impl Priority {
+    /// Converts a u8 to a Priority
+    pub fn from_u8(value: u8) -> Option<Self> {
+        match value {
+            0 => Some(Self::Low),
+            1 => Some(Self::Normal),
+            2 => Some(Self::High),
+            _ => None,
+        }
+    }
+
+    /// Converts a Priority to a u8
+    pub fn as_u8(&self) -> u8 {
+        match self {
+            Self::Low => 0,
+            Self::Normal => 1,
+            Self::High => 2,
+        }
+    }
+}
+
+/// The header of a message containing metadata
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MessageHeader {
+    /// The unique identifier of the message
+    pub id: String,
+    /// The type of message
     pub message_type: MessageType,
-    
-    /// Priority of the message
+    /// The priority level of the message
     pub priority: Priority,
-    
-    /// Timestamp of message creation
-    pub timestamp: DateTime<Utc>,
-    
-    /// Optional correlation ID for request-response patterns
-    pub correlation_id: Option<MessageId>,
-    
-    /// The actual payload of the message
-    #[serde(with = "serde_bytes")]
+    /// The size of the payload in bytes
+    pub payload_size: u32,
+    /// The ID of the message this is replying to (if any)
+    pub correlation_id: Option<String>,
+    /// Any error information (if any)
+    pub error: Option<McpError>,
+}
+
+/// The envelope containing the header and payload of a message
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MessageEnvelope {
+    /// The header of the message
+    pub header: MessageHeader,
+    /// The payload of the message
     pub payload: Vec<u8>,
-    
-    /// Optional metadata associated with the message
-    pub metadata: Option<serde_json::Value>,
+}
+
+/// A complete message with header information and payload
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Message {
+    /// The unique identifier of the message
+    pub id: MessageId,
+    /// The type of message
+    pub message_type: MessageType,
+    /// The priority level of the message
+    pub priority: Priority,
+    /// The payload of the message
+    pub payload: Vec<u8>,
+    /// The ID of the message this is replying to (if any)
+    pub correlation_id: Option<MessageId>,
+    /// Any error information (if any)
+    pub error: Option<McpError>,
 }
 
 impl Message {
-    /// Creates a new message with the given parameters
+    /// Creates a new message
     pub fn new(
-        id: MessageId,
         message_type: MessageType,
         priority: Priority,
         payload: Vec<u8>,
         correlation_id: Option<MessageId>,
-        metadata: Option<serde_json::Value>,
+        error: Option<McpError>,
     ) -> Self {
         Self {
-            id,
+            id: MessageId::new(),
             message_type,
             priority,
-            timestamp: Utc::now(),
-            correlation_id,
             payload,
-            metadata,
+            correlation_id,
+            error,
         }
     }
 
-    /// Creates a request message
-    pub fn request(id: MessageId, payload: Vec<u8>) -> Self {
-        Self::new(id, MessageType::Request, Priority::Normal, payload, None, None)
+    /// Creates a new request message
+    pub fn request(payload: Vec<u8>, priority: Priority) -> Self {
+        Self::new(MessageType::Request, priority, payload, None, None)
     }
 
-    /// Creates a response message
-    pub fn response(id: MessageId, correlation_id: MessageId, payload: Vec<u8>) -> Self {
-        Self::new(
-            id,
-            MessageType::Response,
-            Priority::Normal,
-            payload,
-            Some(correlation_id),
-            None,
-        )
+    /// Creates a new response message
+    pub fn response(payload: Vec<u8>, request_id: MessageId) -> Self {
+        Self::new(MessageType::Response, Priority::Normal, payload, Some(request_id), None)
     }
 
-    /// Creates an event message
-    pub fn event(id: MessageId, payload: Vec<u8>) -> Self {
-        Self::new(id, MessageType::Event, Priority::Normal, payload, None, None)
+    /// Creates a new event message
+    pub fn event(payload: Vec<u8>) -> Self {
+        Self::new(MessageType::Event, Priority::Normal, payload, None, None)
     }
 
-    /// Creates an error message
-    pub fn error(id: MessageId, correlation_id: Option<MessageId>, error: String) -> Self {
-        let payload = serde_json::to_vec(&error).unwrap_or_default();
-        Self::new(
-            id,
-            MessageType::Error,
-            Priority::High,
-            payload,
-            correlation_id,
-            None,
-        )
+    /// Creates a new keep-alive message
+    pub fn keep_alive() -> Self {
+        Self::new(MessageType::KeepAlive, Priority::Low, vec![], None, None)
     }
-}
 
-/// Represents a message header for zero-copy operations
-#[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-#[repr(C, align(8))]  // Ensure 8-byte alignment
-pub struct MessageHeader {
-    /// Message type as a u8
-    pub message_type: u8,
-    /// Priority as a u8
-    pub priority: u8,
-    /// Padding to ensure proper alignment
-    _pad: [u8; 2],
-    /// Payload length
-    pub payload_len: u32,
-    /// Timestamp as Unix timestamp
-    pub timestamp: i64,
-}
+    /// Creates a new error response
+    pub fn error(error: McpError, request_id: Option<MessageId>) -> Self {
+        Self::new(MessageType::Response, Priority::High, vec![], request_id, Some(error))
+    }
 
-/// Represents a message envelope for zero-copy operations
-#[derive(Debug)]
-pub struct MessageEnvelope<'a> {
-    /// The message header
-    pub header: MessageHeader,
-    /// The message ID
-    pub id: &'a MessageId,
-    /// The correlation ID, if any
-    pub correlation_id: Option<&'a MessageId>,
-    /// The message payload as bytes
-    pub payload: &'a [u8],
-}
-
-impl<'a> MessageEnvelope<'a> {
-    /// Creates a new message envelope from a message
-    pub fn from_message(message: &'a Message) -> Self {
-        Self {
+    /// Converts a message to an envelope
+    pub fn to_envelope(&self) -> McpResult<MessageEnvelope> {
+        Ok(MessageEnvelope {
             header: MessageHeader {
-                message_type: message.message_type as u8,
-                priority: message.priority as u8,
-                _pad: [0; 2],
-                payload_len: message.payload.len() as u32,
-                timestamp: message.timestamp.timestamp(),
+                id: self.id.to_string(),
+                message_type: self.message_type,
+                priority: self.priority,
+                payload_size: self.payload.len() as u32,
+                correlation_id: self.correlation_id.as_ref().map(|id| id.to_string()),
+                error: self.error.clone(),
             },
-            id: &message.id,
-            correlation_id: message.correlation_id.as_ref(),
-            payload: &message.payload,
-        }
+            payload: self.payload.clone(),
+        })
     }
 
-    /// Attempts to create a message from the envelope
-    pub fn to_message(&self) -> Result<Message, crate::utils::error::McpError> {
-        Ok(Message {
-            id: MessageId::new(self.id.as_str().to_string()),
-            message_type: match self.header.message_type {
-                0 => MessageType::Request,
-                1 => MessageType::Response,
-                2 => MessageType::Event,
-                3 => MessageType::Error,
-                4 => MessageType::KeepAlive,
-                _ => return Err(crate::utils::error::McpError::InvalidMessage("Invalid message type".into())),
-            },
-            priority: match self.header.priority {
-                0 => Priority::Low,
-                1 => Priority::Normal,
-                2 => Priority::High,
-                3 => Priority::Critical,
-                _ => return Err(crate::utils::error::McpError::InvalidMessage("Invalid priority".into())),
-            },
-            timestamp: DateTime::from_timestamp(self.header.timestamp, 0)
-                .ok_or_else(|| crate::utils::error::McpError::InvalidMessage("Invalid timestamp".into()))?,
-            correlation_id: self.correlation_id.map(|id| MessageId::new(id.as_str().to_string())),
-            payload: self.payload.to_vec(),
-            metadata: None,
+    /// Converts an envelope to a message
+    pub fn from_envelope(envelope: MessageEnvelope) -> McpResult<Self> {
+        let id_bytes = Uuid::parse_str(&envelope.header.id)
+            .map_err(|_| McpError::InvalidMessage("Invalid UUID format".to_string()))?
+            .into_bytes();
+            
+        let correlation_id = if let Some(id_str) = envelope.header.correlation_id {
+            let id_bytes = Uuid::parse_str(&id_str)
+                .map_err(|_| McpError::InvalidMessage("Invalid correlation ID UUID format".to_string()))?
+                .into_bytes();
+            Some(MessageId(id_bytes))
+        } else {
+            None
+        };
+        
+        Ok(Self {
+            id: MessageId(id_bytes),
+            message_type: envelope.header.message_type,
+            priority: envelope.header.priority,
+            payload: envelope.payload,
+            correlation_id,
+            error: envelope.header.error,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_message_id_generation() {
+        let id = MessageId::new();
+        assert!(!id.to_string().is_empty());
+        assert_eq!(id.to_string().len(), 36);
+    }
+
+    #[test]
+    fn test_message_conversion() {
+        let message = Message::new(
+            MessageType::Request,
+            Priority::Normal,
+            vec![1, 2, 3],
+            None,
+            None,
+        );
+
+        let envelope = message.to_envelope().unwrap();
+        assert_eq!(envelope.header.id, message.id.to_string());
+        assert_eq!(envelope.header.message_type, MessageType::Request);
+        assert_eq!(envelope.header.priority, Priority::Normal);
+        assert_eq!(envelope.header.payload_size, 3);
+        assert_eq!(envelope.payload, vec![1, 2, 3]);
+
+        let reconstructed = Message::from_envelope(envelope).unwrap();
+        assert_eq!(reconstructed.id.to_string(), message.id.to_string());
+        assert_eq!(reconstructed.message_type, MessageType::Request);
+        assert_eq!(reconstructed.priority, Priority::Normal);
+        assert_eq!(reconstructed.payload, vec![1, 2, 3]);
     }
 } 

@@ -30,6 +30,9 @@ tokio-test = "0.4"
 criterion = "0.5"
 uuid = { version = "1.7", features = ["v4", "serde"] }
 
+# Added from the code block
+serde_yaml = "0.9"
+
 [dev-dependencies]
 tokio-test = "0.4"
 proptest = "1.3"

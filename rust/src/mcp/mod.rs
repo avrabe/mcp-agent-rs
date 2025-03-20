@@ -6,46 +6,46 @@
 /// Connection management module
 pub mod connection;
 
-/// Error handling and recovery mechanisms
-pub mod error;
-
 /// Protocol implementation and message handling
 pub mod protocol;
+
+/// Server registry module
+pub mod server_registry;
 
 /// Core types and data structures
 pub mod types;
 
-pub use connection::{Connection, ConnectionConfig};
-pub use error::{McpError, RetryConfig, CircuitBreaker};
+pub use connection::Connection;
 pub use protocol::McpProtocol;
-pub use types::{Message, MessageId, MessageType, Priority};
+pub use server_registry::{ServerRegistry, ServerSettings, McpSettings};
+pub use types::{Message, MessageId, MessageType, Priority, MessageHeader, MessageEnvelope};
+pub use crate::utils::error::{McpError, McpResult};
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use proptest::prelude::*;
+    use uuid::Uuid;
 
     proptest! {
         #[test]
         fn test_message_serialization_roundtrip(
-            id in "[a-zA-Z0-9-]+",
             message_type in 0..4u8,
-            priority in 0..4u8,
+            priority in 0..3u8,
             payload in ".*",
         ) {
+            // Create a message with the new API
             let message = Message::new(
-                MessageId::new(id),
                 match message_type {
                     0 => MessageType::Request,
                     1 => MessageType::Response,
                     2 => MessageType::Event,
-                    _ => MessageType::Error,
+                    _ => MessageType::KeepAlive,
                 },
                 match priority {
                     0 => Priority::Low,
                     1 => Priority::Normal,
-                    2 => Priority::High,
-                    _ => Priority::Critical,
+                    _ => Priority::High,
                 },
                 payload.as_bytes().to_vec(),
                 None,
@@ -55,7 +55,8 @@ mod tests {
             let serialized = serde_json::to_vec(&message).unwrap();
             let deserialized: Message = serde_json::from_slice(&serialized).unwrap();
             
-            assert_eq!(message.id.as_str(), deserialized.id.as_str());
+            // Compare string representations of UUIDs
+            assert_eq!(message.id.to_string(), deserialized.id.to_string());
             assert_eq!(message.message_type, deserialized.message_type);
             assert_eq!(message.priority, deserialized.priority);
             assert_eq!(message.payload, deserialized.payload);

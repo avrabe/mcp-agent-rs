@@ -21,11 +21,16 @@ pub mod utils;
 /// Configuration management
 pub mod config;
 
+/// Telemetry and observability with OpenTelemetry integration
+pub mod telemetry;
+
 pub use mcp::{
-    connection::{Connection, ConnectionConfig},
     protocol::McpProtocol,
     types::{Message, MessageType, Priority},
-    server_manager::{ServerManager, ServerSettings, ServerAuthSettings},
+    executor::Executor,
 };
 
 pub use utils::error::{McpError, McpResult};
+
+/// Re-export telemetry types and functions for easier access
+pub use telemetry::{TelemetryConfig, init_telemetry, shutdown_telemetry, span_duration};

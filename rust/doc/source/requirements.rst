@@ -80,7 +80,7 @@
 .. need:: REQ_009
    :id: REQ_009
    :title: Monitoring Integration
-   :status: open
+   :status: partial
    :type: req
    :tags: observability;telemetry
    :links: REQ_007;REQ_011

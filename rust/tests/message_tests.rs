@@ -1,4 +1,4 @@
-use mcp_agent::mcp::{Message, MessageType, Priority};
+use mcp_agent::mcp::types::{Message, MessageType, Priority};
 
 #[test]
 fn test_message_creation() {

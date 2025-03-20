@@ -111,3 +111,7 @@ path = "examples/state_machine_workflow/main.rs"
 [[example]]
 name = "saga_workflow"
 path = "examples/saga_workflow/main.rs"
+
+[[example]]
+name = "event_driven_workflow"
+path = "examples/event_driven_workflow/main.rs"

@@ -14,29 +14,41 @@ serde_bytes = "0.11"
 thiserror = "1.0"
 async-trait = "0.1"
 futures = "0.3"
-tokio = { version = "1.0", features = ["full", "test-util"] }
+tokio = { version = "1.17", features = ["full"] }
 
 # Zero-copy and performance
-bytes = "1.5"
+bytes = "1.1"
 bytemuck = { version = "1.14", features = ["derive"] }
 
 # Validation and type safety
 validator = { version = "0.16", features = ["derive"] }
 chrono = { version = "0.4", features = ["serde"] }
 
+# Random number generation
+rand = "0.8"
+
 # Testing
 proptest = "1.3"
 tokio-test = "0.4"
 criterion = "0.5"
-uuid = { version = "1.7", features = ["v4", "serde"] }
+uuid = { version = "1.0", features = ["v4", "serde"] }
 
 # Added from the code block
 serde_yaml = "0.9"
+
+# Added from the code block
+log = "0.4"
+env_logger = "0.9"
+rustyline = "9.1"
 
 [dev-dependencies]
 tokio-test = "0.4"
 proptest = "1.3"
 criterion = "0.5"
+
+[[example]]
+name = "simple_client"
+path = "../examples/simple_mcp_example/simple_client.rs"
 
 [features]
 default = []

@@ -1,6 +1,6 @@
 use mcp_agent::mcp::agent::Agent;
 use mcp_agent::mcp::types::{Message, MessageType, Priority};
-use mcp_agent::utils::error::McpResult;
+use mcp_agent::utils::error::{McpError, McpResult};
 use rustyline::error::ReadlineError;
 use rustyline::Editor;
 use serde_json::json;
@@ -177,8 +177,14 @@ fn connect_command(agent: &Agent, args: &[&str]) -> McpResult<CommandResult> {
     tokio::task::block_in_place(|| {
         let rt = tokio::runtime::Handle::current();
         rt.block_on(async {
-            // Use the test server connection for simplicity
-            agent.connect_to_test_server(server_id, address).await?;
+            #[cfg(feature = "server_registry")]
+            {
+                agent.connect_to_test_server(server_id, address).await?;
+            }
+            #[cfg(not(feature = "server_registry"))]
+            {
+                agent.connect(server_id, address).await?;
+            }
             Ok(CommandResult::Success(format!("Connected to {}", server_id)))
         })
     })
@@ -209,13 +215,21 @@ fn list_command(agent: &Agent, _args: &[&str]) -> McpResult<CommandResult> {
         let rt = tokio::runtime::Handle::current();
         rt.block_on(async {
             let count = agent.connection_count().await;
-            let connections = agent.list_connections().await;
             
-            if connections.is_empty() {
-                Ok(CommandResult::Success("No active connections".to_string()))
-            } else {
-                let conn_list = connections.join(", ");
-                Ok(CommandResult::Success(format!("Connected to {} servers: {}", count, conn_list)))
+            #[cfg(feature = "server_registry")]
+            {
+                let connections = agent.list_connections().await;
+                if connections.is_empty() {
+                    Ok(CommandResult::Success("No active connections".to_string()))
+                } else {
+                    let conn_list = connections.join(", ");
+                    Ok(CommandResult::Success(format!("Connected to {} servers: {}", count, conn_list)))
+                }
+            }
+            
+            #[cfg(not(feature = "server_registry"))]
+            {
+                Ok(CommandResult::Success(format!("Connected to {} servers", count)))
             }
         })
     })
@@ -290,33 +304,35 @@ fn stream_command(agent: &Agent, args: &[&str]) -> McpResult<CommandResult> {
     }
 
     let function = args[0];
-    let payload = args[1..].join(" ");
+    let args_str = args[1];
     
-    // Try to parse the payload as JSON, or use it as a string value
-    let json_args = match serde_json::from_str::<serde_json::Value>(&payload) {
-        Ok(value) => value,
-        Err(_) => json!({ "value": payload }),
-    };
+    let json_args = serde_json::from_str(args_str)
+        .map_err(|e| McpError::InvalidMessage(format!("Invalid JSON: {}", e)))?;
 
     tokio::task::block_in_place(|| {
         let rt = tokio::runtime::Handle::current();
         rt.block_on(async {
-            let mut rx = agent.execute_task_stream(function, json_args, None).await?;
-            
-            println!("Streaming results:");
-            let mut count = 0;
-            while let Some(result) = rx.recv().await {
-                count += 1;
-                if result.is_success() {
-                    let value = result.success_value().unwrap_or(&json!(null));
-                    println!("[{}] {}", count, value);
-                } else {
-                    let error = result.error_message().unwrap_or("Unknown error");
-                    println!("[{}] Error: {}", count, error);
+            #[cfg(feature = "server_registry")]
+            {
+                let mut rx = agent.execute_task_stream(function, json_args, None).await?;
+                
+                println!("Streaming results from {}:", function);
+                let mut count = 0;
+                while let Some(result) = rx.recv().await {
+                    count += 1;
+                    println!("Result {}: {:?}", count, result);
                 }
+                
+                Ok(CommandResult::Success(format!("Received {} results", count)))
             }
             
-            Ok(CommandResult::Success(format!("Received {} results", count)))
+            #[cfg(not(feature = "server_registry"))]
+            {
+                // For non-server-registry version, just use execute_task
+                let result = agent.execute_task(function, json_args, None).await?;
+                println!("Result: {:?}", result);
+                Ok(CommandResult::Success("Task executed successfully".to_string()))
+            }
         })
     })
 }

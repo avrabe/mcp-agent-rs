@@ -1,4 +1,4 @@
-use mcp_agent::mcp::{McpProtocol, Message, MessageId, MessageType, Priority};
+use mcp_agent::mcp::{McpProtocol, Message, MessageId, Priority};
 use std::io::Cursor;
 
 #[tokio::test]

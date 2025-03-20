@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncRead, AsyncWrite, AsyncReadExt};
 use tokio::net::TcpStream;
 use tokio::process::{Child, Command, ChildStdin, ChildStdout};
 use tokio::sync::Mutex;
@@ -575,6 +575,16 @@ impl Connection {
     /// Check if the connection is connected
     pub fn is_connected(&self) -> bool {
         self.state == ConnectionState::Connected
+    }
+
+    /// Returns the remote address of the connection
+    pub fn addr(&self) -> &str {
+        &self.addr
+    }
+    
+    /// Disconnects from the remote endpoint (alias for close)
+    pub async fn disconnect(&mut self) -> McpResult<()> {
+        self.close().await
     }
 }
 

@@ -1,5 +1,4 @@
-use mcp_agent::mcp::{Message, MessageType, Priority, MessageId, McpResult, McpError};
-use mcp_agent::mcp::types::{MessageEnvelope};
+use mcp_agent::mcp::{Message, MessageType, Priority};
 
 #[test]
 fn test_message_creation() {

@@ -1,7 +1,5 @@
 use mcp_agent::mcp::executor::{AsyncioExecutor, ExecutorConfig, Signal, TaskResult};
-use mcp_agent::utils::error::McpError;
 use serde_json::json;
-use std::time::Duration;
 
 #[tokio::test]
 async fn test_executor_config() {

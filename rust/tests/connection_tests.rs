@@ -1,14 +1,12 @@
 use mcp_agent::mcp::{
-    connection::{Connection, ConnectionState, StreamType},
+    connection::StreamType,
     types::{Message, MessageType, Priority},
 };
 use mcp_agent::utils::error::{McpError, McpResult};
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::io::{self, duplex, AsyncReadExt, AsyncWriteExt};
+use tokio::io::{duplex};
 use tokio::sync::Mutex;
-use tokio::time::timeout;
 
 const TEST_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -18,8 +16,7 @@ async fn test_stream_type_implementation() -> McpResult<()> {
     let (client, server) = duplex(1024);
     
     // Create a test structure to verify the StreamType implementation
-    let tcp_stream = tokio::net::TcpStream::connect("127.0.0.1:80").await
-        .or_else(|_| Err(McpError::ConnectionFailed("Test TCP stream failed".to_string())))?;
+    let tcp_stream = tokio::net::TcpStream::connect("127.0.0.1:80").await.map_err(|_| McpError::ConnectionFailed("Test TCP stream failed".to_string()))?;
     
     let tcp_type = StreamType::Tcp(Arc::new(Mutex::new(tcp_stream)));
     assert!(matches!(tcp_type, StreamType::Tcp(_)));

@@ -30,6 +30,7 @@ criterion = "0.5.1"
 proptest = "1.4.0"
 rand = "0.8.5"
 tokio-test = "0.4.3"
+colored = "2.1.0"
 
 # Added OpenTelemetry dependencies
 tracing = "0.1.40"

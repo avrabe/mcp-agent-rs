@@ -5,12 +5,28 @@
 //! - Custom metrics collection and export
 //! - Span instrumentation with detailed context
 //! - Resource and attributes management
+//! - Alerting system based on telemetry thresholds
 
 use std::collections::HashMap;
 use tracing::{span, Span, Level, field};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::EnvFilter;
+
+// Re-export alerts module
+pub mod alerts;
+use alerts::{AlertingSystem, AlertingConfig, AlertDefinition};
+
+// Global alerting system
+use std::sync::OnceLock;
+static ALERTING_SYSTEM: OnceLock<AlertingSystem> = OnceLock::new();
+
+/// Get the global alerting system instance
+pub fn alerting() -> &'static AlertingSystem {
+    ALERTING_SYSTEM.get_or_init(|| {
+        AlertingSystem::new(AlertingConfig::default())
+    })
+}
 
 /// Configuration for the telemetry system
 #[derive(Debug, Clone)]
@@ -33,6 +49,8 @@ pub struct TelemetryConfig {
     pub sampling_ratio: f64,
     /// Custom attributes to add to all spans
     pub attributes: HashMap<String, String>,
+    /// Alerting system configuration
+    pub alerting_config: Option<AlertingConfig>,
 }
 
 impl Default for TelemetryConfig {
@@ -47,12 +65,25 @@ impl Default for TelemetryConfig {
             enable_metrics: true,
             sampling_ratio: 1.0,
             attributes: HashMap::new(),
+            alerting_config: None,
         }
     }
 }
 
 /// Initialize telemetry based on the configured features and options
 pub fn init_telemetry(config: TelemetryConfig) -> Result<(), Box<dyn std::error::Error>> {
+    // Initialize alerting system
+    if let Some(alerting_config) = &config.alerting_config {
+        let _ = ALERTING_SYSTEM.get_or_init(|| {
+            AlertingSystem::new(alerting_config.clone())
+        });
+    } else {
+        // Initialize with default configuration
+        let _ = ALERTING_SYSTEM.get_or_init(|| {
+            AlertingSystem::new(AlertingConfig::default())
+        });
+    }
+    
     #[cfg(any(feature = "telemetry-jaeger", feature = "telemetry-otlp"))]
     {
         if config.enable_tracing {
@@ -289,17 +320,23 @@ pub fn span_duration(name: &'static str) -> impl Drop {
     Guard { name, start }
 }
 
-/// Add metrics to the current span
+/// Add metrics to the current span and process alerting
 ///
-/// This function adds metrics to the current span for later collection.
+/// This function adds metrics to the current span for later collection
+/// and processes them through the alerting system to trigger alerts
+/// if any thresholds are exceeded.
 pub fn add_metrics(metrics: HashMap<&'static str, f64>) {
-    for (key, value) in metrics {
+    // Record metrics in tracing
+    for (key, value) in metrics.iter() {
         tracing::info!(
             target: "metrics",
             metric = key,
             value = value,
         );
     }
+    
+    // Process alerts based on metrics
+    alerting().process_metrics(&metrics);
 }
 
 /// Create a new trace context

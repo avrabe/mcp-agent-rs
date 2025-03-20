@@ -33,4 +33,21 @@ pub use mcp::{
 pub use utils::error::{McpError, McpResult};
 
 /// Re-export telemetry types and functions for easier access
-pub use telemetry::{TelemetryConfig, init_telemetry, shutdown_telemetry, span_duration};
+pub use telemetry::{
+    TelemetryConfig, 
+    init_telemetry, 
+    shutdown_telemetry, 
+    span_duration,
+    alerting,
+};
+
+/// Re-export alerting system types for easier access
+pub use telemetry::alerts::{
+    AlertingSystem,
+    AlertingConfig,
+    AlertDefinition,
+    AlertSeverity,
+    AlertOperator,
+    Alert,
+    TerminalAlertOptions,
+};

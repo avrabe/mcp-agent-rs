@@ -91,3 +91,7 @@ path = "examples/orchestrator_workflow/main.rs"
 [[example]]
 name = "router_workflow"
 path = "examples/router_workflow/main.rs"
+
+[[example]]
+name = "pipeline_workflow"
+path = "examples/pipeline_workflow/main.rs"

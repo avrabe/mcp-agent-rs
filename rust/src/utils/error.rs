@@ -1,6 +1,7 @@
 use thiserror::Error;
 use serde::{Deserialize, Serialize};
 use std::io;
+use std::str::FromStr;
 
 /// Result type for MCP operations
 pub type McpResult<T> = Result<T, McpError>;
@@ -78,10 +79,18 @@ pub enum McpError {
     Join(String),
 }
 
-impl McpError {
-    /// Convert a string to an error
-    pub fn from_str(s: &str) -> Self {
-        McpError::InvalidMessage(s.to_string())
+// Implement FromStr for McpError to replace the custom from_str method
+impl FromStr for McpError {
+    type Err = McpError;
+    
+    /// Converts a string to an error
+    /// 
+    /// # Errors
+    /// 
+    /// This function never returns an error - it always converts the input string
+    /// to an InvalidMessage error.
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(McpError::InvalidMessage(s.to_string()))
     }
 }
 

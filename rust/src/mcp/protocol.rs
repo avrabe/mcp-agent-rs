@@ -1,368 +1,214 @@
-use std::io::{Read, Write};
 use bytes::BytesMut;
-use tokio::io::{AsyncRead, AsyncWrite, AsyncReadExt, AsyncWriteExt};
-use crate::utils::error::McpResult;
-use crate::mcp::types::{Message, MessageEnvelope, MessageHeader, MessageId};
+use tokio::sync::{mpsc, broadcast};
+use tokio::time::Duration;
+use std::sync::Arc;
+use tokio::sync::Mutex;
+use std::collections::HashMap;
 
-/// The size of the message header in bytes
-const HEADER_SIZE: usize = std::mem::size_of::<MessageHeader>();
+use crate::mcp::types::{Message, MessageId, MessageType, Priority};
+use crate::utils::error::{McpError, McpResult};
 
-/// Protocol implementation for MCP message handling.
-#[derive(Debug, Clone)]
+/// Protocol implementation for MCP (Management Control Protocol).
+/// Handles message serialization, deserialization, and communication.
+#[derive(Debug)]
 pub struct McpProtocol {
-    /// Buffer for reading messages
+    /// Buffer for reading incoming data
     read_buffer: BytesMut,
-    /// Buffer for reading message IDs
-    id_buffer: String,
+    /// Buffer for storing message IDs
+    id_buffer: BytesMut,
+    /// Channel sender for outgoing messages
+    message_tx: Option<broadcast::Sender<Message>>,
+    /// Channel receiver for incoming messages
+    message_rx: Option<broadcast::Receiver<Message>>,
+    /// Map of pending requests awaiting responses
+    pending_requests: Arc<Mutex<HashMap<String, mpsc::Sender<Message>>>>,
+    /// Timeout duration for requests
+    request_timeout: Duration,
 }
 
-impl Default for McpProtocol {
-    fn default() -> Self {
-        Self::new()
+impl Clone for McpProtocol {
+    /// Creates a clone of the protocol instance.
+    /// This allows sharing the protocol between different tasks while maintaining
+    /// separate buffers but shared state for pending requests.
+    fn clone(&self) -> Self {
+        Self {
+            read_buffer: BytesMut::with_capacity(self.read_buffer.capacity()),
+            id_buffer: BytesMut::with_capacity(self.id_buffer.capacity()),
+            message_tx: self.message_tx.clone(),
+            message_rx: self.message_tx.as_ref().map(|tx| tx.subscribe()),
+            pending_requests: self.pending_requests.clone(),
+            request_timeout: self.request_timeout,
+        }
     }
 }
 
 impl McpProtocol {
-    /// Creates a new MCP protocol handler with a default buffer size.
+    /// Creates a new instance of the MCP Protocol handler.
+    /// 
+    /// Initializes buffers and data structures for managing message communication.
     pub fn new() -> Self {
         Self {
-            read_buffer: BytesMut::with_capacity(4096),
-            id_buffer: String::with_capacity(36),
+            read_buffer: BytesMut::with_capacity(1024),
+            id_buffer: BytesMut::with_capacity(16),
+            message_tx: None,
+            message_rx: None,
+            pending_requests: Arc::new(Mutex::new(HashMap::new())),
+            request_timeout: Duration::from_secs(30),
         }
     }
 
-    /// Validates the message header
-    fn validate_header(header: &MessageHeader) -> McpResult<()> {
-        // Check message type
-        if header.message_type > 3 {
-            return Err(crate::utils::error::McpError::InvalidMessage("Invalid message type".into()));
-        }
-
-        // Check priority
-        if header.priority > 3 {
-            return Err(crate::utils::error::McpError::InvalidMessage("Invalid priority".into()));
-        }
-
-        // Check payload length (max 16MB)
-        if header.payload_len == 0 || header.payload_len > 16 * 1024 * 1024 {
-            return Err(crate::utils::error::McpError::InvalidMessage("Invalid payload length".into()));
-        }
-
-        // Check timestamp (must be within reasonable range)
-        let now = chrono::Utc::now().timestamp();
-        let max_future = now + 60; // Allow up to 1 minute in the future
-        let min_past = now - 60 * 60 * 24 * 365; // Allow up to 1 year in the past
-        if header.timestamp < min_past || header.timestamp > max_future {
-            return Err(crate::utils::error::McpError::InvalidMessage("Invalid timestamp".into()));
-        }
-
-        Ok(())
-    }
-
-    /// Writes a message to the given writer
-    pub fn write_message<W: Write>(&self, writer: &mut W, message: &Message) -> McpResult<()> {
-        let envelope = MessageEnvelope::from_message(message);
+    /// Writes a message to a stream asynchronously
+    pub async fn write_message_async<W>(&self, stream: &mut W, message: &Message) -> McpResult<()>
+    where
+        W: tokio::io::AsyncWrite + Unpin,
+    {
+        use tokio::io::AsyncWriteExt;
         
-        // Write header
-        let header_bytes = bytemuck::bytes_of(&envelope.header);
-        writer.write_all(header_bytes)?;
+        let mut buffer = BytesMut::new();
         
-        // Write message ID length and bytes
-        let id_bytes = envelope.id.as_str().as_bytes();
-        writer.write_all(&(id_bytes.len() as u32).to_le_bytes())?;
-        writer.write_all(id_bytes)?;
-
+        // Write message type
+        buffer.extend_from_slice(&[message.message_type as u8]);
+        
+        // Write priority
+        buffer.extend_from_slice(&[message.priority as u8]);
+        
+        // Write message ID (16 bytes)
+        buffer.extend_from_slice(&message.id.0);
+        
         // Write correlation ID if present
-        if let Some(correlation_id) = envelope.correlation_id {
-            writer.write_all(&[1u8])?; // Has correlation ID
-            let correlation_id_bytes = correlation_id.as_str().as_bytes();
-            writer.write_all(&(correlation_id_bytes.len() as u32).to_le_bytes())?;
-            writer.write_all(correlation_id_bytes)?;
-        } else {
-            writer.write_all(&[0u8])?; // No correlation ID
+        let has_correlation_id = message.correlation_id.is_some();
+        buffer.extend_from_slice(&[has_correlation_id as u8]);
+        if let Some(correlation_id) = &message.correlation_id {
+            buffer.extend_from_slice(&correlation_id.0);
+        }
+        
+        // Write error if present
+        let has_error = message.error.is_some();
+        buffer.extend_from_slice(&[has_error as u8]);
+        if let Some(error) = &message.error {
+            // Write error code and message
+            match error {
+                McpError::Custom { code, message } => {
+                    // Write error code
+                    buffer.extend_from_slice(&(*code as u32).to_be_bytes());
+                    
+                    // Write error message
+                    let error_msg = message.as_bytes();
+                    buffer.extend_from_slice(&(error_msg.len() as u32).to_be_bytes());
+                    buffer.extend_from_slice(error_msg);
+                },
+                _ => {
+                    // For other error types, use code 0 and error's Display implementation
+                    buffer.extend_from_slice(&(0u32).to_be_bytes());
+                    
+                    let error_str = error.to_string();
+                    let error_bytes = error_str.as_bytes();
+                    buffer.extend_from_slice(&(error_bytes.len() as u32).to_be_bytes());
+                    buffer.extend_from_slice(error_bytes);
+                }
+            }
         }
         
         // Write payload
-        writer.write_all(envelope.payload)?;
+        buffer.extend_from_slice(&(message.payload.len() as u32).to_be_bytes());
+        buffer.extend_from_slice(&message.payload);
+        
+        // Write to stream
+        stream.write_all(&buffer).await?;
+        stream.flush().await?;
         
         Ok(())
     }
 
-    /// Reads a message from the given reader
-    pub fn read_message<R: Read>(&mut self, reader: &mut R) -> McpResult<Message> {
-        // Read header
-        let mut header_bytes = [0u8; HEADER_SIZE];
-        if let Err(e) = reader.read_exact(&mut header_bytes) {
-            return Err(crate::utils::error::McpError::InvalidMessage(format!("Failed to read header: {}", e)));
-        }
+    /// Reads a message from a stream asynchronously
+    pub async fn read_message_async<R>(&self, stream: &mut R) -> McpResult<Message>
+    where
+        R: tokio::io::AsyncRead + Unpin,
+    {
+        use tokio::io::AsyncReadExt;
         
-        let header = bytemuck::pod_read_unaligned::<MessageHeader>(&header_bytes);
-        Self::validate_header(&header)?;
+        let mut message_type_buf = [0u8; 1];
+        stream.read_exact(&mut message_type_buf).await?;
+        let message_type = match message_type_buf[0] {
+            0 => MessageType::Request,
+            1 => MessageType::Response,
+            2 => MessageType::Event,
+            3 => MessageType::KeepAlive,
+            _ => return Err(McpError::InvalidMessage("Invalid message type".to_string())),
+        };
         
-        // Read message ID length and bytes
-        let mut len_bytes = [0u8; 4];
-        if let Err(e) = reader.read_exact(&mut len_bytes) {
-            return Err(crate::utils::error::McpError::InvalidMessage(format!("Failed to read ID length: {}", e)));
-        }
-        let id_len = u32::from_le_bytes(len_bytes) as usize;
+        let mut priority_buf = [0u8; 1];
+        stream.read_exact(&mut priority_buf).await?;
+        let priority = match priority_buf[0] {
+            0 => Priority::Low,
+            1 => Priority::Normal,
+            2 => Priority::High,
+            _ => return Err(McpError::InvalidMessage("Invalid priority".to_string())),
+        };
         
-        // Validate ID length
-        if id_len > 1024 {
-            return Err(crate::utils::error::McpError::InvalidMessage("Message ID too long".into()));
-        }
+        // Read message ID
+        let mut id_buf = [0u8; 16];
+        stream.read_exact(&mut id_buf).await?;
+        let id = MessageId(id_buf);
         
-        self.id_buffer.clear();
-        self.id_buffer.reserve(id_len);
-        let mut id_bytes = vec![0u8; id_len];
-        if let Err(e) = reader.read_exact(&mut id_bytes) {
-            return Err(crate::utils::error::McpError::InvalidMessage(format!("Failed to read ID: {}", e)));
-        }
-        
-        if let Err(e) = std::str::from_utf8(&id_bytes) {
-            return Err(crate::utils::error::McpError::InvalidMessage(format!("Invalid UTF-8 in ID: {}", e)));
-        }
-        self.id_buffer.push_str(std::str::from_utf8(&id_bytes)?);
-        let message_id = MessageId::new(self.id_buffer.clone());
-
         // Read correlation ID if present
-        let mut has_correlation_id = [0u8];
-        if let Err(e) = reader.read_exact(&mut has_correlation_id) {
-            return Err(crate::utils::error::McpError::InvalidMessage(format!("Failed to read correlation ID flag: {}", e)));
-        }
-
-        let correlation_id = if has_correlation_id[0] == 1 {
-            let mut len_bytes = [0u8; 4];
-            if let Err(e) = reader.read_exact(&mut len_bytes) {
-                return Err(crate::utils::error::McpError::InvalidMessage(format!("Failed to read correlation ID length: {}", e)));
-            }
-            let correlation_id_len = u32::from_le_bytes(len_bytes) as usize;
-
-            // Validate correlation ID length
-            if correlation_id_len > 1024 {
-                return Err(crate::utils::error::McpError::InvalidMessage("Correlation ID too long".into()));
-            }
-
-            let mut correlation_id_bytes = vec![0u8; correlation_id_len];
-            if let Err(e) = reader.read_exact(&mut correlation_id_bytes) {
-                return Err(crate::utils::error::McpError::InvalidMessage(format!("Failed to read correlation ID: {}", e)));
-            }
-
-            if let Err(e) = std::str::from_utf8(&correlation_id_bytes) {
-                return Err(crate::utils::error::McpError::InvalidMessage(format!("Invalid UTF-8 in correlation ID: {}", e)));
-            }
-            Some(MessageId::new(std::str::from_utf8(&correlation_id_bytes)?.to_string()))
+        let mut has_correlation_id_buf = [0u8; 1];
+        stream.read_exact(&mut has_correlation_id_buf).await?;
+        let has_correlation_id = has_correlation_id_buf[0] == 1;
+        
+        let correlation_id = if has_correlation_id {
+            let mut correlation_id_buf = [0u8; 16];
+            stream.read_exact(&mut correlation_id_buf).await?;
+            Some(MessageId(correlation_id_buf))
+        } else {
+            None
+        };
+        
+        // Read error if present
+        let mut has_error_buf = [0u8; 1];
+        stream.read_exact(&mut has_error_buf).await?;
+        let has_error = has_error_buf[0] == 1;
+        
+        let error = if has_error {
+            // Read error code
+            let mut error_code_buf = [0u8; 4];
+            stream.read_exact(&mut error_code_buf).await?;
+            let error_code = u32::from_be_bytes(error_code_buf);
+            
+            // Read error message
+            let mut error_msg_len_buf = [0u8; 4];
+            stream.read_exact(&mut error_msg_len_buf).await?;
+            let error_msg_len = u32::from_be_bytes(error_msg_len_buf) as usize;
+            
+            let mut error_msg_buf = vec![0u8; error_msg_len];
+            stream.read_exact(&mut error_msg_buf).await?;
+            
+            let error_msg = String::from_utf8(error_msg_buf)
+                .map_err(|_| McpError::InvalidMessage("Invalid UTF-8 in error message".to_string()))?;
+                
+            Some(McpError::Custom { 
+                code: error_code,
+                message: error_msg 
+            })
         } else {
             None
         };
         
         // Read payload
-        let payload_len = header.payload_len as usize;
-        self.read_buffer.resize(payload_len, 0);
-        if let Err(e) = reader.read_exact(&mut self.read_buffer) {
-            return Err(crate::utils::error::McpError::InvalidMessage(format!("Failed to read payload: {}", e)));
-        }
+        let mut payload_len_buf = [0u8; 4];
+        stream.read_exact(&mut payload_len_buf).await?;
+        let payload_len = u32::from_be_bytes(payload_len_buf) as usize;
         
-        // Create envelope and convert to message
-        let envelope = MessageEnvelope {
-            header,
-            id: &message_id,
-            correlation_id: correlation_id.as_ref(),
-            payload: &self.read_buffer,
-        };
+        let mut payload = vec![0u8; payload_len];
+        stream.read_exact(&mut payload).await?;
         
-        envelope.to_message()
-    }
-
-    /// Writes a message asynchronously to the given writer
-    pub async fn write_message_async<W: AsyncWrite + Unpin>(
-        &self,
-        writer: &mut W,
-        message: &Message,
-    ) -> McpResult<()> {
-        let envelope = MessageEnvelope::from_message(message);
-        
-        // Write header
-        let header_bytes = bytemuck::bytes_of(&envelope.header);
-        writer.write_all(header_bytes).await?;
-        
-        // Write message ID length and bytes
-        let id_bytes = envelope.id.as_str().as_bytes();
-        writer.write_all(&(id_bytes.len() as u32).to_le_bytes()).await?;
-        writer.write_all(id_bytes).await?;
-
-        // Write correlation ID if present
-        if let Some(correlation_id) = envelope.correlation_id {
-            writer.write_all(&[1u8]).await?; // Has correlation ID
-            let correlation_id_bytes = correlation_id.as_str().as_bytes();
-            writer.write_all(&(correlation_id_bytes.len() as u32).to_le_bytes()).await?;
-            writer.write_all(correlation_id_bytes).await?;
-        } else {
-            writer.write_all(&[0u8]).await?; // No correlation ID
-        }
-        
-        // Write payload
-        writer.write_all(envelope.payload).await?;
-        
-        Ok(())
-    }
-
-    /// Reads a message asynchronously from the given reader
-    pub async fn read_message_async<R: AsyncRead + Unpin>(
-        &mut self,
-        reader: &mut R,
-    ) -> McpResult<Message> {
-        // Read header
-        let mut header_bytes = [0u8; HEADER_SIZE];
-        if let Err(e) = reader.read_exact(&mut header_bytes).await {
-            return Err(crate::utils::error::McpError::InvalidMessage(format!("Failed to read header: {}", e)));
-        }
-        
-        let header = bytemuck::pod_read_unaligned::<MessageHeader>(&header_bytes);
-        Self::validate_header(&header)?;
-        
-        // Read message ID length and bytes
-        let mut len_bytes = [0u8; 4];
-        if let Err(e) = reader.read_exact(&mut len_bytes).await {
-            return Err(crate::utils::error::McpError::InvalidMessage(format!("Failed to read ID length: {}", e)));
-        }
-        let id_len = u32::from_le_bytes(len_bytes) as usize;
-        
-        // Validate ID length
-        if id_len > 1024 {
-            return Err(crate::utils::error::McpError::InvalidMessage("Message ID too long".into()));
-        }
-        
-        self.id_buffer.clear();
-        self.id_buffer.reserve(id_len);
-        let mut id_bytes = vec![0u8; id_len];
-        if let Err(e) = reader.read_exact(&mut id_bytes).await {
-            return Err(crate::utils::error::McpError::InvalidMessage(format!("Failed to read ID: {}", e)));
-        }
-        
-        if let Err(e) = std::str::from_utf8(&id_bytes) {
-            return Err(crate::utils::error::McpError::InvalidMessage(format!("Invalid UTF-8 in ID: {}", e)));
-        }
-        self.id_buffer.push_str(std::str::from_utf8(&id_bytes)?);
-        let message_id = MessageId::new(self.id_buffer.clone());
-
-        // Read correlation ID if present
-        let mut has_correlation_id = [0u8];
-        if let Err(e) = reader.read_exact(&mut has_correlation_id).await {
-            return Err(crate::utils::error::McpError::InvalidMessage(format!("Failed to read correlation ID flag: {}", e)));
-        }
-
-        let correlation_id = if has_correlation_id[0] == 1 {
-            let mut len_bytes = [0u8; 4];
-            if let Err(e) = reader.read_exact(&mut len_bytes).await {
-                return Err(crate::utils::error::McpError::InvalidMessage(format!("Failed to read correlation ID length: {}", e)));
-            }
-            let correlation_id_len = u32::from_le_bytes(len_bytes) as usize;
-
-            // Validate correlation ID length
-            if correlation_id_len > 1024 {
-                return Err(crate::utils::error::McpError::InvalidMessage("Correlation ID too long".into()));
-            }
-
-            let mut correlation_id_bytes = vec![0u8; correlation_id_len];
-            if let Err(e) = reader.read_exact(&mut correlation_id_bytes).await {
-                return Err(crate::utils::error::McpError::InvalidMessage(format!("Failed to read correlation ID: {}", e)));
-            }
-
-            if let Err(e) = std::str::from_utf8(&correlation_id_bytes) {
-                return Err(crate::utils::error::McpError::InvalidMessage(format!("Invalid UTF-8 in correlation ID: {}", e)));
-            }
-            Some(MessageId::new(std::str::from_utf8(&correlation_id_bytes)?.to_string()))
-        } else {
-            None
-        };
-        
-        // Read payload
-        let payload_len = header.payload_len as usize;
-        self.read_buffer.resize(payload_len, 0);
-        if let Err(e) = reader.read_exact(&mut self.read_buffer).await {
-            return Err(crate::utils::error::McpError::InvalidMessage(format!("Failed to read payload: {}", e)));
-        }
-        
-        // Create envelope and convert to message
-        let envelope = MessageEnvelope {
-            header,
-            id: &message_id,
-            correlation_id: correlation_id.as_ref(),
-            payload: &self.read_buffer,
-        };
-        
-        envelope.to_message()
+        Ok(Message {
+            message_type,
+            priority,
+            id,
+            correlation_id,
+            error,
+            payload,
+        })
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::mcp::types::{MessageId, MessageType, Priority};
-
-    #[test]
-    fn test_message_roundtrip() {
-        let protocol = McpProtocol::new();
-        let message = Message::new(
-            MessageId::new("test-id".to_string()),
-            MessageType::Request,
-            Priority::Normal,
-            b"test payload".to_vec(),
-            None,
-            None,
-        );
-
-        let mut buffer = Vec::new();
-        protocol.write_message(&mut buffer, &message).unwrap();
-        
-        println!("Written buffer: {:?}", buffer);
-        println!("Written buffer length: {}", buffer.len());
-        println!("Header size: {}", HEADER_SIZE);
-        println!("ID length: {}", message.id.as_str().len());
-        println!("Payload length: {}", message.payload.len());
-        
-        let mut protocol = McpProtocol::new();
-        let read_message = protocol.read_message(&mut &buffer[..]).unwrap();
-        
-        println!("Original payload: {:?}", message.payload);
-        println!("Read payload: {:?}", read_message.payload);
-        
-        assert_eq!(message.id.as_str(), read_message.id.as_str());
-        assert_eq!(message.message_type, read_message.message_type);
-        assert_eq!(message.priority, read_message.priority);
-        assert_eq!(message.payload, read_message.payload);
-    }
-
-    #[tokio::test]
-    async fn test_async_message_roundtrip() {
-        let protocol = McpProtocol::new();
-        let message = Message::new(
-            MessageId::new("test-id".to_string()),
-            MessageType::Request,
-            Priority::Normal,
-            b"test payload".to_vec(),
-            None,
-            None,
-        );
-
-        let mut buffer = Vec::new();
-        protocol.write_message_async(&mut buffer, &message).await.unwrap();
-        
-        println!("Written buffer (async): {:?}", buffer);
-        println!("Written buffer length (async): {}", buffer.len());
-        println!("Header size: {}", HEADER_SIZE);
-        println!("ID length (async): {}", message.id.as_str().len());
-        println!("Payload length (async): {}", message.payload.len());
-        
-        let mut protocol = McpProtocol::new();
-        let read_message = protocol.read_message_async(&mut &buffer[..]).await.unwrap();
-        
-        println!("Original payload (async): {:?}", message.payload);
-        println!("Read payload (async): {:?}", read_message.payload);
-        
-        assert_eq!(message.id.as_str(), read_message.id.as_str());
-        assert_eq!(message.message_type, read_message.message_type);
-        assert_eq!(message.priority, read_message.priority);
-        assert_eq!(message.payload, read_message.payload);
-    }
-} 

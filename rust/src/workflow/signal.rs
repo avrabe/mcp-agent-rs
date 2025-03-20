@@ -58,6 +58,22 @@ impl WorkflowSignal {
         signal.workflow_id = Some(workflow_id.to_string());
         signal
     }
+
+    // Predefined signal constants
+    /// Interrupt signal name
+    pub const Interrupt: &'static str = "interrupt";
+    
+    /// Terminate signal name
+    pub const Terminate: &'static str = "terminate";
+    
+    /// Pause signal name
+    pub const Pause: &'static str = "pause";
+    
+    /// Resume signal name
+    pub const Resume: &'static str = "resume";
+    
+    /// Cancel signal name
+    pub const Cancel: &'static str = "cancel";
 }
 
 /// Registration of a signal handler
@@ -122,6 +138,15 @@ impl AsyncSignalHandler {
         Self {
             pending_signals: Arc::new(Mutex::new(HashMap::new())),
         }
+    }
+    
+    /// Create a new signal handler with predefined signal types
+    pub fn new_with_signals(signal_types: Vec<&str>) -> Self {
+        let handler = Self::new();
+        // Signal types are just registered for documentation
+        // The actual handling is done in the wait_for_signal method
+        debug!("Signal handler initialized with types: {:?}", signal_types);
+        handler
     }
 }
 

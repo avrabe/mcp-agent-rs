@@ -2,19 +2,18 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use async_trait::async_trait;
 use serde_json::json;
-use tokio::sync::Mutex;
 
-use mcp_agent::llm::{CompletionRequest, LlmClient, LlmMessage, MessageRole, OllamaClient};
-use mcp_agent::telemetry::init_telemetry;
+use mcp_agent::llm::types::{Message, MessageRole, CompletionRequest, Completion, LlmConfig, LlmClient};
+use mcp_agent::telemetry::{init_telemetry, TelemetryConfig};
 use mcp_agent::workflow::{
-    WorkflowEngine, WorkflowState, WorkflowResult, Workflow, WorkflowTask, TaskGroup,
-    execute_workflow,
+    WorkflowEngine, WorkflowState, WorkflowResult, Workflow, task,
+    execute_workflow, AsyncSignalHandler, WorkflowSignal,
 };
 
-/// A simple parallel workflow that summarizes different aspects of a text using LLM
+/// A parallel workflow that summarizes different aspects of a text
 struct ParallelSummarizationWorkflow {
     /// State of the workflow
     state: WorkflowState,
@@ -23,7 +22,7 @@ struct ParallelSummarizationWorkflow {
     engine: WorkflowEngine,
     
     /// LLM client
-    llm_client: Arc<OllamaClient>,
+    llm_client: Arc<MockLlmClient>,
     
     /// Text to summarize
     text: String,
@@ -34,7 +33,7 @@ struct ParallelSummarizationWorkflow {
 
 impl ParallelSummarizationWorkflow {
     /// Create a new parallel summarization workflow
-    pub fn new(engine: WorkflowEngine, llm_client: Arc<OllamaClient>, text: String, concurrency: usize) -> Self {
+    pub fn new(engine: WorkflowEngine, llm_client: Arc<MockLlmClient>, text: String, concurrency: usize) -> Self {
         let mut metadata = HashMap::new();
         metadata.insert("text_length".to_string(), json!(text.len()));
         metadata.insert("concurrency".to_string(), json!(concurrency));
@@ -50,138 +49,129 @@ impl ParallelSummarizationWorkflow {
             concurrency,
         }
     }
-    
-    /// Generate a task for a specific aspect of summarization
-    fn generate_summary_task(&self, aspect: &str) -> WorkflowTask<String> {
+
+    /// Create a task for a specific summary aspect
+    fn generate_summary_task(&self, aspect: &str) -> task::WorkflowTask<String> {
         let text = self.text.clone();
-        let aspect = aspect.to_string();
-        let llm_client = Arc::clone(&self.llm_client);
+        let client = Arc::clone(&self.llm_client);
+        let aspect_str = aspect.to_string();
         
-        WorkflowTask::new(&format!("summarize_{}", aspect), move || {
-            let text_clone = text.clone();
-            let aspect_clone = aspect.clone();
-            let llm_client_clone = Arc::clone(&llm_client);
+        task::task(&format!("summarize_{}", aspect), move || async move {
+            let (prompt, system_prompt) = match aspect_str.as_str() {
+                "key_points" => (
+                    format!("Extract the key points from this text:\n\n{}", text),
+                    "Extract only the most important key points from the text as a bulleted list. Be concise and focus on the main ideas."
+                ),
+                "sentiment" => (
+                    format!("Analyze the sentiment of this text:\n\n{}", text),
+                    "Analyze the sentiment of the text. Is it positive, negative, or neutral? Provide a brief explanation."
+                ),
+                "executive_summary" => (
+                    format!("Provide an executive summary of this text:\n\n{}", text),
+                    "Create a concise executive summary of the text in 2-3 paragraphs. Focus on the most important information and insights."
+                ),
+                "audience" => (
+                    format!("Who is the intended audience for this text?\n\n{}", text),
+                    "Determine the most likely intended audience for this text. Consider the tone, complexity, and subject matter."
+                ),
+                _ => (
+                    format!("Summarize this text:\n\n{}", text),
+                    "Provide a brief summary of the text."
+                ),
+            };
             
-            async move {
-                let prompt = match aspect_clone.as_str() {
-                    "key_points" => format!(
-                        "Extract the 3-5 most important key points from this text: {}", 
-                        text_clone
-                    ),
-                    "sentiment" => format!(
-                        "Analyze the sentiment of this text. Is it positive, negative, or neutral? Why? Text: {}", 
-                        text_clone
-                    ),
-                    "executive" => format!(
-                        "Create a 2-3 sentence executive summary of this text: {}", 
-                        text_clone
-                    ),
-                    "audience" => format!(
-                        "Who is the intended audience for this text? Explain why: {}", 
-                        text_clone
-                    ),
-                    _ => format!(
-                        "Summarize this text with focus on {}: {}", 
-                        aspect_clone, text_clone
-                    ),
-                };
-                
-                let request = CompletionRequest {
-                    model: llm_client_clone.config().model.clone(),
-                    messages: vec![
-                        LlmMessage::system("You are a helpful assistant that specializes in summarization."),
-                        LlmMessage::user(prompt),
-                    ],
-                    max_tokens: Some(300),
-                    temperature: Some(0.7),
-                    top_p: None,
-                    parameters: HashMap::new(),
-                };
-                
-                let completion = llm_client_clone.complete(request).await?;
-                Ok(completion.content)
-            }
+            let completion_request = CompletionRequest {
+                model: "mistral".to_string(),
+                messages: vec![
+                    Message {
+                        role: MessageRole::System,
+                        content: system_prompt.to_string(),
+                        metadata: None,
+                    },
+                    Message {
+                        role: MessageRole::User,
+                        content: prompt,
+                        metadata: None,
+                    },
+                ],
+                max_tokens: Some(500),
+                temperature: Some(0.7),
+                top_p: None,
+                parameters: HashMap::new(),
+            };
+            
+            let completion = client.complete(completion_request).await?;
+            Ok(completion.content)
         })
-        .with_timeout(Duration::from_secs(30))
     }
 }
 
 #[async_trait]
 impl Workflow for ParallelSummarizationWorkflow {
     async fn run(&mut self) -> Result<WorkflowResult> {
-        // Initialize the result
         let mut result = WorkflowResult::new();
         result.start();
         
         // Check if LLM is available
         if !self.llm_client.is_available().await? {
-            return Err(anyhow!("LLM is not available"));
+            self.state.set_error("LLM service is not available");
+            return Ok(WorkflowResult::failed("LLM service is not available"));
         }
+
+        self.state.set_status("processing");
         
-        // Update workflow state
-        self.update_status("processing").await;
-        
-        // Define the different aspects to summarize
+        // Define aspects to summarize
         let aspects = vec![
             "key_points",
-            "sentiment", 
-            "executive", 
+            "sentiment",
+            "executive_summary",
             "audience",
         ];
         
-        // Create tasks
-        let mut task_group = TaskGroup::new();
-        for aspect in &aspects {
-            task_group.add_task(self.generate_summary_task(aspect));
+        // Create task group for parallel execution
+        let task_count = self.concurrency.min(aspects.len());
+        
+        // Create tasks for each aspect
+        let mut tasks = Vec::with_capacity(task_count);
+        
+        for aspect in aspects.iter().take(task_count) {
+            tasks.push(self.generate_summary_task(aspect));
         }
         
-        // Execute tasks in parallel
-        let summaries = self.engine.execute_tasks(task_group).await;
+        let results = self.engine.execute_task_group(tasks).await?;
         
         // Process results
-        let mut summary_map = HashMap::new();
-        let mut failed_aspects = Vec::new();
+        let mut summaries = HashMap::new();
         
-        for (i, summary_result) in summaries.into_iter().enumerate() {
-            let aspect = aspects[i];
-            match summary_result {
-                Ok(summary) => {
-                    summary_map.insert(aspect.to_string(), json!(summary));
-                }
-                Err(e) => {
-                    failed_aspects.push(aspect);
-                    self.state.metadata.insert(
-                        format!("error_{}", aspect), 
-                        json!(e.to_string())
-                    );
-                }
+        for (i, summary) in results.iter().enumerate() {
+            if i < aspects.len() {
+                summaries.insert(aspects[i].to_string(), summary.clone());
             }
         }
         
-        // Update state with successful summary count
-        self.state.metadata.insert(
-            "successful_summaries".to_string(), 
-            json!(aspects.len() - failed_aspects.len())
-        );
+        // Update workflow state with results
+        self.state.set_metadata("successful_summaries", summaries.len());
+        
+        let failed_aspects: Vec<&str> = aspects.iter()
+            .take(task_count)
+            .enumerate()
+            .filter_map(|(i, &aspect)| {
+                if i >= results.len() || !summaries.contains_key(aspect) {
+                    Some(aspect)
+                } else {
+                    None
+                }
+            })
+            .collect();
         
         if !failed_aspects.is_empty() {
-            self.state.metadata.insert(
-                "failed_aspects".to_string(), 
-                json!(failed_aspects)
-            );
+            self.state.set_metadata("failed_aspects", failed_aspects.join(", "));
         }
         
-        // Set result and complete
-        result.value = Some(json!({
-            "summaries": summary_map,
-            "success_rate": (aspects.len() - failed_aspects.len()) as f32 / aspects.len() as f32,
-        }));
+        self.state.set_status("completed");
+        result.value = Some(json!(summaries));
         
         result.complete();
-        
-        // Update workflow state
-        self.update_status("completed").await;
-        
         Ok(result)
     }
     
@@ -194,65 +184,111 @@ impl Workflow for ParallelSummarizationWorkflow {
     }
 }
 
+/// A mock LLM client for testing
+struct MockLlmClient {
+    config: LlmConfig,
+}
+
+impl MockLlmClient {
+    fn new() -> Self {
+        Self {
+            config: LlmConfig {
+                model: "mock-model".to_string(),
+                api_url: "http://localhost:11434".to_string(),
+                api_key: None,
+                max_tokens: Some(500),
+                temperature: Some(0.7),
+                top_p: Some(0.9),
+                parameters: HashMap::new(),
+            },
+        }
+    }
+}
+
+#[async_trait]
+impl LlmClient for MockLlmClient {
+    async fn complete(&self, request: CompletionRequest) -> Result<Completion> {
+        // Simulate processing time
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        
+        // Extract the prompt from the request to generate a mock response
+        let prompt = if let Some(user_message) = request.messages.iter().find(|m| matches!(m.role, MessageRole::User)) {
+            &user_message.content
+        } else {
+            "Unknown prompt"
+        };
+        
+        // Generate a simple mock response based on the prompt
+        let response = format!("Mock response for: {}", prompt);
+        let prompt_len = prompt.len();
+        let response_len = response.len();
+        
+        Ok(Completion {
+            content: response,
+            model: Some(self.config.model.clone()),
+            prompt_tokens: Some(prompt_len as u32),
+            completion_tokens: Some(response_len as u32),
+            total_tokens: Some((prompt_len + response_len) as u32),
+            metadata: None,
+        })
+    }
+    
+    async fn is_available(&self) -> Result<bool> {
+        // Always available for the mock
+        Ok(true)
+    }
+    
+    fn config(&self) -> &LlmConfig {
+        &self.config
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     // Initialize telemetry
-    let _telemetry_guard = init_telemetry(None);
+    let _telemetry_guard = init_telemetry(TelemetryConfig {
+        service_name: "parallel_workflow".to_string(),
+        enable_console: true,
+        ..TelemetryConfig::default()
+    }).map_err(|e| anyhow::anyhow!("Failed to initialize telemetry: {}", e))?;
     
-    // Create Ollama client
-    let ollama_client = Arc::new(OllamaClient::new_with_defaults());
+    // Create LLM client
+    let client = Arc::new(MockLlmClient::new());
     
-    // Check if Ollama is available
-    if !ollama_client.is_available().await? {
-        eprintln!("Ollama is not available. Please make sure it's running.");
-        return Ok(());
-    }
+    // Create signal handler and workflow engine
+    let signal_handler = AsyncSignalHandler::new_with_signals(vec![
+        WorkflowSignal::Interrupt,
+        WorkflowSignal::Terminate,
+    ]);
     
-    // Create workflow engine
-    let engine = WorkflowEngine::new(None);
+    let engine = WorkflowEngine::new(signal_handler);
     
-    // Sample text to summarize
-    let text = "
-    The Model Context Protocol (MCP) is an open standard that enables seamless integration between different AI models, components, and applications. It provides a structured way for these systems to communicate, share context, and interoperate effectively. 
+    // Sample text about MCP to summarize
+    let text = "The Model Context Protocol (MCP) is a standardized protocol for communication between \
+    language models and their environments. It enables more structured, efficient, and transparent \
+    interactions with AI systems, allowing for better debugging, monitoring, and control. \
+    MCP defines a set of messages and operations that facilitate the exchange of information \
+    between a model and the environment, including context windows, tool use, and feedback. \
+    By using MCP, developers can create more reliable and explainable AI applications.";
     
-    MCP defines a consistent interface for sending messages, maintaining state, and handling errors across diverse AI systems. This standardization allows developers to build complex AI applications that can leverage multiple specialized components without tight coupling or vendor lock-in.
-    
-    Key benefits of MCP include improved modularity, easier testing and deployment, and the ability to swap out components as technology evolves. By establishing clear communication patterns, MCP helps orchestrate the interactions between models in multi-step reasoning processes, retrieval-augmented generation, and other advanced AI workflows.
-    
-    The protocol is designed to be language-agnostic, with implementations available in Python, JavaScript, and Rust. It supports both synchronous and asynchronous communication patterns, making it suitable for a wide range of application architectures.
-    ";
-    
-    // Create the workflow
+    // Create and execute the workflow
     let workflow = ParallelSummarizationWorkflow::new(
         engine,
-        ollama_client,
+        client,
         text.to_string(),
-        4 // Concurrent tasks
+        4, // Concurrency level
     );
     
-    // Execute the workflow
-    println!("Starting parallel summarization workflow...");
     let result = execute_workflow(workflow).await?;
     
-    // Print the results
-    if let Some(value) = result.value {
-        if let Some(summaries) = value.get("summaries") {
-            println!("\nSummaries:");
-            println!("==========");
-            
-            if let Some(summary_map) = summaries.as_object() {
-                for (aspect, summary) in summary_map {
-                    println!("\n{}: {}", aspect, summary.as_str().unwrap_or(""));
-                }
-            }
-        }
-        
-        if let Some(success_rate) = value.get("success_rate") {
-            println!("\nSuccess rate: {:.1}%", success_rate.as_f64().unwrap_or(0.0) * 100.0);
-        }
+    println!("\nWorkflow completed!");
+    if result.is_success() {
+        println!("\n=== Parallel Summarization Results ===\n");
+        println!("{}", result.output());
+        println!("\nSummaries: {}", result.metadata.get("successful_summaries").map_or("0", |v| v.as_str().unwrap_or("0")));
+    } else if let Some(error) = result.error() {
+        eprintln!("Workflow failed: {}", error);
     }
-    
-    println!("\nWorkflow completed in: {:?} ms", result.duration_ms().unwrap_or(0));
     
     Ok(())
 } 

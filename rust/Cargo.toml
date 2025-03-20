@@ -107,3 +107,7 @@ path = "examples/conditional_workflow/main.rs"
 [[example]]
 name = "state_machine_workflow"
 path = "examples/state_machine_workflow/main.rs"
+
+[[example]]
+name = "saga_workflow"
+path = "examples/saga_workflow/main.rs"

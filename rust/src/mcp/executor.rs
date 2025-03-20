@@ -2,29 +2,73 @@ use crate::utils::error::{McpError, McpResult};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 use tokio::time;
 use uuid::Uuid;
 use rand::Rng;
+use tracing::{debug, info, warn, error, instrument, trace_span, Span};
+
+use crate::telemetry;
+
+/// Default value for max_concurrent_tasks
+fn default_max_concurrent_tasks() -> usize {
+    10
+}
+
+/// Default value for default_timeout_secs
+fn default_timeout_secs() -> u64 {
+    60
+}
+
+/// Default value for max_timeout_secs
+fn default_max_timeout_secs() -> u64 {
+    3600
+}
+
+/// Default value for retry_attempts
+fn default_retry_attempts() -> usize {
+    3
+}
+
+/// Default value for retry_base_delay_ms
+fn default_retry_base_delay_ms() -> u64 {
+    100
+}
+
+/// Default value for retry_max_delay_ms
+fn default_retry_max_delay_ms() -> u64 {
+    10000
+}
 
 /// Configuration for an executor
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ExecutorConfig {
     /// Maximum number of concurrent tasks
+    #[serde(default = "default_max_concurrent_tasks")]
     pub max_concurrent_tasks: usize,
+    
     /// Default timeout for tasks in seconds
+    #[serde(default = "default_timeout_secs")]
     pub default_timeout_secs: u64,
+    
     /// Maximum timeout for tasks in seconds
+    #[serde(default = "default_max_timeout_secs")]
     pub max_timeout_secs: u64,
+    
     /// Number of retries for failed tasks
-    pub retry_attempts: u32,
+    #[serde(default = "default_retry_attempts")]
+    pub retry_attempts: usize,
+    
     /// Base delay between retries in milliseconds
+    #[serde(default = "default_retry_base_delay_ms")]
     pub retry_base_delay_ms: u64,
+    
     /// Maximum delay between retries in milliseconds
+    #[serde(default = "default_retry_max_delay_ms")]
     pub retry_max_delay_ms: u64,
 }
 
@@ -145,20 +189,29 @@ pub trait Executor: Send + Sync + 'static {
 }
 
 /// An executor that uses Tokio for async execution
-#[derive(Clone, Debug)]
+#[derive(Debug, Clone)]
 pub struct AsyncioExecutor {
-    /// Configuration for the executor
-    config: ExecutorConfig,
-    /// Task registry to track running tasks
-    tasks: Arc<Mutex<HashMap<String, JoinHandle<()>>>>,
+    /// Configuration
+    pub config: ExecutorConfig,
+    /// Tasks
+    tasks: Arc<Mutex<HashMap<String, tokio::task::JoinHandle<()>>>>,
+    /// Signals
+    signals: Arc<Mutex<HashMap<String, Signal>>>,
+    /// Signal receivers
+    signal_receivers: Arc<Mutex<HashMap<String, HashSet<String>>>>,
 }
 
 impl AsyncioExecutor {
-    /// Create a new executor with the given configuration
-    pub fn new(config: Option<ExecutorConfig>) -> Self {
+    /// Create a new AsyncIO executor
+    #[instrument(skip(config))]
+    pub fn new(config: impl Into<Option<ExecutorConfig>>) -> Self {
+        let config = config.into().unwrap_or_default();
+        debug!("Creating new AsyncioExecutor with config: {:?}", config);
         Self {
-            config: config.unwrap_or_default(),
+            config,
             tasks: Arc::new(Mutex::new(HashMap::new())),
+            signals: Arc::new(Mutex::new(HashMap::new())),
+            signal_receivers: Arc::new(Mutex::new(HashMap::new())),
         }
     }
     
@@ -192,44 +245,61 @@ impl AsyncioExecutor {
         tasks.remove(task_id);
     }
     
-    /// Cancel a task by its ID
-    /// 
-    /// # Panics
-    /// 
-    /// This method will panic if the internal mutex is poisoned.
+    /// Cancel a running task
+    #[instrument(skip(self), fields(task_id = %task_id))]
     pub fn cancel_task(&self, task_id: &str) -> McpResult<()> {
+        let _span_guard = telemetry::span_duration("cancel_task");
+        
+        let start = Instant::now();
         let mut tasks = self.tasks.lock().unwrap();
+        
         if let Some(handle) = tasks.remove(task_id) {
+            debug!("Cancelling task {}", task_id);
             handle.abort();
+            
+            let duration = start.elapsed();
+            
+            // Record metrics
+            let mut metrics = HashMap::new();
+            metrics.insert("task_cancellation_duration_ms", duration.as_millis() as f64);
+            metrics.insert("tasks_cancelled", 1.0);
+            metrics.insert("active_tasks", tasks.len() as f64);
+            telemetry::add_metrics(metrics);
+            
             Ok(())
         } else {
+            warn!("Failed to cancel task {}: not found", task_id);
             Err(McpError::Execution(format!("Task {} not found", task_id)))
         }
     }
     
     /// Check if a task is currently running
-    /// 
-    /// # Panics
-    /// 
-    /// This method will panic if the internal mutex is poisoned.
+    #[instrument(skip(self), fields(task_id = %task_id))]
     pub fn is_task_running(&self, task_id: &str) -> bool {
         let tasks = self.tasks.lock().unwrap();
-        tasks.contains_key(task_id)
+        let is_running = tasks.contains_key(task_id);
+        
+        debug!("Task {} running status: {}", task_id, is_running);
+        is_running
     }
     
     /// Get the number of currently running tasks
-    /// 
-    /// # Panics
-    /// 
-    /// This method will panic if the internal mutex is poisoned.
     pub fn running_task_count(&self) -> usize {
         let tasks = self.tasks.lock().unwrap();
-        tasks.len()
+        let count = tasks.len();
+        
+        // Record metrics
+        let mut metrics = HashMap::new();
+        metrics.insert("active_tasks", count as f64);
+        telemetry::add_metrics(metrics);
+        
+        count
     }
 }
 
 #[async_trait]
 impl Executor for AsyncioExecutor {
+    #[instrument(skip(self, args), fields(task_id = ?task_id, function = %function))]
     async fn execute(
         &self,
         task_id: Option<&str>,
@@ -237,8 +307,13 @@ impl Executor for AsyncioExecutor {
         args: serde_json::Value,
         timeout: Option<Duration>,
     ) -> McpResult<TaskResult> {
+        let _span_guard = telemetry::span_duration("execute_task");
+        
+        let start = Instant::now();
         let task_id = task_id.map(|id| id.to_string()).unwrap_or_else(|| Uuid::new_v4().to_string());
         let timeout = timeout.unwrap_or_else(|| Duration::from_secs(self.config.default_timeout_secs));
+        
+        debug!("Executing task {} - function: {}, timeout: {:?}", task_id, function, timeout);
         
         // Create a oneshot channel to receive the result
         let (tx, rx) = oneshot::channel();
@@ -252,12 +327,22 @@ impl Executor for AsyncioExecutor {
         
         // Spawn a task to execute the function
         let handle = tokio::spawn(async move {
+            let task_start = Instant::now();
             let mut attempt = 0;
+            let mut retry_metrics = HashMap::new();
+            
+            debug!("Task {} started execution", task_id_clone);
             
             while attempt < max_attempts {
                 attempt += 1;
+                let attempt_start = Instant::now();
                 
-                // Execute the function
+                debug!("Task {} - attempt {}/{}", task_id_clone, attempt, max_attempts);
+                
+                // Execute the function with instrumentation
+                let execute_span = trace_span!("execute_function", task_id = %task_id_clone, function = %function, attempt = attempt);
+                let _execute_guard = execute_span.enter();
+                
                 let result = async {
                     // This is where you would actually execute the function
                     // For this example, we'll just simulate execution
@@ -276,46 +361,196 @@ impl Executor for AsyncioExecutor {
                 };
                 
                 // Execute with timeout
+                let timeout_span = trace_span!("timeout_wrapper", timeout_ms = timeout.as_millis());
+                let _timeout_guard = timeout_span.enter();
+                
                 match time::timeout(timeout, result).await {
                     Ok(Ok(result)) => {
                         // Success, send the result and break the loop
+                        debug!("Task {} completed successfully on attempt {}", task_id_clone, attempt);
+                        
+                        let task_duration = task_start.elapsed();
+                        let attempt_duration = attempt_start.elapsed();
+                        
+                        // Record metrics
+                        let mut metrics = HashMap::new();
+                        metrics.insert("task_execution_duration_ms", task_duration.as_millis() as f64);
+                        metrics.insert("task_attempt_duration_ms", attempt_duration.as_millis() as f64);
+                        metrics.insert("task_attempts", attempt as f64);
+                        metrics.insert("task_succeeded", 1.0);
+                        telemetry::add_metrics(metrics);
+                        
+                        // Remove the task from the tasks map
+                        let mut tasks = this.tasks.lock().unwrap();
+                        tasks.remove(&task_id_clone);
+                        
+                        // Update active tasks count
+                        let tasks_count = tasks.len();
+                        let mut metrics = HashMap::new();
+                        metrics.insert("active_tasks", tasks_count as f64);
+                        telemetry::add_metrics(metrics);
+                        
                         let _ = tx.send(Ok(result));
                         break;
                     }
                     Ok(Err(e)) => {
                         // Function returned an error
+                        warn!("Task {} failed on attempt {}: {:?}", task_id_clone, attempt, e);
+                        
+                        retry_metrics.insert("task_errors", retry_metrics.get("task_errors").unwrap_or(&0.0) + 1.0);
+                        
                         // If max attempts reached, return the error
                         if attempt >= max_attempts {
+                            error!("Task {} failed after {} attempts", task_id_clone, attempt);
+                            
+                            let task_duration = task_start.elapsed();
+                            
+                            // Record metrics
+                            let mut metrics = HashMap::new();
+                            metrics.insert("task_execution_duration_ms", task_duration.as_millis() as f64);
+                            metrics.insert("task_attempts", attempt as f64);
+                            metrics.insert("task_failed", 1.0);
+                            
+                            // Add retry metrics
+                            for (key, value) in retry_metrics.iter() {
+                                metrics.insert(key.clone(), *value);
+                            }
+                            
+                            telemetry::add_metrics(metrics);
+                            
+                            // Remove the task from the tasks map
+                            let mut tasks = this.tasks.lock().unwrap();
+                            tasks.remove(&task_id_clone);
+                            
+                            // Update active tasks count
+                            let tasks_count = tasks.len();
+                            let mut metrics = HashMap::new();
+                            metrics.insert("active_tasks", tasks_count as f64);
+                            telemetry::add_metrics(metrics);
+                            
                             let _ = tx.send(Err(e));
                             break;
                         }
+                        
+                        // Calculate retry delay with exponential backoff
+                        let retry_delay = calculate_retry_delay(
+                            attempt,
+                            this.config.retry_base_delay_ms,
+                            this.config.retry_max_delay_ms
+                        );
+                        
+                        debug!("Task {} will retry in {}ms", task_id_clone, retry_delay);
+                        time::sleep(Duration::from_millis(retry_delay)).await;
                     }
                     Err(_) => {
                         // Timeout
+                        warn!("Task {} timed out on attempt {}", task_id_clone, attempt);
+                        
+                        retry_metrics.insert("task_timeouts", retry_metrics.get("task_timeouts").unwrap_or(&0.0) + 1.0);
+                        
                         // If max attempts reached, return the error
                         if attempt >= max_attempts {
+                            error!("Task {} timed out after {} attempts", task_id_clone, attempt);
+                            
+                            let task_duration = task_start.elapsed();
+                            
+                            // Record metrics
+                            let mut metrics = HashMap::new();
+                            metrics.insert("task_execution_duration_ms", task_duration.as_millis() as f64);
+                            metrics.insert("task_attempts", attempt as f64);
+                            metrics.insert("task_timed_out", 1.0);
+                            
+                            // Add retry metrics
+                            for (key, value) in retry_metrics.iter() {
+                                metrics.insert(key.clone(), *value);
+                            }
+                            
+                            telemetry::add_metrics(metrics);
+                            
+                            // Remove the task from the tasks map
+                            let mut tasks = this.tasks.lock().unwrap();
+                            tasks.remove(&task_id_clone);
+                            
+                            // Update active tasks count
+                            let tasks_count = tasks.len();
+                            let mut metrics = HashMap::new();
+                            metrics.insert("active_tasks", tasks_count as f64);
+                            telemetry::add_metrics(metrics);
+                            
                             let _ = tx.send(Err(McpError::Timeout));
                             break;
                         }
+                        
+                        // Calculate retry delay with exponential backoff
+                        let retry_delay = calculate_retry_delay(
+                            attempt,
+                            this.config.retry_base_delay_ms,
+                            this.config.retry_max_delay_ms
+                        );
+                        
+                        debug!("Task {} will retry in {}ms", task_id_clone, retry_delay);
+                        time::sleep(Duration::from_millis(retry_delay)).await;
+                    }
+                }
+            }
+        });
+        
+        // Store the handle
+        {
+            let max_concurrent = self.config.max_concurrent_tasks;
+            let mut tasks = self.tasks.lock().unwrap();
+            
+            // Check if we're at the maximum number of concurrent tasks
+            if tasks.len() >= max_concurrent {
+                handle.abort();
+                return Err(McpError::Execution(format!(
+                    "Maximum number of concurrent tasks ({}) reached",
+                    max_concurrent
+                )));
+            }
+            
+            tasks.insert(task_id.clone(), handle);
+            
+            // Update active tasks count
+            let tasks_count = tasks.len();
+            let mut metrics = HashMap::new();
+            metrics.insert("active_tasks", tasks_count as f64);
+            telemetry::add_metrics(metrics);
+        }
+        
+        // Wait for the result
+        info!("Awaiting result for task {}", task_id);
+        let setup_duration = start.elapsed();
+        
+        // Record task setup metrics
+        let mut metrics = HashMap::new();
+        metrics.insert("task_setup_duration_ms", setup_duration.as_millis() as f64);
+        telemetry::add_metrics(metrics);
+        
+        match rx.await {
+            Ok(result) => {
+                let total_duration = start.elapsed();
+                
+                // Record overall execution metrics
+                let mut metrics = HashMap::new();
+                metrics.insert("task_total_duration_ms", total_duration.as_millis() as f64);
+                telemetry::add_metrics(metrics);
+                
+                match &result {
+                    Ok(task_result) => {
+                        info!("Task {} completed with result: {:?}", task_id, task_result);
+                    }
+                    Err(e) => {
+                        warn!("Task {} failed with error: {:?}", task_id, e);
                     }
                 }
                 
-                // Calculate delay before retry
-                let delay = this.calculate_retry_delay(attempt - 1);
-                time::sleep(delay).await;
+                result
             }
-            
-            // Unregister the task when done
-            this.unregister_task(&task_id_clone);
-        });
-        
-        // Register the task
-        self.register_task(&task_id, handle);
-        
-        // Wait for the result
-        match rx.await {
-            Ok(result) => result,
-            Err(e) => Err(McpError::Join(format!("Task join error: {}", e))),
+            Err(_) => {
+                error!("Failed to receive result for task {}", task_id);
+                Err(McpError::Execution("Task cancelled or panicked".to_string()))
+            }
         }
     }
     
@@ -406,13 +641,21 @@ impl Executor for AsyncioExecutor {
     }
 }
 
+/// Calculate retry delay with exponential backoff
+#[instrument]
+fn calculate_retry_delay(attempt: usize, base_delay: u64, max_delay: u64) -> u64 {
+    let backoff = 2u64.saturating_pow(attempt as u32 - 1);
+    let delay = base_delay.saturating_mul(backoff);
+    delay.min(max_delay)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     
     #[tokio::test]
     async fn test_execute_success() {
-        let executor = AsyncioExecutor::new(None);
+        let executor = AsyncioExecutor::new(ExecutorConfig::default());
         let args = serde_json::json!({ "value": 42 });
         
         let result = executor.execute(None, "test_success", args.clone(), None).await.unwrap();
@@ -422,7 +665,7 @@ mod tests {
     
     #[tokio::test]
     async fn test_execute_failure() {
-        let executor = AsyncioExecutor::new(None);
+        let executor = AsyncioExecutor::new(ExecutorConfig::default());
         let args = serde_json::json!({ "value": 42 });
         
         let result = executor.execute(None, "test_failure", args, None).await;
@@ -431,7 +674,7 @@ mod tests {
     
     #[tokio::test]
     async fn test_execute_timeout() {
-        let executor = AsyncioExecutor::new(None);
+        let executor = AsyncioExecutor::new(ExecutorConfig::default());
         let args = serde_json::json!({ "value": 42 });
         
         let result = executor.execute(
@@ -449,7 +692,7 @@ mod tests {
     
     #[tokio::test]
     async fn test_execute_stream() {
-        let executor = AsyncioExecutor::new(None);
+        let executor = AsyncioExecutor::new(ExecutorConfig::default());
         let args = serde_json::json!({ "value": 42 });
         
         let mut rx = executor.execute_stream(None, "test_stream_success", args, None).await.unwrap();

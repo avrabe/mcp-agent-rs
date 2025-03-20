@@ -4,9 +4,11 @@ use tokio::time::Duration;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use std::collections::HashMap;
+use tracing::{info, instrument, warn, debug, trace_span, Span};
 
 use crate::mcp::types::{Message, MessageId, MessageType, Priority};
 use crate::utils::error::{McpError, McpResult};
+use crate::telemetry;
 
 /// Protocol implementation for MCP (Management Control Protocol).
 /// Handles message serialization, deserialization, and communication.
@@ -53,22 +55,29 @@ impl McpProtocol {
     /// 
     /// Initializes buffers and data structures for managing message communication.
     pub fn new() -> Self {
-        Self {
+        let protocol = Self {
             read_buffer: BytesMut::with_capacity(1024),
             id_buffer: BytesMut::with_capacity(16),
             message_tx: None,
             message_rx: None,
             pending_requests: Arc::new(Mutex::new(HashMap::new())),
             request_timeout: Duration::from_secs(30),
-        }
+        };
+        
+        debug!("Created new MCP Protocol instance");
+        protocol
     }
 
     /// Writes a message to a stream asynchronously
+    #[instrument(skip(self, stream, message), fields(message_type = ?message.message_type, message_id = %message.id, correlation_id = ?message.correlation_id.as_ref().map(|id| format!("{}", id)), payload_size = message.payload.len()))]
     pub async fn write_message_async<W>(&self, stream: &mut W, message: &Message) -> McpResult<()>
     where
         W: tokio::io::AsyncWrite + Unpin,
     {
         use tokio::io::AsyncWriteExt;
+        
+        let start = std::time::Instant::now();
+        debug!("Writing message to stream");
         
         let mut buffer = BytesMut::new();
         
@@ -119,19 +128,42 @@ impl McpProtocol {
         buffer.extend_from_slice(&(message.payload.len() as u32).to_be_bytes());
         buffer.extend_from_slice(&message.payload);
         
+        // Capture serialized message size for metrics
+        let message_size = buffer.len();
+        
+        // Create a span for the actual write operation
+        let write_span = trace_span!("write_to_stream", bytes = message_size);
+        let _write_guard = write_span.enter();
+        
         // Write to stream
         stream.write_all(&buffer).await?;
         stream.flush().await?;
         
+        let duration = start.elapsed();
+        
+        // Record metrics
+        let mut metrics = HashMap::new();
+        metrics.insert("message_write_duration_ms", duration.as_millis() as f64);
+        metrics.insert("message_size_bytes", message_size as f64);
+        telemetry::add_metrics(metrics);
+        
+        debug!("Message written successfully in {:?}", duration);
         Ok(())
     }
 
     /// Reads a message from a stream asynchronously
+    #[instrument(skip(self, stream), fields(operation = "read_message"))]
     pub async fn read_message_async<R>(&self, stream: &mut R) -> McpResult<Message>
     where
         R: tokio::io::AsyncRead + Unpin,
     {
         use tokio::io::AsyncReadExt;
+        
+        let start = std::time::Instant::now();
+        debug!("Reading message from stream");
+        
+        let read_span = trace_span!("read_stream_header");
+        let _read_guard = read_span.enter();
         
         let mut message_type_buf = [0u8; 1];
         stream.read_exact(&mut message_type_buf).await?;
@@ -140,7 +172,10 @@ impl McpProtocol {
             1 => MessageType::Response,
             2 => MessageType::Event,
             3 => MessageType::KeepAlive,
-            _ => return Err(McpError::InvalidMessage("Invalid message type".to_string())),
+            _ => {
+                warn!("Invalid message type: {}", message_type_buf[0]);
+                return Err(McpError::InvalidMessage("Invalid message type".to_string()));
+            },
         };
         
         let mut priority_buf = [0u8; 1];
@@ -149,7 +184,10 @@ impl McpProtocol {
             0 => Priority::Low,
             1 => Priority::Normal,
             2 => Priority::High,
-            _ => return Err(McpError::InvalidMessage("Invalid priority".to_string())),
+            _ => {
+                warn!("Invalid priority: {}", priority_buf[0]);
+                return Err(McpError::InvalidMessage("Invalid priority".to_string()));
+            },
         };
         
         // Read message ID
@@ -170,6 +208,11 @@ impl McpProtocol {
             None
         };
         
+        // Start a new span for reading the body part
+        drop(_read_guard);
+        let body_span = trace_span!("read_stream_body", message_id = %id, message_type = ?message_type, priority = ?priority);
+        let _body_guard = body_span.enter();
+        
         // Read error if present
         let mut has_error_buf = [0u8; 1];
         stream.read_exact(&mut has_error_buf).await?;
@@ -189,8 +232,13 @@ impl McpProtocol {
             let mut error_msg_buf = vec![0u8; error_msg_len];
             stream.read_exact(&mut error_msg_buf).await?;
             
-            let error_msg = String::from_utf8(error_msg_buf)
-                .map_err(|_| McpError::InvalidMessage("Invalid UTF-8 in error message".to_string()))?;
+            let error_msg = match String::from_utf8(error_msg_buf) {
+                Ok(msg) => msg,
+                Err(_) => {
+                    warn!("Invalid UTF-8 in error message");
+                    return Err(McpError::InvalidMessage("Invalid UTF-8 in error message".to_string()));
+                }
+            };
                 
             Some(McpError::Custom { 
                 code: error_code,
@@ -205,16 +253,95 @@ impl McpProtocol {
         stream.read_exact(&mut payload_len_buf).await?;
         let payload_len = u32::from_be_bytes(payload_len_buf) as usize;
         
-        let mut payload = vec![0u8; payload_len];
-        stream.read_exact(&mut payload).await?;
+        if payload_len > 0 {
+            let payload_span = trace_span!("read_payload", size = payload_len);
+            let _payload_guard = payload_span.enter();
+            
+            let mut payload = vec![0u8; payload_len];
+            stream.read_exact(&mut payload).await?;
+            
+            let duration = start.elapsed();
+            
+            // Record metrics
+            let mut metrics = HashMap::new();
+            metrics.insert("message_read_duration_ms", duration.as_millis() as f64);
+            metrics.insert("message_size_bytes", (payload_len + 28) as f64); // 28 bytes overhead for headers
+            telemetry::add_metrics(metrics);
+            
+            let result = Message {
+                message_type,
+                priority,
+                id,
+                correlation_id,
+                error,
+                payload,
+            };
+            
+            debug!(
+                "Message read successfully in {:?}: type={:?}, id={}, correlation_id={:?}, payload_size={}",
+                duration,
+                result.message_type,
+                result.id,
+                result.correlation_id,
+                result.payload.len()
+            );
+            
+            Ok(result)
+        } else {
+            let duration = start.elapsed();
+            
+            // Record metrics
+            let mut metrics = HashMap::new();
+            metrics.insert("message_read_duration_ms", duration.as_millis() as f64);
+            metrics.insert("message_size_bytes", 28.0); // 28 bytes overhead for headers
+            telemetry::add_metrics(metrics);
+            
+            let result = Message {
+                message_type,
+                priority,
+                id,
+                correlation_id,
+                error,
+                payload: vec![],
+            };
+            
+            debug!(
+                "Message read successfully in {:?}: type={:?}, id={}, correlation_id={:?}, empty payload",
+                duration,
+                result.message_type,
+                result.id,
+                result.correlation_id
+            );
+            
+            Ok(result)
+        }
+    }
+    
+    /// Process an incoming message with telemetry
+    #[instrument(skip(self, message), fields(message_id = %message.id, message_type = ?message.message_type))]
+    pub async fn process_message(&self, message: Message) -> McpResult<()> {
+        let _span_guard = telemetry::span_duration("process_message");
         
-        Ok(Message {
-            message_type,
-            priority,
-            id,
-            correlation_id,
-            error,
-            payload,
-        })
+        // Add processing logic here
+        debug!("Processing message: type={:?}, id={}", message.message_type, message.id);
+        
+        // Here you would add actual message processing logic
+        
+        Ok(())
+    }
+    
+    /// Send a message with telemetry
+    #[instrument(skip(self, message), fields(message_id = %message.id, message_type = ?message.message_type))]
+    pub async fn send_message(&self, message: Message) -> McpResult<()> {
+        let _span_guard = telemetry::span_duration("send_message");
+        
+        if let Some(tx) = &self.message_tx {
+            debug!("Sending message: type={:?}, id={}", message.message_type, message.id);
+            tx.send(message).map_err(|_| McpError::Protocol("Failed to send message".to_string()))?;
+            Ok(())
+        } else {
+            warn!("Cannot send message: no sender channel configured");
+            Err(McpError::InvalidState("Message sender not initialized".to_string()))
+        }
     }
 }

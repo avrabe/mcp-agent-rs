@@ -3,10 +3,9 @@ use mcp_agent::mcp::{
     types::{Message, MessageType, Priority},
 };
 use mcp_agent::utils::error::{McpError, McpResult};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::io::{duplex};
-use tokio::sync::Mutex;
 
 const TEST_TIMEOUT: Duration = Duration::from_secs(5);
 

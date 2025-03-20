@@ -8,7 +8,7 @@
 .. need:: REQ_001
    :id: REQ_001
    :title: MCP Protocol Implementation
-   :status: open
+   :status: partial
    :type: req
    :tags: core;protocol
    :links: REQ_002;REQ_003
@@ -17,7 +17,7 @@
 .. need:: REQ_002
    :id: REQ_002
    :title: Agent Pattern Support
-   :status: open
+   :status: partial
    :type: req
    :tags: core;patterns
    :links: REQ_001;REQ_004
@@ -26,7 +26,7 @@
 .. need:: REQ_003
    :id: REQ_003
    :title: Multi-Agent Orchestration
-   :status: open
+   :status: partial
    :type: req
    :tags: core;orchestration
    :links: REQ_001;REQ_005
@@ -35,7 +35,7 @@
 .. need:: REQ_004
    :id: REQ_004
    :title: Type Safety
-   :status: open
+   :status: implemented
    :type: req
    :tags: quality;safety
    :links: REQ_002;REQ_006
@@ -44,7 +44,7 @@
 .. need:: REQ_005
    :id: REQ_005
    :title: Async Support
-   :status: open
+   :status: implemented
    :type: req
    :tags: performance;concurrency
    :links: REQ_003;REQ_007
@@ -53,7 +53,7 @@
 .. need:: REQ_006
    :id: REQ_006
    :title: Memory Safety
-   :status: open
+   :status: implemented
    :type: req
    :tags: safety;performance
    :links: REQ_004;REQ_008
@@ -62,7 +62,7 @@
 .. need:: REQ_007
    :id: REQ_007
    :title: API Performance
-   :status: open
+   :status: partial
    :type: req
    :tags: performance;api
    :links: REQ_005;REQ_009
@@ -71,7 +71,7 @@
 .. need:: REQ_008
    :id: REQ_008
    :title: Error Handling
-   :status: open
+   :status: implemented
    :type: req
    :tags: quality;safety
    :links: REQ_006;REQ_010
@@ -89,7 +89,7 @@
 .. need:: REQ_010
    :id: REQ_010
    :title: Data Validation
-   :status: open
+   :status: implemented
    :type: req
    :tags: quality;safety
    :links: REQ_008;REQ_012
@@ -98,7 +98,7 @@
 .. need:: REQ_011
    :id: REQ_011
    :title: AI Model Integration
-   :status: open
+   :status: partial
    :type: req
    :tags: integration;ai
    :links: REQ_009;REQ_013
@@ -116,7 +116,7 @@
 .. need:: REQ_013
    :id: REQ_013
    :title: CLI Interface
-   :status: open
+   :status: implemented
    :type: req
    :tags: interface;cli
    :links: REQ_011;REQ_015
@@ -125,7 +125,7 @@
 .. need:: REQ_014
    :id: REQ_014
    :title: Testing Coverage
-   :status: open
+   :status: implemented
    :type: req
    :tags: quality;testing
    :links: REQ_012;REQ_016
@@ -134,7 +134,7 @@
 .. need:: REQ_015
    :id: REQ_015
    :title: Documentation
-   :status: open
+   :status: partial
    :type: req
    :tags: documentation;maintenance
    :links: REQ_013;REQ_017
@@ -143,7 +143,7 @@
 .. need:: REQ_016
    :id: REQ_016
    :title: Dependency Management
-   :status: open
+   :status: implemented
    :type: req
    :tags: build;maintenance
    :links: REQ_014;REQ_018
@@ -152,7 +152,7 @@
 .. need:: REQ_017
    :id: REQ_017
    :title: Code Quality
-   :status: open
+   :status: implemented
    :type: req
    :tags: quality;maintenance
    :links: REQ_015;REQ_019
@@ -161,7 +161,7 @@
 .. need:: REQ_018
    :id: REQ_018
    :title: Migration Path
-   :status: open
+   :status: partial
    :type: req
    :tags: migration;compatibility
    :links: REQ_016;REQ_020
@@ -170,7 +170,7 @@
 .. need:: REQ_019
    :id: REQ_019
    :title: Security
-   :status: open
+   :status: partial
    :type: req
    :tags: security;safety
    :links: REQ_017
@@ -179,7 +179,7 @@
 .. need:: REQ_020
    :id: REQ_020
    :title: Extensibility
-   :status: open
+   :status: implemented
    :type: req
    :tags: architecture;design
    :links: REQ_018

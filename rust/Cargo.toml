@@ -54,11 +54,6 @@ path = "../examples/simple_mcp_example/simple_client.rs"
 name = "server_manager_example"
 path = "../examples/simple_mcp_example/server_manager_example.rs"
 
-[[example]]
-name = "simple_server_manager"
-path = "../examples/simple_mcp_example/simple_server_manager.rs"
-
 [features]
-default = ["server_registry"]
+default = []
 test-util = ["tokio/test-util"]
-server_registry = []

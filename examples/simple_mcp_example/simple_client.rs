@@ -26,23 +26,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let server_address = "127.0.0.1:7000";
     
     println!("Connecting to MCP server at {}", server_address);
-    #[cfg(feature = "server_registry")]
     agent.connect_to_test_server(server_id, server_address).await?;
-    #[cfg(not(feature = "server_registry"))]
-    agent.connect(server_id, server_address).await?;
     println!("Connected to server: {}", server_id);
     
     // List active connections
     let count = agent.connection_count().await;
-    #[cfg(feature = "server_registry")]
-    {
-        let connections = agent.list_connections().await;
-        println!("Connected to {} servers: {}", count, connections.join(", "));
-    }
-    #[cfg(not(feature = "server_registry"))]
-    {
-        println!("Connected to {} servers", count);
-    }
+    let connections = agent.list_connections().await;
+    println!("Connected to {} servers: {}", count, connections.join(", "));
     
     // Send a ping message
     println!("\nSending ping message...");

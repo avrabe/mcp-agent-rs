@@ -24,6 +24,9 @@ pub mod config;
 /// Telemetry and observability with OpenTelemetry integration
 pub mod telemetry;
 
+/// Workflow engine for orchestrating tasks and managing workflow state
+pub mod workflow;
+
 pub use mcp::{
     protocol::McpProtocol,
     types::{Message, MessageType, Priority},

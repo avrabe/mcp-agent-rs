@@ -15,10 +15,18 @@ pub mod server_registry;
 /// Core types and data structures
 pub mod types;
 
+/// Executor module
+pub mod executor;
+
+/// Agent API module
+pub mod agent;
+
 pub use connection::Connection;
 pub use protocol::McpProtocol;
 pub use server_registry::{ServerRegistry, ServerSettings, McpSettings};
 pub use types::{Message, MessageId, MessageType, Priority, MessageHeader, MessageEnvelope};
+pub use executor::{Executor, AsyncioExecutor, ExecutorConfig, Signal, TaskResult};
+pub use agent::{Agent, AgentConfig};
 pub use crate::utils::error::{McpError, McpResult};
 
 #[cfg(test)]

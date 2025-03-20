@@ -7,7 +7,7 @@ use tokio::time::timeout;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use crate::mcp::connection::Connection;
+use crate::mcp::connection::{Connection, ConnectionState};
 use crate::utils::error::{McpError, McpResult};
 use crate::mcp::protocol::McpProtocol;
 use crate::mcp::types::{Message, MessageType, Priority, MessageId};
@@ -64,6 +64,12 @@ pub struct ServerSettings {
     pub roots: Option<Vec<RootSettings>>,
     /// Environment variables to pass to the server process
     pub env: Option<HashMap<String, String>>,
+    /// Whether to auto-reconnect on connection failure
+    pub auto_reconnect: Option<bool>,
+    /// How many times to retry connection before giving up
+    pub max_reconnect_attempts: Option<u32>,
+    /// Time to wait between reconnection attempts in milliseconds
+    pub reconnect_delay_ms: Option<u64>,
 }
 
 /// Configuration for all MCP servers
@@ -88,6 +94,12 @@ pub struct ServerConfig {
     pub transport: Transport,
     /// URL for SSE transport (optional)
     pub url: Option<String>,
+    /// Whether to auto-reconnect on connection failure
+    pub auto_reconnect: bool,
+    /// How many times to retry connection before giving up
+    pub max_reconnect_attempts: u32,
+    /// Time to wait between reconnection attempts
+    pub reconnect_delay: Duration,
 }
 
 /// Convert ServerSettings to ServerConfig
@@ -100,6 +112,9 @@ impl From<ServerSettings> for ServerConfig {
             read_timeout: Duration::from_secs(settings.read_timeout_seconds.unwrap_or(30)),
             transport: settings.transport,
             url: settings.url,
+            auto_reconnect: settings.auto_reconnect.unwrap_or(true),
+            max_reconnect_attempts: settings.max_reconnect_attempts.unwrap_or(3),
+            reconnect_delay: Duration::from_millis(settings.reconnect_delay_ms.unwrap_or(1000)),
         }
     }
 }
@@ -107,12 +122,25 @@ impl From<ServerSettings> for ServerConfig {
 /// Type alias for initialization hook function
 pub type InitHook = Box<dyn Fn(&str, &Message) -> McpResult<()> + Send + Sync>;
 
-/// Registry of MCP servers with configuration settings
+/// Information about a server connection
+#[derive(Debug)]
+struct ServerConnInfo {
+    /// The active connection to the server
+    connection: Option<Connection>,
+    /// Configuration for the server
+    config: ServerConfig,
+    /// Number of connection attempts made
+    attempts: u32,
+}
+
+/// Registry of MCP servers with configuration settings and connection management
 pub struct ServerRegistry {
     /// Map of server name to server settings
     servers: HashMap<String, ServerConfig>,
     /// Map of server name to initialization hooks
     init_hooks: HashMap<String, InitHook>,
+    /// Active connections to servers, protected by a Mutex for thread-safe access
+    active_connections: Arc<Mutex<HashMap<String, ServerConnInfo>>>,
 }
 
 impl std::fmt::Debug for ServerRegistry {
@@ -130,6 +158,7 @@ impl ServerRegistry {
         Self {
             servers: HashMap::new(),
             init_hooks: HashMap::new(),
+            active_connections: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -172,28 +201,50 @@ impl ServerRegistry {
         Ok(())
     }
 
-    /// Connects to a server by name.
-    pub async fn connect_to_server(&self, name: &str) -> McpResult<Connection> {
+    /// Get an existing connection from the registry or create a new one
+    pub async fn get_connection(&self, name: &str) -> McpResult<Connection> {
+        let mut active_conns = self.active_connections.lock().await;
+        
+        // Check if we already have an active connection
+        if let Some(conn_info) = active_conns.get_mut(name) {
+            if let Some(conn) = &conn_info.connection {
+                if conn.is_connected() {
+                    // Clone the connection to return it
+                    return Ok(conn.clone());
+                } else if conn_info.config.auto_reconnect && conn_info.attempts < conn_info.config.max_reconnect_attempts {
+                    // Try to reconnect
+                    conn_info.connection = None;
+                    conn_info.attempts += 1;
+                    
+                    // Create a new connection
+                    let new_conn = self.create_connection(name, &conn_info.config).await?;
+                    conn_info.connection = Some(new_conn.clone());
+                    return Ok(new_conn);
+                } else {
+                    // No auto-reconnect or max attempts reached
+                    return Err(McpError::ConnectionFailed(format!("Connection to server {} lost", name)));
+                }
+            }
+        }
+        
+        // No existing connection, create a new one
         let config = self.servers.get(name)
             .ok_or_else(|| McpError::ServerNotFound(format!("Server not found: {}", name)))?;
         
-        // Create a new connection
-        let connection = Connection::connect_stdio(
-            &config.command,
-            &config.args,
-            &config.env,
-            config.read_timeout,
-        ).await?;
+        let connection = self.create_connection(name, config).await?;
+        
+        // Store the connection
+        active_conns.insert(name.to_string(), ServerConnInfo {
+            connection: Some(connection.clone()),
+            config: config.clone(),
+            attempts: 1,
+        });
         
         Ok(connection)
     }
 
-    /// Start a server based on its configuration
-    pub async fn start_server(&self, server_name: &str) -> McpResult<Connection> {
-        let config = self.servers.get(server_name)
-            .ok_or_else(|| McpError::ServerNotFound(format!("Server not found: {}", server_name)))?;
-        
-        // Connect to the server based on transport type
+    /// Create a new connection to a server
+    async fn create_connection(&self, name: &str, config: &ServerConfig) -> McpResult<Connection> {
         let connection = match config.transport {
             Transport::Stdio => {
                 Connection::connect_stdio(
@@ -213,7 +264,7 @@ impl ServerRegistry {
         };
         
         // Run initialization hook if available
-        if let Some(hook) = self.init_hooks.get(server_name) {
+        if let Some(hook) = self.init_hooks.get(name) {
             let init_msg = Message::new(
                 MessageType::Request,
                 Priority::Normal,
@@ -222,16 +273,68 @@ impl ServerRegistry {
                 None,
             );
             
-            hook(server_name, &init_msg)?;
+            hook(name, &init_msg)?;
         }
         
         Ok(connection)
+    }
+
+    /// Start a server based on its configuration and get a connection
+    pub async fn start_server(&self, server_name: &str) -> McpResult<Connection> {
+        self.get_connection(server_name).await
     }
 
     /// Get the configuration for a specific server
     pub fn get_server_config(&self, server_name: &str) -> McpResult<&ServerConfig> {
         self.servers.get(server_name)
             .ok_or_else(|| McpError::ServerNotFound(format!("Server not found: {}", server_name)))
+    }
+
+    /// Close a specific server connection
+    pub async fn close_connection(&self, server_name: &str) -> McpResult<()> {
+        let mut active_conns = self.active_connections.lock().await;
+        
+        if let Some(conn_info) = active_conns.get_mut(server_name) {
+            if let Some(conn) = &mut conn_info.connection {
+                conn.close().await?;
+                conn_info.connection = None;
+            }
+        }
+        
+        Ok(())
+    }
+
+    /// Close all active server connections
+    pub async fn close_all_connections(&self) -> McpResult<()> {
+        let mut active_conns = self.active_connections.lock().await;
+        
+        for (_, conn_info) in active_conns.iter_mut() {
+            if let Some(conn) = &mut conn_info.connection {
+                let _ = conn.close().await;
+                conn_info.connection = None;
+            }
+        }
+        
+        active_conns.clear();
+        Ok(())
+    }
+
+    /// Get a list of all registered server names
+    pub fn get_server_names(&self) -> Vec<String> {
+        self.servers.keys().cloned().collect()
+    }
+
+    /// Check if a server is connected
+    pub async fn is_server_connected(&self, server_name: &str) -> bool {
+        let active_conns = self.active_connections.lock().await;
+        
+        if let Some(conn_info) = active_conns.get(server_name) {
+            if let Some(conn) = &conn_info.connection {
+                return conn.is_connected();
+            }
+        }
+        
+        false
     }
 }
 
@@ -253,6 +356,9 @@ mod tests {
             auth: None,
             roots: None,
             env: None,
+            auto_reconnect: Some(true),
+            max_reconnect_attempts: Some(3),
+            reconnect_delay_ms: Some(500),
         }
     }
 
@@ -273,6 +379,9 @@ mod tests {
             read_timeout: Duration::from_secs(5),
             transport: Transport::Stdio,
             url: None,
+            auto_reconnect: true,
+            max_reconnect_attempts: 3,
+            reconnect_delay: Duration::from_millis(500),
         }).unwrap();
         
         assert!(registry.get_server_config("test-server").is_ok());
@@ -288,6 +397,9 @@ mod tests {
             read_timeout: Duration::from_secs(30),
             transport: Transport::Stdio,
             url: None,
+            auto_reconnect: true,
+            max_reconnect_attempts: 3,
+            reconnect_delay: Duration::from_millis(1000),
         };
         
         registry.register_server("test-server", config)?;
@@ -306,6 +418,9 @@ mod tests {
             read_timeout: Duration::from_secs(30),
             transport: Transport::Stdio,
             url: None,
+            auto_reconnect: true,
+            max_reconnect_attempts: 3,
+            reconnect_delay: Duration::from_millis(1000),
         };
         
         registry.register_server("test-server", config)?;
@@ -314,6 +429,37 @@ mod tests {
         registry.register_init_hook("test-server", hook)?;
         
         assert!(registry.init_hooks.contains_key("test-server"));
+        Ok(())
+    }
+    
+    #[tokio::test]
+    async fn test_server_connection_lifecycle() -> McpResult<()> {
+        let mut registry = ServerRegistry::new();
+        let config = ServerConfig {
+            command: "echo".to_string(),  // Using echo for a simple test
+            args: vec!["test".to_string()],
+            env: HashMap::new(),
+            read_timeout: Duration::from_secs(5),
+            transport: Transport::Stdio,
+            url: None,
+            auto_reconnect: true,
+            max_reconnect_attempts: 3,
+            reconnect_delay: Duration::from_millis(500),
+        };
+        
+        registry.register_server("test-server", config)?;
+        
+        // Test connection functions
+        assert!(!registry.is_server_connected("test-server").await);
+        
+        // Get the server names
+        let server_names = registry.get_server_names();
+        assert_eq!(server_names.len(), 1);
+        assert_eq!(server_names[0], "test-server");
+        
+        // Close all connections (should be a no-op since none are open)
+        registry.close_all_connections().await?;
+        
         Ok(())
     }
 } 

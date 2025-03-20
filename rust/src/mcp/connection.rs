@@ -111,6 +111,30 @@ pub struct Connection {
     child: Option<Child>,
 }
 
+impl Clone for Connection {
+    fn clone(&self) -> Self {
+        // Create a new connection with the same configuration
+        Self {
+            addr: self.addr.clone(),
+            stream: self.stream.clone(),
+            state: self.state,
+            protocol: self.protocol.clone(),
+            config: self.config.clone(),
+            // Don't clone task handles - they should be created by each instance
+            keep_alive_task: None,
+            keep_alive_tx: None,
+            // Clone message channels
+            message_tx: self.message_tx.clone(),
+            message_rx: self.message_tx.as_ref().map(|tx| tx.subscribe()),
+            // Don't clone task handles
+            message_handler_task: None,
+            message_sender_task: None,
+            // Child process should not be cloned - it's managed by original connection
+            child: None,
+        }
+    }
+}
+
 impl Debug for Connection {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Connection")

@@ -99,3 +99,7 @@ path = "examples/pipeline_workflow/main.rs"
 [[example]]
 name = "retry_workflow"
 path = "examples/retry_workflow/main.rs"
+
+[[example]]
+name = "conditional_workflow"
+path = "examples/conditional_workflow/main.rs"

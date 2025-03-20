@@ -83,3 +83,11 @@ path = "../examples/simple_mcp_example/simple_client.rs"
 [[example]]
 name = "parallel_workflow"
 path = "examples/parallel_workflow/main.rs"
+
+[[example]]
+name = "orchestrator_workflow"
+path = "examples/orchestrator_workflow/main.rs"
+
+[[example]]
+name = "router_workflow"
+path = "examples/router_workflow/main.rs"

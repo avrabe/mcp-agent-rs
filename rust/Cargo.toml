@@ -115,3 +115,7 @@ path = "examples/saga_workflow/main.rs"
 [[example]]
 name = "event_driven_workflow"
 path = "examples/event_driven_workflow/main.rs"
+
+[[example]]
+name = "fan_out_fan_in_workflow"
+path = "examples/fan_out_fan_in_workflow/main.rs"

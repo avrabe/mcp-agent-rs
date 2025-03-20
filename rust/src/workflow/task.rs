@@ -97,58 +97,62 @@ impl<T: 'static + Send> WorkflowTask<T> {
     pub async fn execute(self) -> Result<T> {
         let mut attempt = 0;
         let max_attempts = self.retry_config.max_attempts;
+        let timeout_duration = self.timeout;
+        let name = self.name.clone();
         
+        // Create a wrapper for the function so we can pin it only once
+        let func = self.func;
+        
+        // Execute with retry logic
         loop {
             attempt += 1;
-            debug!("Executing task (attempt {}/{}): {}", attempt, max_attempts, self.name);
+            debug!("Executing task (attempt {}/{}): {}", attempt, max_attempts, name);
             
             // Apply timeout if specified
-            let result = if let Some(timeout_duration) = self.timeout {
-                match timeout(timeout_duration, &mut self.func).await {
+            let result = if let Some(timeout_duration) = timeout_duration {
+                match tokio::time::timeout(timeout_duration, func).await {
                     Ok(result) => result,
                     Err(_) => {
-                        error!("Task timed out after {:?}: {}", timeout_duration, self.name);
-                        Err(anyhow::anyhow!("Task timed out: {}", self.name))
+                        error!("Task timed out after {:?}: {}", timeout_duration, name);
+                        return Err(anyhow::anyhow!("Task timed out: {}", name));
                     }
                 }
             } else {
-                self.func.await
+                func.await
             };
             
             match result {
                 Ok(value) => {
-                    debug!("Task completed successfully: {}", self.name);
+                    debug!("Task completed successfully: {}", name);
                     return Ok(value);
                 }
                 Err(err) => {
-                    // If we've reached the max attempts, return the error
+                    // If we've reached the max attempts or it's the last attempt, return the error
                     if attempt >= max_attempts {
                         error!("Task failed after {} attempts: {}, error: {}", 
-                               attempt, self.name, err);
+                               attempt, name, err);
                         return Err(err);
                     }
                     
                     // Otherwise, retry after a delay
-                    let delay_ms = self.calculate_retry_delay(attempt);
+                    let base_delay = self.retry_config.initial_interval_ms as f64 * 
+                        self.retry_config.backoff_coefficient.powi(attempt as i32 - 1);
+                    let delay_ms = base_delay.min(self.retry_config.max_interval_ms as f64) as u64;
+                    
                     warn!("Task failed, retrying in {}ms: {}, error: {}", 
-                          delay_ms, self.name, err);
+                          delay_ms, name, err);
                     
                     tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+                    // Can't retry with the same future since it's consumed
+                    return Err(anyhow::anyhow!("Task {} failed: {}", name, err));
                 }
             }
         }
     }
-    
-    /// Calculate the delay before the next retry attempt
-    fn calculate_retry_delay(&self, attempt: usize) -> u64 {
-        let base_delay = self.retry_config.initial_interval_ms as f64 * 
-                        self.retry_config.backoff_coefficient.powi(attempt as i32 - 1);
-                        
-        base_delay.min(self.retry_config.max_interval_ms as f64) as u64
-    }
 }
 
 /// Create a collection of tasks that can be executed in parallel
+#[derive(Debug)]
 pub struct TaskGroup<T> {
     tasks: Vec<WorkflowTask<T>>,
 }
@@ -159,6 +163,21 @@ impl<T: 'static + Send> TaskGroup<T> {
         Self {
             tasks: Vec::new(),
         }
+    }
+    
+    /// Create a new task group with pre-populated tasks
+    pub fn new_with_tasks(tasks: Vec<WorkflowTask<T>>) -> Self {
+        Self { tasks }
+    }
+    
+    /// Get the number of tasks in the group
+    pub fn len(&self) -> usize {
+        self.tasks.len()
+    }
+    
+    /// Check if the task group is empty
+    pub fn is_empty(&self) -> bool {
+        self.tasks.is_empty()
     }
     
     /// Add a task to the group
@@ -188,7 +207,17 @@ impl<T: 'static + Send> TaskGroup<T> {
     }
 }
 
-impl<T> Default for TaskGroup<T> {
+/// Create a new task for ease of use
+pub fn task<T: 'static + Send, F, Fut>(name: &str, f: F) -> WorkflowTask<T>
+where
+    F: FnOnce() -> Fut + Send + 'static,
+    Fut: Future<Output = Result<T>> + Send + 'static,
+{
+    WorkflowTask::new(name, f)
+}
+
+// Helper implementation for easier `Task` usage without trait bounds
+impl<T> Default for TaskGroup<T> where T: 'static + Send {
     fn default() -> Self {
         Self::new()
     }

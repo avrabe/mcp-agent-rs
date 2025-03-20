@@ -96,7 +96,6 @@ pub fn init_telemetry(config: TelemetryConfig) -> Result<(), Box<dyn std::error:
     if config.enable_console {
         if config.enable_json {
             tracing_subscriber::fmt()
-                .json()
                 .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
                 .init();
         } else {
@@ -145,7 +144,6 @@ fn init_opentelemetry(config: TelemetryConfig) -> Result<(), Box<dyn std::error:
         if config.enable_console {
             if config.enable_json {
                 tracing_subscriber::fmt()
-                    .json()
                     .with_env_filter(EnvFilter::try_from_default_env()
                         .unwrap_or_else(|_| EnvFilter::new("info")))
                     .init();
@@ -354,6 +352,35 @@ pub fn create_trace_context(name: &'static str, level: Level) -> Span {
 pub fn set_error_on_current_span(error: &dyn std::error::Error) {
     span::Span::current().record("error", true);
     span::Span::current().record("error.message", &field::display(error));
+}
+
+/// Add a single metric with tags to the telemetry system
+pub fn add_metric(name: &'static str, value: f64, tags: &[(&str, String)]) {
+    let mut metrics = HashMap::new();
+    metrics.insert(name, value);
+    add_metrics(metrics);
+    
+    // Log metric for tracing
+    let tags_str = tags.iter()
+        .map(|(k, v)| format!("{}={}", k, v))
+        .collect::<Vec<_>>()
+        .join(",");
+    
+    tracing::trace!(
+        metric_name = name, 
+        metric_value = value, 
+        metric_tags = tags_str,
+        "Metric recorded"
+    );
+}
+
+/// Record the duration of a span 
+pub fn record_span_duration(span_name: &'static str, duration_ms: f64) {
+    add_metric(
+        "span_duration_ms", 
+        duration_ms, 
+        &[("span_name", span_name.to_string())]
+    );
 }
 
 #[cfg(test)]

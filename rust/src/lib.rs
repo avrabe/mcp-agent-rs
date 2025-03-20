@@ -30,12 +30,25 @@ pub mod workflow;
 /// LLM integrations with various providers
 pub mod llm;
 
+// Re-export key MCP types
 pub use mcp::{
     protocol::McpProtocol,
     types::{Message, MessageType, Priority},
     executor::Executor,
 };
 
+// Re-export workflow types
+pub use workflow::{
+    task,
+    TaskGroup,
+    WorkflowEngine,
+    WorkflowState,
+    WorkflowResult,
+    SignalHandler,
+    WorkflowSignal,
+};
+
+// Re-export error types
 pub use utils::error::{McpError, McpResult};
 
 /// Re-export telemetry types and functions for easier access
@@ -65,5 +78,7 @@ pub use llm::{
     MessageRole, 
     Completion,
     CompletionRequest,
-    OllamaClient,
 };
+
+#[cfg(feature = "ollama")]
+pub use crate::llm::OllamaClient;

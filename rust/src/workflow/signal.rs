@@ -94,22 +94,23 @@ pub struct PendingSignal {
     pub sender: oneshot::Sender<WorkflowSignal>,
 }
 
-/// Trait for handling signals
+/// Signal handler interface for workflow signals
 #[async_trait]
-pub trait SignalHandler: Send + Sync + 'static {
-    /// Emit a signal to all waiting handlers
+pub trait SignalHandler: Send + Sync + std::fmt::Debug {
+    /// Send a signal to the workflow
     async fn signal(&self, signal: WorkflowSignal) -> Result<()>;
     
-    /// Wait for a signal to be emitted
+    /// Wait for a signal with the given name
     async fn wait_for_signal(
         &self,
         signal_name: &str,
         workflow_id: Option<&str>,
-        timeout_duration: Option<Duration>,
+        timeout: Option<Duration>,
     ) -> Result<WorkflowSignal>;
 }
 
-/// Standard implementation of SignalHandler using tokio
+/// Asynchronous signal handler
+#[derive(Debug)]
 pub struct AsyncSignalHandler {
     /// Map of signal name to pending signals
     pending_signals: Arc<Mutex<HashMap<String, Vec<PendingSignal>>>>,

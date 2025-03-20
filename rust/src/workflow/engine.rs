@@ -40,7 +40,7 @@ impl Default for WorkflowEngineConfig {
 }
 
 /// Engine for executing workflows
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct WorkflowEngine {
     /// Unique ID of the workflow engine
     id: String,
@@ -54,13 +54,20 @@ pub struct WorkflowEngine {
 
 impl WorkflowEngine {
     /// Create a new workflow engine
-    pub fn new(config: Option<WorkflowEngineConfig>) -> Self {
-        let config = Arc::new(config.unwrap_or_default());
-        
+    pub fn new(signal_handler: impl SignalHandler + 'static) -> Self {
         Self {
             id: Uuid::new_v4().to_string(),
-            config,
-            signal_handler: Arc::new(AsyncSignalHandler::new()),
+            config: Arc::new(WorkflowEngineConfig::default()),
+            signal_handler: Arc::new(signal_handler),
+        }
+    }
+    
+    /// Create a new workflow engine with custom configuration
+    pub fn new_with_config(config: WorkflowEngineConfig, signal_handler: impl SignalHandler + 'static) -> Self {
+        Self {
+            id: Uuid::new_v4().to_string(),
+            config: Arc::new(config),
+            signal_handler: Arc::new(signal_handler),
         }
     }
     
@@ -78,6 +85,7 @@ impl WorkflowEngine {
     #[instrument(skip(self, task), fields(task.name = %task.name, task.id = %task.id))]
     pub async fn execute_task<T: 'static + Send>(&self, task: WorkflowTask<T>) -> Result<T> {
         let start = std::time::Instant::now();
+        let task_name = task.name.clone();
         
         // Apply default timeout if not specified
         let task = if task.timeout.is_none() {
@@ -91,7 +99,7 @@ impl WorkflowEngine {
         // Record metrics
         let duration = start.elapsed();
         add_metric("workflow_task_duration_ms", duration.as_millis() as f64, &[
-            ("task_name", task.name.clone()),
+            ("task_name", task_name),
             ("success", result.is_ok().to_string()),
         ]);
         
@@ -100,14 +108,16 @@ impl WorkflowEngine {
     
     /// Execute multiple tasks concurrently
     #[instrument(skip(self, tasks), fields(task_count = tasks.len()))]
-    pub async fn execute_tasks<T: 'static + Send>(
+    pub async fn execute_task_group<T: 'static + Send>(
         &self,
-        tasks: TaskGroup<T>
-    ) -> Vec<Result<T>> {
-        info!("Executing {} tasks", tasks.len());
+        tasks: Vec<WorkflowTask<T>>
+    ) -> Result<Vec<T>> {
+        let task_count = tasks.len();
+        info!("Executing {} tasks", task_count);
         
         let start = std::time::Instant::now();
-        let results = tasks.execute_all().await;
+        let task_group = TaskGroup::new_with_tasks(tasks);
+        let results = task_group.execute_all().await;
         let duration = start.elapsed();
         
         // Count successes and failures
@@ -123,7 +133,34 @@ impl WorkflowEngine {
         info!("Completed {} tasks ({} succeeded, {} failed) in {:?}", 
              results.len(), success_count, failure_count, duration);
         
-        results
+        // Collect all successful results, or return the first error
+        let mut successful_results = Vec::with_capacity(success_count);
+        let mut first_error = None;
+        
+        for result in results {
+            match result {
+                Ok(value) => successful_results.push(value),
+                Err(err) => {
+                    if first_error.is_none() {
+                        first_error = Some(err);
+                    }
+                }
+            }
+        }
+        
+        if let Some(err) = first_error {
+            if successful_results.is_empty() {
+                // All tasks failed
+                Err(err)
+            } else {
+                // Some tasks succeeded, return successful results and log the error
+                warn!("Some tasks failed: {}", err);
+                Ok(successful_results)
+            }
+        } else {
+            // All tasks succeeded
+            Ok(successful_results)
+        }
     }
     
     /// Send a signal

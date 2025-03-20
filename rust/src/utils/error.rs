@@ -1,7 +1,6 @@
-use std::fmt;
 use thiserror::Error;
 use serde::{Deserialize, Serialize};
-use std::str::FromStr;
+use std::io;
 
 /// Result type for MCP operations
 pub type McpResult<T> = Result<T, McpError>;
@@ -61,6 +60,22 @@ pub enum McpError {
     /// Feature not implemented
     #[error("Feature not implemented")]
     NotImplemented,
+
+    /// JSON serialization/deserialization error
+    #[error("JSON error: {0}")]
+    Json(String),
+
+    /// Task execution error
+    #[error("Execution error: {0}")]
+    Execution(String),
+
+    /// Signal error
+    #[error("Signal error: {0}")]
+    Signal(String),
+
+    /// Task join error
+    #[error("Join error: {0}")]
+    Join(String),
 }
 
 impl McpError {
@@ -72,7 +87,7 @@ impl McpError {
 
 impl From<serde_json::Error> for McpError {
     fn from(err: serde_json::Error) -> Self {
-        McpError::InvalidMessage(format!("JSON error: {}", err))
+        McpError::Json(err.to_string())
     }
 }
 
@@ -82,8 +97,8 @@ impl From<tokio::time::error::Elapsed> for McpError {
     }
 }
 
-impl From<std::io::Error> for McpError {
-    fn from(err: std::io::Error) -> Self {
+impl From<io::Error> for McpError {
+    fn from(err: io::Error) -> Self {
         McpError::Io(err.to_string())
     }
 }

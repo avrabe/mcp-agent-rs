@@ -1,20 +1,19 @@
-use std::net::SocketAddr;
-use tokio::net::TcpStream;
-use tokio::sync::{mpsc, broadcast};
-use tokio::time::Duration;
-use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, AsyncReadExt, BufReader};
-use std::sync::Arc;
-use tokio::sync::Mutex;
-use std::collections::HashMap;
-use tokio::process::{Child, Command, ChildStdin, ChildStdout};
-use tokio::time::sleep;
-use std::pin::Pin;
-use std::fmt::Debug;
-use uuid::Uuid;
-
-use crate::utils::error::{McpError, McpResult};
 use crate::mcp::protocol::McpProtocol;
-use crate::mcp::types::{Message, MessageType, Priority, MessageId};
+use crate::mcp::types::{Message, MessageType, Priority};
+use crate::utils::error::{McpError, McpResult};
+use std::collections::HashMap;
+use std::fmt::Debug;
+use std::sync::Arc;
+use std::time::Duration;
+use tokio::io::AsyncReadExt;
+use tokio::net::TcpStream;
+use tokio::process::{Child, Command, ChildStdin, ChildStdout};
+use tokio::sync::Mutex;
+use tokio::sync::{broadcast, mpsc};
+use tokio::time::sleep;
+
+#[cfg(test)]
+use crate::mcp::MessageId;
 
 /// Represents the current state of a connection.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -340,7 +339,7 @@ impl Connection {
     /// Starts the message handler that processes incoming messages.
     fn start_message_handler(&mut self) {
         let stream_clone = self.stream.clone();
-        let mut protocol = self.protocol.clone();
+        let protocol = self.protocol.clone();
         let message_tx = self.message_tx.as_ref().unwrap().clone();
 
         let task = tokio::spawn(async move {

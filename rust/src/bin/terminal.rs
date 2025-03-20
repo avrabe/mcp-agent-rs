@@ -1,11 +1,10 @@
-use mcp_agent::mcp::agent::{Agent, AgentConfig};
+use mcp_agent::mcp::agent::Agent;
 use mcp_agent::mcp::types::{Message, MessageType, Priority};
 use mcp_agent::utils::error::McpResult;
 use rustyline::error::ReadlineError;
 use rustyline::Editor;
 use serde_json::json;
 use std::collections::HashMap;
-use std::str::FromStr;
 use tokio::runtime::Runtime;
 
 /// Interactive terminal for the MCP agent

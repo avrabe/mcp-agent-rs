@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tokio::sync::{broadcast, mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 use tokio::time;
 use uuid::Uuid;
@@ -192,7 +192,11 @@ impl AsyncioExecutor {
         tasks.remove(task_id);
     }
     
-    /// Cancel a task
+    /// Cancel a task by its ID
+    /// 
+    /// # Panics
+    /// 
+    /// This method will panic if the internal mutex is poisoned.
     pub fn cancel_task(&self, task_id: &str) -> McpResult<()> {
         let mut tasks = self.tasks.lock().unwrap();
         if let Some(handle) = tasks.remove(task_id) {
@@ -203,13 +207,21 @@ impl AsyncioExecutor {
         }
     }
     
-    /// Check if a task is running
+    /// Check if a task is currently running
+    /// 
+    /// # Panics
+    /// 
+    /// This method will panic if the internal mutex is poisoned.
     pub fn is_task_running(&self, task_id: &str) -> bool {
         let tasks = self.tasks.lock().unwrap();
         tasks.contains_key(task_id)
     }
     
-    /// Get the number of running tasks
+    /// Get the number of currently running tasks
+    /// 
+    /// # Panics
+    /// 
+    /// This method will panic if the internal mutex is poisoned.
     pub fn running_task_count(&self) -> usize {
         let tasks = self.tasks.lock().unwrap();
         tasks.len()

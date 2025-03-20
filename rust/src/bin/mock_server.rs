@@ -63,11 +63,11 @@ async fn handle_connection(mut socket: TcpStream, addr: SocketAddr) -> Result<()
 fn handle_message(message: &str) -> String {
     // For testing purposes, we'll have some predefined responses
     if message.contains("echo") {
-        return json!({
+        json!({
             "type": "response",
             "data": message,
             "status": "ok"
-        }).to_string();
+        }).to_string()
     } else if message.contains("ping") {
         return json!({
             "type": "response",

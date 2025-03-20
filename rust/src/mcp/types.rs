@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
-use std::fmt;
 use uuid::Uuid;
+use std::fmt;
 
 use crate::utils::error::{McpError, McpResult};
 
@@ -8,21 +8,39 @@ use crate::utils::error::{McpError, McpResult};
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct MessageId(pub [u8; 16]);
 
-impl MessageId {
-    /// Creates a new message ID
-    pub fn new() -> Self {
-        let uuid = Uuid::new_v4();
-        Self(uuid.into_bytes())
+impl Default for MessageId {
+    fn default() -> Self {
+        Self::new()
     }
+}
 
-    /// Creates a message ID from raw bytes
+impl MessageId {
+    /// Generate a new message ID
+    pub fn new() -> Self {
+        let bytes = Uuid::new_v4().into_bytes();
+        Self(bytes)
+    }
+    
+    /// Create a MessageId from raw bytes
     pub fn from_bytes(bytes: [u8; 16]) -> Self {
         Self(bytes)
     }
+    
+    /// Get the raw bytes of the MessageId
+    pub fn bytes(&self) -> &[u8; 16] {
+        &self.0
+    }
+    
+    /// Convert to a UUID
+    pub fn to_uuid(&self) -> Uuid {
+        Uuid::from_bytes(self.0)
+    }
+}
 
-    /// Returns the string representation of the message ID
-    pub fn to_string(&self) -> String {
-        Uuid::from_bytes(self.0).to_string()
+// Add Display implementation for MessageId
+impl fmt::Display for MessageId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", Uuid::from_bytes(self.0))
     }
 }
 

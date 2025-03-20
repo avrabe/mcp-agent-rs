@@ -1,6 +1,6 @@
 use crate::mcp::connection::{Connection, ConnectionConfig};
 use crate::mcp::executor::{AsyncioExecutor, Executor, ExecutorConfig, Signal, TaskResult};
-use crate::mcp::server_registry::{McpSettings, ServerRegistry, ServerSettings};
+use crate::mcp::server_registry::{McpSettings, ServerRegistry};
 use crate::mcp::types::{Message, MessageType, Priority};
 use crate::utils::error::{McpError, McpResult};
 use std::collections::HashMap;
@@ -121,7 +121,7 @@ impl Agent {
     /// Send a message to a specific server
     pub async fn send_message(&self, server_id: &str, message: Message) -> McpResult<()> {
         let mut connections = self.connections.lock().await;
-        if let Some(mut connection) = connections.get_mut(server_id) {
+        if let Some(connection) = connections.get_mut(server_id) {
             connection.send_message(message).await
         } else {
             Err(McpError::ServerNotFound(server_id.to_string()))
@@ -136,7 +136,7 @@ impl Agent {
         priority: Option<Priority>,
     ) -> McpResult<Message> {
         let mut connections = self.connections.lock().await;
-        if let Some(mut connection) = connections.get_mut(server_id) {
+        if let Some(connection) = connections.get_mut(server_id) {
             let request = Message::new(
                 MessageType::Request,
                 priority.unwrap_or(Priority::Normal),
@@ -144,8 +144,6 @@ impl Agent {
                 None,
                 None,
             );
-            
-            let timeout = Duration::from_secs(self.config.default_timeout_secs);
             
             // Send the message
             connection.send_message(request.clone()).await?;

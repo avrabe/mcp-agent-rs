@@ -2,15 +2,12 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::time::Duration;
 use serde::{Deserialize, Serialize};
-use tokio::sync::mpsc;
-use tokio::time::timeout;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use crate::mcp::connection::{Connection, ConnectionState};
+use crate::mcp::connection::Connection;
 use crate::utils::error::{McpError, McpResult};
-use crate::mcp::protocol::McpProtocol;
-use crate::mcp::types::{Message, MessageType, Priority, MessageId};
+use crate::mcp::types::{Message, MessageType, Priority};
 use serde_yaml;
 
 /// Authentication settings for an MCP server
@@ -149,6 +146,12 @@ impl std::fmt::Debug for ServerRegistry {
             .field("servers", &self.servers)
             .field("init_hooks", &format!("{} hooks", self.init_hooks.len()))
             .finish()
+    }
+}
+
+impl Default for ServerRegistry {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

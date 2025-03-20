@@ -42,6 +42,12 @@ impl Clone for McpProtocol {
     }
 }
 
+impl Default for McpProtocol {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl McpProtocol {
     /// Creates a new instance of the MCP Protocol handler.
     /// 
@@ -90,7 +96,7 @@ impl McpProtocol {
             match error {
                 McpError::Custom { code, message } => {
                     // Write error code
-                    buffer.extend_from_slice(&(*code as u32).to_be_bytes());
+                    buffer.extend_from_slice(&{ *code }.to_be_bytes());
                     
                     // Write error message
                     let error_msg = message.as_bytes();

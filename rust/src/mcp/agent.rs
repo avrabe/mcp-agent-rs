@@ -208,6 +208,40 @@ impl Agent {
     pub fn generate_id(&self) -> String {
         Uuid::new_v4().to_string()
     }
+    
+    /// Connect to a test server without using ServerRegistry
+    /// This is primarily for testing and demonstration purposes
+    pub async fn connect_to_test_server(&self, server_id: &str, address: &str) -> McpResult<()> {
+        println!("Connecting to test server at {}", address);
+        
+        // Connect to the server using TcpStream
+        let stream = TcpStream::connect(address).await
+            .map_err(|e| McpError::ConnectionFailed(e.to_string()))?;
+            
+        // Use simpler configuration for testing
+        let config = ConnectionConfig {
+            keep_alive_interval: Duration::from_secs(30),
+            keep_alive_timeout: Duration::from_secs(5),
+            max_retries: 1,
+            retry_delay_ms: 100,
+        };
+        
+        // Create a connection directly
+        let connection = Connection::new(address.to_string(), stream, config);
+        
+        // Store the connection
+        let mut connections = self.connections.lock().await;
+        connections.insert(server_id.to_string(), connection);
+        
+        println!("Connected to test server {}", server_id);
+        Ok(())
+    }
+    
+    /// List server IDs for all connected servers
+    pub async fn list_connections(&self) -> Vec<String> {
+        let connections = self.connections.lock().await;
+        connections.keys().cloned().collect()
+    }
 }
 
 #[cfg(test)]

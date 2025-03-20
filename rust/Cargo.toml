@@ -50,6 +50,10 @@ criterion = "0.5"
 name = "simple_client"
 path = "../examples/simple_mcp_example/simple_client.rs"
 
+[[example]]
+name = "server_manager_example"
+path = "../examples/simple_mcp_example/server_manager_example.rs"
+
 [features]
 default = []
 test-util = ["tokio/test-util"]

@@ -18,10 +18,14 @@ pub mod mcp;
 /// Utility modules for error handling and common functionality.
 pub mod utils;
 
+/// Configuration management
+pub mod config;
+
 pub use mcp::{
     connection::{Connection, ConnectionConfig},
     protocol::McpProtocol,
     types::{Message, MessageType, Priority},
+    server_manager::{ServerManager, ServerSettings, ServerAuthSettings},
 };
 
 pub use utils::error::{McpError, McpResult};

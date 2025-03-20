@@ -12,6 +12,9 @@ pub mod protocol;
 /// Server registry module
 pub mod server_registry;
 
+/// Server manager module
+pub mod server_manager;
+
 /// Core types and data structures
 pub mod types;
 
@@ -24,6 +27,7 @@ pub mod agent;
 pub use connection::Connection;
 pub use protocol::McpProtocol;
 pub use server_registry::{ServerRegistry, ServerSettings, McpSettings};
+pub use server_manager::{ServerManager, ServerSettings as ServerManagerSettings, ServerAuthSettings};
 pub use types::{Message, MessageId, MessageType, Priority, MessageHeader, MessageEnvelope};
 pub use executor::{Executor, AsyncioExecutor, ExecutorConfig, Signal, TaskResult};
 pub use agent::{Agent, AgentConfig};

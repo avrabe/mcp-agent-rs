@@ -30,6 +30,18 @@ The Model Context Protocol (MCP) allows AI assistants to interact with external 
   - Executing functions with arguments
   - Handling connection lifecycle
 
+### 3. Server Manager Example (Rust Code)
+
+- **File**: [server_manager_example.rs](./server_manager_example.rs)
+- **Description**: Demonstrates how to use the ServerManager component to manage MCP server lifecycle.
+- **Features**:
+  - Creating a ServerManager
+  - Registering server configurations
+  - Setting up initialization hooks
+  - Starting and stopping servers programmatically
+  - Managing connections to multiple servers
+  - Sending messages to servers
+
 ## Running the Examples
 
 ### Prerequisites
@@ -56,6 +68,13 @@ cargo run --bin terminal
 ```bash
 cd /path/to/mcp-agent
 cargo run --example simple_client
+```
+
+### Running the Server Manager Example
+
+```bash
+cd /path/to/mcp-agent
+cargo run --example server_manager_example
 ```
 
 ## Extending the Examples

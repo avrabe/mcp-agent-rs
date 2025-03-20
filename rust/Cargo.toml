@@ -36,7 +36,7 @@ anyhow = "1.0.80"
 
 # Added OpenTelemetry dependencies
 tracing = "0.1.40"
-tracing-subscriber = { version = "0.3.18", features = ["env-filter", "json"] }
+tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 
 # Add feature flags for OpenTelemetry
 [features]
@@ -95,3 +95,7 @@ path = "examples/router_workflow/main.rs"
 [[example]]
 name = "pipeline_workflow"
 path = "examples/pipeline_workflow/main.rs"
+
+[[example]]
+name = "retry_workflow"
+path = "examples/retry_workflow/main.rs"

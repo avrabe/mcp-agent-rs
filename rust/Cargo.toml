@@ -31,6 +31,8 @@ proptest = "1.4.0"
 rand = "0.8.5"
 tokio-test = "0.4.3"
 colored = "2.1.0"
+reqwest = { version = "0.11.24", features = ["json"] }
+anyhow = "1.0.80"
 
 # Added OpenTelemetry dependencies
 tracing = "0.1.40"
@@ -43,6 +45,7 @@ test-util = ["tokio/test-util"]
 server_registry = []
 telemetry-jaeger = ["opentelemetry", "opentelemetry_sdk", "opentelemetry-jaeger", "tracing-opentelemetry"]
 telemetry-otlp = ["opentelemetry", "opentelemetry_sdk", "opentelemetry-otlp", "tracing-opentelemetry"]
+ollama = ["reqwest"]
 
 # Optional dependencies
 [dependencies.opentelemetry]
@@ -76,3 +79,7 @@ criterion = "0.5"
 [[example]]
 name = "simple_client"
 path = "../examples/simple_mcp_example/simple_client.rs"
+
+[[example]]
+name = "parallel_workflow"
+path = "examples/parallel_workflow/main.rs"

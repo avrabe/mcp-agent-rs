@@ -27,6 +27,9 @@ pub mod telemetry;
 /// Workflow engine for orchestrating tasks and managing workflow state
 pub mod workflow;
 
+/// LLM integrations with various providers
+pub mod llm;
+
 pub use mcp::{
     protocol::McpProtocol,
     types::{Message, MessageType, Priority},
@@ -53,4 +56,14 @@ pub use telemetry::alerts::{
     AlertOperator,
     Alert,
     TerminalAlertOptions,
+};
+
+// Re-export LLM types for easier access
+pub use llm::{
+    LlmConfig, 
+    Message as LlmMessage, 
+    MessageRole, 
+    Completion,
+    CompletionRequest,
+    OllamaClient,
 };

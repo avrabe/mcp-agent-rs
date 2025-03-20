@@ -8,14 +8,13 @@
 //! - Signal handling for workflow pausing/resuming
 //! - Integration with the MCP agent telemetry system
 
-// Modules to be implemented
-// pub mod state;
-// pub mod signal;
-// pub mod task;
-// pub mod engine;
+pub mod state;
+pub mod signal;
+pub mod task;
+pub mod engine;
 
 // Re-export key components
-// pub use state::{WorkflowState, WorkflowResult};
-// pub use signal::WorkflowSignal;
-// pub use task::WorkflowTask;
-// pub use engine::WorkflowEngine;
+pub use state::{WorkflowState, WorkflowResult, SharedWorkflowState};
+pub use signal::{WorkflowSignal, SignalHandler, AsyncSignalHandler};
+pub use task::{WorkflowTask, TaskGroup, RetryConfig};
+pub use engine::{WorkflowEngine, WorkflowEngineConfig, Workflow, execute_workflow};

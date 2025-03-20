@@ -40,13 +40,18 @@ tracing-subscriber = { version = "0.3.18", features = ["env-filter", "json"] }
 default = ["server_registry"]
 test-util = ["tokio/test-util"]
 server_registry = []
-telemetry-jaeger = ["opentelemetry", "opentelemetry-jaeger", "tracing-opentelemetry"]
-telemetry-otlp = ["opentelemetry", "opentelemetry-otlp", "tracing-opentelemetry"]
+telemetry-jaeger = ["opentelemetry", "opentelemetry_sdk", "opentelemetry-jaeger", "tracing-opentelemetry"]
+telemetry-otlp = ["opentelemetry", "opentelemetry_sdk", "opentelemetry-otlp", "tracing-opentelemetry"]
 
 # Optional dependencies
 [dependencies.opentelemetry]
 version = "0.21.0"
 features = ["trace", "metrics"]
+optional = true
+
+[dependencies.opentelemetry_sdk]
+version = "0.21.2"
+features = ["trace", "rt-tokio"]
 optional = true
 
 [dependencies.opentelemetry-jaeger]

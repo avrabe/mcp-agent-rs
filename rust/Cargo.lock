@@ -1124,6 +1124,7 @@ dependencies = [
  "opentelemetry",
  "opentelemetry-jaeger",
  "opentelemetry-otlp",
+ "opentelemetry_sdk",
  "proptest",
  "rand",
  "rustyline",
@@ -1356,6 +1357,8 @@ dependencies = [
  "percent-encoding",
  "rand",
  "thiserror",
+ "tokio",
+ "tokio-stream",
 ]
 
 [[package]]

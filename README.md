@@ -128,9 +128,9 @@ if __name__ == "__main__":
 ```yaml
 execution_engine: asyncio
 logger:
-  transports: [console]  # You can use [file, console] for both
+  transports: [console] # You can use [file, console] for both
   level: debug
-  path: "logs/mcp-agent.jsonl"  # Used for file transport
+  path: "logs/mcp-agent.jsonl" # Used for file transport
   # For dynamic log filenames:
   # path_settings:
   #   path_pattern: "logs/mcp-agent-{unique_id}.jsonl"
@@ -191,6 +191,27 @@ openai:
 - [Contributing](#contributing)
 - [Roadmap](#roadmap)
 - [FAQs](#faqs)
+
+## Features
+
+- 🔄 Flexible message routing between model and client
+- 📋 Structured message format for consistent communication
+- 🚀 Low-latency, high-throughput design
+- 🔌 Pluggable architecture for custom models and clients
+- 📊 Comprehensive telemetry with OpenTelemetry integration
+- 🔒 Built-in security features
+
+## Telemetry and Observability
+
+MCP-Agent includes comprehensive telemetry capabilities based on OpenTelemetry for tracing and metrics collection:
+
+- **Distributed Tracing**: Track message flows and operations across the system
+- **Performance Metrics**: Monitor key performance indicators and latency
+- **Visualization**: Export traces to Jaeger or any OTLP-compatible backend
+- **Error Tracking**: Automatically capture and trace errors through the system
+- **Resource Attribution**: Add custom attributes to all spans for better filtering
+
+For detailed information and usage examples, see the [Telemetry Documentation](rust/README-TELEMETRY.md).
 
 ## Why use `mcp-agent`?
 
@@ -296,7 +317,7 @@ Everything in the framework is a derivative of these core capabilities.
 
 ## Workflows
 
-mcp-agent provides implementations for every pattern in Anthropic’s [Building Effective Agents](https://www.anthropic.com/research/building-effective-agents), as well as the OpenAI [Swarm](https://github.com/openai/swarm) pattern.
+mcp-agent provides implementations for every pattern in Anthropic's [Building Effective Agents](https://www.anthropic.com/research/building-effective-agents), as well as the OpenAI [Swarm](https://github.com/openai/swarm) pattern.
 Each pattern is model-agnostic, and exposed as an `AugmentedLLM`, making everything very composable.
 
 ### AugmentedLLM
@@ -425,7 +446,7 @@ Just like a Router, mcp-agent provides both an [embedding](src/mcp_agent/workflo
 
 ![Evaluator-optimizer workflow (Image credit: Anthropic)](https://www.anthropic.com/_next/image?url=https%3A%2F%2Fwww-cdn.anthropic.com%2Fimages%2F4zrzovbb%2Fwebsite%2F14f51e6406ccb29e695da48b17017e899a6119c7-2401x1000.png&w=3840&q=75)
 
-One LLM (the “optimizer”) refines a response, another (the “evaluator”) critiques it until a response exceeds a quality criteria.
+One LLM (the "optimizer") refines a response, another (the "evaluator") critiques it until a response exceeds a quality criteria.
 
 > [!NOTE]
 >
@@ -550,7 +571,7 @@ orchestrator = Orchestrator(
 
 ### Signaling and Human Input
 
-**Signaling**: The framework can pause/resume tasks. The agent or LLM might “signal” that it needs user input, so the workflow awaits. A developer may signal during a workflow to seek approval or review before continuing with a workflow.
+**Signaling**: The framework can pause/resume tasks. The agent or LLM might "signal" that it needs user input, so the workflow awaits. A developer may signal during a workflow to seek approval or review before continuing with a workflow.
 
 **Human Input**: If an Agent has a `human_input_callback`, the LLM can call a `__human_input__` tool to request user input mid-workflow.
 

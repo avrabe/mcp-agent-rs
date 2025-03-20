@@ -103,3 +103,7 @@ path = "examples/retry_workflow/main.rs"
 [[example]]
 name = "conditional_workflow"
 path = "examples/conditional_workflow/main.rs"
+
+[[example]]
+name = "state_machine_workflow"
+path = "examples/state_machine_workflow/main.rs"

@@ -59,6 +59,32 @@ impl WorkflowState {
         self.status = status.to_string();
         self.updated_at = Some(Utc::now());
     }
+    
+    /// Alias for update_status for API compatibility
+    pub fn set_status(&mut self, status: &str) {
+        self.update_status(status);
+    }
+    
+    /// Set a single metadata value
+    pub fn set_metadata<T: Into<serde_json::Value>>(&mut self, key: &str, value: T) {
+        self.metadata.insert(key.to_string(), value.into());
+        self.updated_at = Some(Utc::now());
+    }
+    
+    /// Set error information
+    pub fn set_error<S: Into<String>>(&mut self, message: S) {
+        self.record_error("WorkflowError", &message.into());
+    }
+    
+    /// Get a reference to the metadata for API compatibility
+    pub fn metadata(&self) -> &HashMap<String, serde_json::Value> {
+        &self.metadata
+    }
+    
+    /// Get the status for API compatibility
+    pub fn status(&self) -> &str {
+        &self.status
+    }
 }
 
 /// Thread-safe shared workflow state
@@ -101,6 +127,44 @@ impl WorkflowResult {
         }
     }
     
+    /// Create a success result with the given output
+    pub fn success<T: Into<serde_json::Value>>(output: T) -> Self {
+        let mut result = Self::with_value(output.into());
+        result.start_time = Some(Utc::now() - chrono::Duration::seconds(1));
+        result.end_time = Some(Utc::now());
+        result.metadata.insert("status".to_string(), serde_json::Value::String("success".to_string()));
+        result
+    }
+    
+    /// Create a failed result with the given error message
+    pub fn failed<S: Into<String>>(error_message: S) -> Self {
+        let mut result = Self::new();
+        result.start_time = Some(Utc::now() - chrono::Duration::seconds(1));
+        result.end_time = Some(Utc::now());
+        result.metadata.insert("status".to_string(), serde_json::Value::String("failed".to_string()));
+        result.metadata.insert("error".to_string(), serde_json::Value::String(error_message.into()));
+        result
+    }
+    
+    /// Create a partial result with the given success and failure counts
+    pub fn partial<T: Into<serde_json::Value>>(partial_output: T, success_count: usize, failure_count: usize) -> Self {
+        let mut result = Self::with_value(partial_output.into());
+        result.start_time = Some(Utc::now() - chrono::Duration::seconds(1));
+        result.end_time = Some(Utc::now());
+        result.metadata.insert("status".to_string(), serde_json::Value::String("partial".to_string()));
+        result.metadata.insert("success_count".to_string(), serde_json::Value::Number(serde_json::Number::from(success_count)));
+        result.metadata.insert("failure_count".to_string(), serde_json::Value::Number(serde_json::Number::from(failure_count)));
+        result
+    }
+    
+    /// Check if the result was successful
+    pub fn is_success(&self) -> bool {
+        self.metadata.get("status")
+            .and_then(|v| v.as_str())
+            .map(|s| s == "success")
+            .unwrap_or(false)
+    }
+    
     /// Set the start time to now
     pub fn start(&mut self) {
         self.start_time = Some(Utc::now());
@@ -117,5 +181,20 @@ impl WorkflowResult {
             (Some(start), Some(end)) => Some((end - start).num_milliseconds()),
             _ => None,
         }
+    }
+    
+    /// Get the output value as a formatted string
+    pub fn output(&self) -> String {
+        match &self.value {
+            Some(v) => serde_json::to_string_pretty(v).unwrap_or_else(|_| "Error formatting output".to_string()),
+            None => "No output available".to_string(),
+        }
+    }
+    
+    /// Get the error message if present
+    pub fn error(&self) -> Option<String> {
+        self.metadata.get("error")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
     }
 } 

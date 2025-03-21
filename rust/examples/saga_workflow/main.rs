@@ -3,11 +3,9 @@ use rand::Rng;
 use tracing::{error, info};
 
 use mcp_agent::{
-    telemetry::{init_telemetry, TelemetryConfig},
+    telemetry::{TelemetryConfig, init_telemetry},
     workflow::{
-        WorkflowEngine, WorkflowResult,
-        signal::AsyncSignalHandler,
-        state::WorkflowState,
+        WorkflowEngine, WorkflowResult, signal::AsyncSignalHandler, state::WorkflowState,
         task::task,
     },
 };
@@ -17,16 +15,16 @@ use mcp_agent::{
 struct SagaStep {
     /// Name of the step
     name: String,
-    
+
     /// Whether the step has been executed
     executed: bool,
-    
+
     /// Whether the step has been compensated
     compensated: bool,
-    
+
     /// Result of execution
     execution_result: Option<String>,
-    
+
     /// Result of compensation
     compensation_result: Option<String>,
 }
@@ -48,7 +46,7 @@ impl SagaStep {
         self.executed = true;
         self.execution_result = Some(result.to_string());
     }
-    
+
     /// Mark the step as compensated with the given result
     fn mark_compensated(&mut self, result: &str) {
         self.compensated = true;
@@ -60,19 +58,19 @@ impl SagaStep {
 struct SagaWorkflow {
     /// Steps in the saga
     steps: Vec<SagaStep>,
-    
+
     /// The workflow engine
     engine: WorkflowEngine,
-    
+
     /// The workflow state
     state: WorkflowState,
-    
+
     /// Indices of steps that have been executed
     executed_steps: Vec<usize>,
-    
+
     /// Whether compensation should be triggered
     should_compensate: bool,
-    
+
     /// Reason for compensation
     compensation_reason: Option<String>,
 }
@@ -136,10 +134,8 @@ impl SagaWorkflow {
             Err(e) => {
                 error!("Step {} failed: {}", step_index, e);
                 self.should_compensate = true;
-                self.compensation_reason = Some(format!(
-                    "Step {} failed during execution: {}",
-                    step_name, e
-                ));
+                self.compensation_reason =
+                    Some(format!("Step {} failed during execution: {}", step_name, e));
                 Err(e)
             }
         }
@@ -155,7 +151,7 @@ impl SagaWorkflow {
             );
             return Ok(());
         }
-        
+
         let step_name = self.steps[step_index].name.clone();
         info!("Compensating step {}: {}", step_index, step_name);
 
@@ -216,7 +212,9 @@ impl SagaWorkflow {
         if self.should_compensate {
             info!(
                 "Initiating compensation for saga workflow: {}",
-                self.compensation_reason.as_deref().unwrap_or("Unknown error")
+                self.compensation_reason
+                    .as_deref()
+                    .unwrap_or("Unknown error")
             );
             self.state.update_status("compensating");
 
@@ -255,7 +253,7 @@ impl SagaWorkflow {
 
         // All steps completed successfully
         info!("All steps in saga workflow completed successfully");
-        
+
         // Create the final success report
         let final_report = serde_json::json!({
             "status": "completed",
@@ -277,13 +275,13 @@ impl SagaWorkflow {
 /// Create a saga workflow with test steps
 fn create_saga_workflow(engine: WorkflowEngine) -> SagaWorkflow {
     let mut saga = SagaWorkflow::new(engine);
-    
+
     // Add some test steps
     saga.add_step("Reserve Inventory");
     saga.add_step("Process Payment");
     saga.add_step("Update Order Status");
     saga.add_step("Send Notification");
-    
+
     saga
 }
 
@@ -292,19 +290,19 @@ async fn run_saga_workflow() -> Result<()> {
     // Initialize telemetry
     let telemetry_config = TelemetryConfig::default();
     let _ = init_telemetry(telemetry_config);
-    
+
     // Create a signal handler for the workflow engine
     let signal_handler = AsyncSignalHandler::new();
-    
+
     // Create the workflow engine
     let engine = WorkflowEngine::new(signal_handler);
-    
+
     // Create the saga workflow
     let mut workflow = create_saga_workflow(engine);
-    
+
     // Run the workflow
     let result = workflow.run().await?;
-    
+
     // Print the result
     if result.is_success() {
         println!("\nWorkflow completed successfully!");
@@ -313,7 +311,7 @@ async fn run_saga_workflow() -> Result<()> {
         println!("\nWorkflow failed!");
         println!("Error: {}", result.error().unwrap_or_default());
     }
-    
+
     Ok(())
 }
 

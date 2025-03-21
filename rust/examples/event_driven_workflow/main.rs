@@ -9,10 +9,7 @@ use uuid::Uuid;
 
 use mcp_agent::telemetry::{TelemetryConfig, init_telemetry};
 use mcp_agent::workflow::{
-    WorkflowEngine, WorkflowResult,
-    signal::AsyncSignalHandler,
-    state::WorkflowState,
-    task::task,
+    WorkflowEngine, WorkflowResult, signal::AsyncSignalHandler, state::WorkflowState, task::task,
 };
 
 /// An event that can be processed by the workflow
@@ -40,15 +37,25 @@ impl Event {
             processed: false,
         }
     }
-    
+
     /// Creates a user action event
     fn user_action(action_type: &str, payload: &str) -> Self {
-        Self::new(EventType::UserAction, action_type, payload, EventPriority::Medium)
+        Self::new(
+            EventType::UserAction,
+            action_type,
+            payload,
+            EventPriority::Medium,
+        )
     }
-    
+
     /// Creates a system alert event
     fn system_alert(alert_type: &str, payload: &str) -> Self {
-        Self::new(EventType::SystemAlert, alert_type, payload, EventPriority::High)
+        Self::new(
+            EventType::SystemAlert,
+            alert_type,
+            payload,
+            EventPriority::High,
+        )
     }
 }
 
@@ -100,13 +107,13 @@ struct EventProcessingResult {
 struct EventDrivenWorkflow {
     /// Workflow state
     state: Arc<Mutex<WorkflowState>>,
-    
+
     /// Workflow engine
     engine: WorkflowEngine,
-    
+
     /// Queue of events to process
     event_queue: Arc<Mutex<VecDeque<Event>>>,
-    
+
     /// Results of event processing
     processing_results: Arc<Mutex<Vec<EventProcessingResult>>>,
 }
@@ -114,11 +121,8 @@ struct EventDrivenWorkflow {
 impl EventDrivenWorkflow {
     /// Create a new event-driven workflow
     pub fn new(engine: WorkflowEngine) -> Self {
-        let state = WorkflowState::new(
-            Some("event_driven_workflow".to_string()), 
-            None
-        );
-        
+        let state = WorkflowState::new(Some("event_driven_workflow".to_string()), None);
+
         Self {
             state: Arc::new(Mutex::new(state)),
             engine,
@@ -126,7 +130,7 @@ impl EventDrivenWorkflow {
             processing_results: Arc::new(Mutex::new(Vec::new())),
         }
     }
-    
+
     /// Submit an event to the workflow
     pub async fn submit_event(&self, event: Event) -> Result<()> {
         info!("Submitting event: {}", event.id);
@@ -134,19 +138,19 @@ impl EventDrivenWorkflow {
         queue.push_back(event);
         Ok(())
     }
-    
+
     /// Process a specific event
     async fn process_event(&self, event: Event) -> Result<String> {
         info!("Processing event: {}", event.id);
-        
+
         // Create a task to process the event
         let event_id = event.id.clone();
         let event_type = event.event_type.clone();
         let payload = event.payload.clone();
-        
+
         let task = task(&format!("process_event_{}", event_id), move || async move {
             info!("Processing event {} of type {:?}", event_id, event_type);
-            
+
             // Simulate processing based on event type
             match event_type {
                 EventType::UserAction => {
@@ -181,12 +185,12 @@ impl EventDrivenWorkflow {
                 }
             }
         });
-        
+
         // Execute the task using the workflow engine
         match self.engine.execute_task(task).await {
             Ok(result) => {
                 info!("Successfully processed event: {}", event.id);
-                
+
                 // Record the result
                 let mut results = self.processing_results.lock().await;
                 results.push(EventProcessingResult {
@@ -197,12 +201,12 @@ impl EventDrivenWorkflow {
                     error: None,
                     processing_time_ms: 0, // In a real implementation, we would track this
                 });
-                
+
                 Ok(result)
             }
             Err(e) => {
                 error!("Failed to process event: {}, error: {}", event.id, e);
-                
+
                 // Record the failure
                 let mut results = self.processing_results.lock().await;
                 results.push(EventProcessingResult {
@@ -213,12 +217,12 @@ impl EventDrivenWorkflow {
                     error: Some(e.to_string()),
                     processing_time_ms: 0,
                 });
-                
+
                 Err(e)
             }
         }
     }
-    
+
     /// Run the workflow by processing all events in the queue
     pub async fn run(&self) -> Result<WorkflowResult> {
         info!("Starting event-driven workflow");
@@ -226,22 +230,22 @@ impl EventDrivenWorkflow {
             let mut state = self.state.lock().await;
             state.update_status("running");
         }
-        
+
         // Process events in the queue
         let mut queue = self.event_queue.lock().await;
         let events: Vec<Event> = queue.drain(..).collect();
         drop(queue);
-        
+
         let mut successful_events = 0;
         let mut failed_events = 0;
-        
+
         for event in events {
             match self.process_event(event).await {
                 Ok(_) => successful_events += 1,
                 Err(_) => failed_events += 1,
             }
         }
-        
+
         // Generate summary report
         let results = self.processing_results.lock().await;
         let summary = serde_json::json!({
@@ -257,14 +261,17 @@ impl EventDrivenWorkflow {
                 })
             }).collect::<Vec<_>>(),
         });
-        
+
         // Update status and return result
         if failed_events > 0 {
             {
                 let mut state = self.state.lock().await;
                 state.update_status("completed_with_errors");
             }
-            Ok(WorkflowResult::failed(format!("{} events failed processing", failed_events)))
+            Ok(WorkflowResult::failed(format!(
+                "{} events failed processing",
+                failed_events
+            )))
         } else {
             {
                 let mut state = self.state.lock().await;
@@ -280,32 +287,43 @@ async fn run_event_driven_workflow() -> Result<()> {
     // Initialize telemetry
     let telemetry_config = TelemetryConfig::default();
     let _guard = init_telemetry(telemetry_config);
-    
+
     // Create signal handler and workflow engine
     let signal_handler = AsyncSignalHandler::new();
     let engine = WorkflowEngine::new(signal_handler);
-    
+
     // Create workflow
     let workflow = EventDrivenWorkflow::new(engine);
-    
+
     // Submit events
-    workflow.submit_event(Event::user_action("login", "user123 logged in")).await?;
-    workflow.submit_event(Event::system_alert("low_memory", "System memory below 10%")).await?;
-    workflow.submit_event(Event::user_action("logout", "user456 logged out")).await?;
-    workflow.submit_event(Event::system_alert("high_cpu", "CPU usage at 90%")).await?;
-    
+    workflow
+        .submit_event(Event::user_action("login", "user123 logged in"))
+        .await?;
+    workflow
+        .submit_event(Event::system_alert("low_memory", "System memory below 10%"))
+        .await?;
+    workflow
+        .submit_event(Event::user_action("logout", "user456 logged out"))
+        .await?;
+    workflow
+        .submit_event(Event::system_alert("high_cpu", "CPU usage at 90%"))
+        .await?;
+
     // Run the workflow
     let result = workflow.run().await?;
-    
+
     // Print the result
     if result.is_success() {
         println!("\nWorkflow completed successfully!");
-        println!("{}", serde_json::to_string_pretty(&result.output()).unwrap());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&result.output()).unwrap()
+        );
     } else {
         println!("\nWorkflow completed with errors!");
         println!("Error: {}", result.error().unwrap_or_default());
     }
-    
+
     Ok(())
 }
 

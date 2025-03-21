@@ -119,3 +119,7 @@ path = "examples/event_driven_workflow/main.rs"
 [[example]]
 name = "fan_out_fan_in_workflow"
 path = "examples/fan_out_fan_in_workflow/main.rs"
+
+[[example]]
+name = "human_input_example"
+path = "examples/human_input_example/main.rs"

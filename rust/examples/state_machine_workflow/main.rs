@@ -1,19 +1,19 @@
 use std::time::Duration;
 use std::collections::{HashMap, VecDeque};
+use std::sync::Arc;
 use anyhow::{anyhow, Result};
 use tracing::{info, warn, error, debug};
 use chrono::{DateTime, Utc};
+use async_trait::async_trait;
+use serde_json::json;
 
 use mcp_agent::telemetry::{init_telemetry, TelemetryConfig};
 use mcp_agent::workflow::{
-    WorkflowEngine, WorkflowState, WorkflowResult, 
-    TaskGroup, Task, TaskResult, TaskResultStatus,
-    SignalHandler, WorkflowSignal,
+    WorkflowEngine, WorkflowState, WorkflowResult, Workflow,
+    task, AsyncSignalHandler, WorkflowSignal, execute_workflow,
 };
-use mcp_agent::llm::{
-    ollama::{OllamaClient, OllamaConfig},
-    types::{Message, Role, CompletionRequest, Completion},
-};
+use mcp_agent::{LlmMessage as Message, MessageRole, CompletionRequest, Completion, LlmConfig};
+use mcp_agent::llm::types::LlmClient;
 
 /// Define states for a document review workflow
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -155,7 +155,7 @@ impl Document {
 struct StateMachineWorkflow {
     state: WorkflowState,
     engine: WorkflowEngine,
-    llm_client: OllamaClient,
+    llm_client: Arc<MockLlmClient>,
     document: Document,
     transition_log: Vec<StateTransitionEntry>,
     transition_queue: VecDeque<(ReviewTransition, String, String)>, // (transition, comment, user)
@@ -166,17 +166,20 @@ struct StateMachineWorkflow {
 impl StateMachineWorkflow {
     fn new(
         engine: WorkflowEngine,
-        llm_client: OllamaClient,
+        llm_client: Arc<MockLlmClient>,
         document: Document,
         requires_ai_review: bool,
     ) -> Self {
-        let mut state = WorkflowState::new();
-        state.set_metadata("document_id", document.id.clone());
-        state.set_metadata("document_title", document.title.clone());
-        state.set_metadata("document_state", document.current_state.as_str().to_string());
+        let mut metadata = HashMap::new();
+        metadata.insert("document_id".to_string(), json!(document.id.clone()));
+        metadata.insert("document_title".to_string(), json!(document.title.clone()));
+        metadata.insert("document_state".to_string(), json!(document.current_state.as_str().to_string()));
         
         Self {
-            state,
+            state: WorkflowState::new(
+                Some("StateMachineWorkflow".to_string()),
+                Some(metadata)
+            ),
             engine,
             llm_client,
             document,
@@ -232,320 +235,396 @@ impl StateMachineWorkflow {
         self.document.updated_at = Utc::now();
         
         // Update workflow state
-        self.state.set_metadata("document_state", next_state.as_str().to_string());
-        self.state.set_metadata("last_transition", transition.as_str().to_string());
-        self.state.set_metadata("transition_count", self.transition_log.len().to_string());
+        self.state.set_metadata("document_state", json!(next_state.as_str().to_string()));
+        self.state.set_metadata("last_transition", json!(transition.as_str().to_string()));
+        self.state.set_metadata("transition_count", json!(self.transition_log.len()));
         
         Ok(true)
     }
     
     /// Create a task to perform AI review on the document
-    fn create_ai_review_task(&self) -> Task {
+    fn create_ai_review_task(&self) -> task::WorkflowTask<String> {
         let llm_client = self.llm_client.clone();
         let document_content = self.document.content.clone();
         let document_title = self.document.title.clone();
         
-        Task::new("ai_document_review", move |_ctx| {
+        task::task("ai_document_review", move || async move {
             info!("Starting AI review for document: {}", document_title);
             
             let prompt = format!(
                 "Review the following document for clarity, accuracy, and completeness. \
-                Provide specific feedback on areas that need improvement or clarification. \
-                If the document is ready for approval, state that explicitly.\n\n\
+                Provide constructive feedback and suggestions for improvement. \
+                If there are any issues, clearly state what needs to be revised.\n\n\
                 DOCUMENT TITLE: {}\n\n\
-                DOCUMENT CONTENT:\n{}",
+                DOCUMENT CONTENT:\n{}\n\n\
+                Please provide your review:",
                 document_title, document_content
             );
             
             let request = CompletionRequest {
                 model: "llama2".to_string(),
-                messages: vec![Message {
-                    role: Role::System,
-                    content: "You are a helpful document reviewer with expertise in technical and business documents. Provide constructive feedback.".to_string(),
-                }, Message {
-                    role: Role::User,
-                    content: prompt,
-                }],
-                stream: false,
-                options: None,
+                messages: vec![
+                    Message {
+                        role: MessageRole::System,
+                        content: "You are an expert document reviewer providing constructive feedback.".to_string(),
+                        metadata: None,
+                    },
+                    Message {
+                        role: MessageRole::User,
+                        content: prompt,
+                        metadata: None,
+                    }
+                ],
+                max_tokens: Some(1000),
+                temperature: Some(0.7),
+                top_p: None,
+                parameters: HashMap::new(),
             };
             
-            match llm_client.create_completion(&request) {
+            match llm_client.complete(request).await {
                 Ok(completion) => {
-                    let review = completion.message.content.clone();
+                    let review = completion.content;
                     info!("AI review completed");
-                    Ok(TaskResult::success(review))
+                    Ok(review)
                 },
                 Err(e) => {
                     error!("AI review failed: {}", e);
-                    Err(anyhow!("Failed to complete AI review: {}", e))
+                    Err(anyhow!("Failed to generate AI review: {}", e))
                 }
             }
         })
     }
     
-    /// Check if the document needs AI review
+    /// Determine if AI review is needed
     fn needs_ai_review(&self) -> bool {
         self.requires_ai_review && self.document.current_state == ReviewState::InReview
     }
     
-    /// Generate a summary of the document's review process
+    /// Generate a summary of the document's state and transition history
     fn generate_review_summary(&self) -> String {
-        let mut summary = String::new();
+        let mut summary = format!(
+            "Document Review Summary\n\
+            =======================\n\
+            Title: {}\n\
+            ID: {}\n\
+            Author: {}\n\
+            Current State: {:?}\n\
+            Revision: {}\n\
+            Created: {}\n\
+            Last Updated: {}\n\n\
+            Transition History:\n\
+            ------------------\n",
+            self.document.title,
+            self.document.id,
+            self.document.author,
+            self.document.current_state,
+            self.document.revision,
+            self.document.created_at.format("%Y-%m-%d %H:%M:%S"),
+            self.document.updated_at.format("%Y-%m-%d %H:%M:%S"),
+        );
         
-        summary.push_str(&format!("# Review Summary for \"{}\"\n\n", self.document.title));
-        summary.push_str(&format!("Document ID: {}\n", self.document.id));
-        summary.push_str(&format!("Author: {}\n", self.document.author));
-        summary.push_str(&format!("Current State: {:?}\n", self.document.current_state));
-        summary.push_str(&format!("Current Revision: {}\n", self.document.revision));
-        summary.push_str(&format!("Created: {}\n", self.document.created_at));
-        summary.push_str(&format!("Last Updated: {}\n\n", self.document.updated_at));
-        
-        summary.push_str("## State Transition History\n\n");
-        
-        for (index, entry) in self.transition_log.iter().enumerate() {
+        for (i, entry) in self.transition_log.iter().enumerate() {
             summary.push_str(&format!(
-                "{}. {} - {:?} → {:?} via {:?}\n   User: {}\n   Comment: {}\n\n",
-                index + 1,
-                entry.timestamp,
+                "{}. {} | {:?} -> {:?} | Transition: {:?} | User: {} | Comment: {}\n",
+                i + 1,
+                entry.timestamp.format("%Y-%m-%d %H:%M:%S"),
                 entry.from_state,
                 entry.to_state,
                 entry.transition,
                 entry.user,
-                entry.comment
+                entry.comment,
             ));
         }
         
-        if let Some(comment) = &self.current_review_comment {
-            summary.push_str("## Latest Review Comment\n\n");
-            summary.push_str(comment);
-            summary.push_str("\n\n");
+        if let Some(review) = &self.current_review_comment {
+            summary.push_str("\nLatest Review Comments:\n");
+            summary.push_str("---------------------\n");
+            summary.push_str(review);
         }
-        
-        summary.push_str("## Document Content Preview\n\n");
-        let preview_length = 200.min(self.document.content.len());
-        summary.push_str(&format!("{}...\n", &self.document.content[..preview_length]));
         
         summary
     }
-    
+}
+
+#[async_trait]
+impl Workflow for StateMachineWorkflow {
     async fn run(&mut self) -> Result<WorkflowResult> {
-        // Initialize workflow
-        self.state.set_status("starting");
-        info!("Starting state machine workflow for document: {}", self.document.id);
+        let mut result = WorkflowResult::new();
+        result.start();
         
-        // Check if LLM is available if we need AI review
+        // Check if LLM client is available when AI review is required
         if self.requires_ai_review {
-            if let Err(e) = self.llm_client.check_availability().await {
-                error!("LLM client is not available for AI review: {}", e);
-                self.state.set_metadata("ai_review_available", "false");
-                self.requires_ai_review = false;
-                // We continue without AI review capability
-                warn!("Continuing without AI review capability");
-            } else {
-                self.state.set_metadata("ai_review_available", "true");
+            if !self.llm_client.is_available().await? {
+                self.state.set_error("LLM service is not available for AI review");
+                let mut failed_result = WorkflowResult::new();
+                failed_result.set_error("LLM service is not available for AI review");
+                return Ok(failed_result);
             }
         }
         
-        self.state.set_status("processing");
+        self.state.set_status("starting");
+        info!("Starting state machine workflow for document: {}", self.document.title);
         
-        // Simulate document workflow
-        // In a real application, you would integrate with actual user actions
-        // Here we'll set up a sequence of transitions to demonstrate the state machine
+        // Simulate document workflow with predefined transitions
+        if self.document.current_state == ReviewState::Draft {
+            // Automatically submit draft for review
+            if self.process_transition(
+                ReviewTransition::Submit,
+                "Initial submission for review".to_string(),
+                "system".to_string(),
+            )? {
+                info!("Document submitted for review");
+            }
+        }
         
-        // Initial submission
-        self.queue_transition(
-            ReviewTransition::Submit,
-            "Initial document submission".to_string(),
-            "John Author".to_string()
-        );
-        
-        // Start review process
-        self.queue_transition(
-            ReviewTransition::StartReview,
-            "Starting formal review process".to_string(),
-            "Sarah Reviewer".to_string()
-        );
-        
-        // Process each transition in order
+        // Process the transitions in the queue
         while let Some((transition, comment, user)) = self.transition_queue.pop_front() {
-            info!("Processing transition {:?} for document {}", transition, self.document.id);
+            self.state.set_status("processing_transition");
             
-            match self.process_transition(transition, comment, user) {
-                Ok(true) => {
-                    info!("Transition successful, new state: {:?}", self.document.current_state);
+            // Apply the transition
+            if self.process_transition(transition, comment, user)? {
+                // If document moves to InReview and AI review is required, perform AI review
+                if self.document.current_state == ReviewState::InReview && self.needs_ai_review() {
+                    self.state.set_status("ai_review");
+                    info!("Performing AI review on document");
                     
-                    // If we're now in review state and AI review is required, do it
-                    if self.needs_ai_review() {
-                        info!("Performing AI review for document {}", self.document.id);
-                        
-                        let review_task = self.create_ai_review_task();
-                        let task_group = TaskGroup::new(vec![review_task]);
-                        
-                        match self.engine.execute_task_group(task_group).await {
-                            Ok(results) => {
-                                if let Some(result) = results.first() {
-                                    if result.status == TaskResultStatus::Success {
-                                        let review_comment = result.output.clone();
-                                        info!("AI review completed");
-                                        
-                                        // Store the review comment
-                                        self.current_review_comment = Some(review_comment.clone());
-                                        
-                                        // Based on AI review, decide next transition
-                                        if review_comment.to_lowercase().contains("ready for approval") {
-                                            self.queue_transition(
-                                                ReviewTransition::Approve,
-                                                format!("AI Review: {}", review_comment),
-                                                "AI Reviewer".to_string()
-                                            );
-                                        } else {
-                                            self.queue_transition(
-                                                ReviewTransition::RequestRevision,
-                                                format!("AI Review: {}", review_comment),
-                                                "AI Reviewer".to_string()
-                                            );
-                                        }
-                                    } else {
-                                        warn!("AI review task failed");
-                                        // If AI review fails, queue a manual review request
-                                        self.queue_transition(
-                                            ReviewTransition::RequestRevision,
-                                            "AI review failed, manual review required".to_string(),
-                                            "System".to_string()
-                                        );
-                                    }
-                                }
-                            },
-                            Err(e) => {
-                                error!("Failed to execute AI review: {}", e);
-                                // Handle AI review failure
-                                self.queue_transition(
-                                    ReviewTransition::RequestRevision,
-                                    format!("AI review failed: {}", e),
-                                    "System".to_string()
-                                );
-                            }
+                    let review_task = self.create_ai_review_task();
+                    let review_result = self.engine.execute_task(review_task).await?;
+                    
+                    // Save the review comment
+                    self.current_review_comment = Some(review_result.clone());
+                    self.state.set_metadata("ai_review_complete", json!(true));
+                    
+                    // For demo purposes, automatically request revision based on AI review
+                    if review_result.contains("revise") || review_result.contains("improve") {
+                        if self.process_transition(
+                            ReviewTransition::RequestRevision,
+                            format!("AI Review suggested revisions: {}", review_result),
+                            "ai_reviewer".to_string(),
+                        )? {
+                            info!("AI review requested revisions");
+                        }
+                    } else {
+                        if self.process_transition(
+                            ReviewTransition::Approve,
+                            format!("AI Review approved: {}", review_result),
+                            "ai_reviewer".to_string(),
+                        )? {
+                            info!("AI review approved document");
                         }
                     }
-                    
-                    // For demo purposes: if we're in revision required, simulate a resubmission
-                    if self.document.current_state == ReviewState::RevisionRequired {
-                        // Update document content to simulate revision
-                        self.document.update_content(format!(
-                            "{}\n\n[REVISED] Addressed reviewer comments in revision {}",
-                            self.document.content, 
-                            self.document.revision
-                        ));
-                        
-                        // Queue resubmission
-                        self.queue_transition(
-                            ReviewTransition::Resubmit,
-                            "Addressed review comments".to_string(),
-                            self.document.author.clone()
-                        );
-                    }
-                    
-                    // For demo purposes: if we're approved, proceed to publishing
-                    if self.document.current_state == ReviewState::Approved {
-                        self.queue_transition(
-                            ReviewTransition::Publish,
-                            "Document approved and ready for publishing".to_string(),
-                            "Maria Publisher".to_string()
-                        );
-                    }
-                    
-                    // For demo purposes: if we're published, archive after some time
-                    if self.document.current_state == ReviewState::Published {
-                        self.queue_transition(
-                            ReviewTransition::Archive,
-                            "Archiving document after publication period".to_string(),
-                            "System".to_string()
-                        );
-                    }
-                },
-                Ok(false) => {
-                    warn!("Invalid transition {:?} from state {:?}", 
-                         transition, self.document.current_state);
-                },
-                Err(e) => {
-                    error!("Error processing transition: {}", e);
-                    self.state.set_error(format!("Transition error: {}", e));
-                    return Ok(WorkflowResult::failed(&format!("Workflow error: {}", e)));
                 }
+            } else {
+                warn!("Failed to process transition: {:?}", transition);
             }
-            
-            // Simulate time passing between transitions
-            tokio::time::sleep(Duration::from_millis(200)).await;
         }
         
-        // Completed all transitions
+        // Update final workflow state
         self.state.set_status("completed");
         
-        // Generate summary report
+        // Generate summary of the document's review process
         let summary = self.generate_review_summary();
         
-        Ok(WorkflowResult::success(summary))
+        // Return the workflow result
+        result.value = Some(json!({
+            "document_id": self.document.id,
+            "title": self.document.title,
+            "final_state": self.document.current_state.as_str(),
+            "revision": self.document.revision,
+            "transition_count": self.transition_log.len(),
+            "summary": summary
+        }));
+        
+        result.complete();
+        Ok(result)
+    }
+    
+    fn state(&self) -> &WorkflowState {
+        &self.state
+    }
+    
+    fn state_mut(&mut self) -> &mut WorkflowState {
+        &mut self.state
+    }
+}
+
+/// Mock LLM client for document review
+struct MockLlmClient {
+    config: LlmConfig,
+}
+
+impl MockLlmClient {
+    fn new() -> Self {
+        Self {
+            config: LlmConfig {
+                model: "mock-llama2".to_string(),
+                api_url: "http://localhost:11434".to_string(),
+                api_key: None,
+                max_tokens: Some(1000),
+                temperature: Some(0.7),
+                top_p: Some(0.9),
+                parameters: HashMap::new(),
+            },
+        }
+    }
+}
+
+#[async_trait]
+impl LlmClient for MockLlmClient {
+    async fn complete(&self, request: CompletionRequest) -> Result<Completion> {
+        // Simulate processing time
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        
+        // Extract the document content from the prompt
+        let prompt = if let Some(user_message) = request.messages.iter().find(|m| matches!(m.role, MessageRole::User)) {
+            &user_message.content
+        } else {
+            "Unknown document"
+        };
+        
+        // Generate different reviews based on content patterns
+        let response = if prompt.contains("error") || prompt.contains("bug") || prompt.contains("issue") {
+            "This document needs revision. There are several errors and issues that should be addressed:\n\
+            1. The technical specifications are unclear in section 2.\n\
+            2. There are inconsistencies between the requirements and implementation sections.\n\
+            3. Please revise the conclusion to better summarize the key points.\n\
+            Overall, the document requires significant improvement before it can be approved."
+        } else if prompt.contains("draft") || prompt.contains("initial") {
+            "This document is a good starting point, but needs some improvements:\n\
+            1. The introduction could be more engaging.\n\
+            2. Consider adding more specific examples in the middle section.\n\
+            3. The formatting could be more consistent throughout.\n\
+            Please revise these points before final approval."
+        } else {
+            "This document meets all requirements and is well-structured. The content is clear,\
+            accurate, and comprehensive. The arguments are well-supported and the conclusions follow\
+            logically from the presented information. I recommend approval without further revisions."
+        };
+        
+        let prompt_len = prompt.len();
+        let response_len = response.len();
+        
+        Ok(Completion {
+            content: response.to_string(),
+            model: Some(self.config.model.clone()),
+            prompt_tokens: Some(prompt_len as u32),
+            completion_tokens: Some(response_len as u32),
+            total_tokens: Some((prompt_len + response_len) as u32),
+            metadata: None,
+        })
+    }
+    
+    async fn is_available(&self) -> Result<bool> {
+        // Always available for the mock
+        Ok(true)
+    }
+    
+    fn config(&self) -> &LlmConfig {
+        &self.config
     }
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     // Initialize telemetry
-    let telemetry_config = TelemetryConfig::default();
-    init_telemetry(telemetry_config);
+    let _guard = init_telemetry(TelemetryConfig {
+        service_name: "state_machine_workflow".to_string(),
+        enable_console: true,
+        ..TelemetryConfig::default()
+    }).map_err(|e| anyhow!("Failed to initialize telemetry: {}", e))?;
     
-    // Create Ollama client
-    let ollama_config = OllamaConfig {
-        base_url: "http://localhost:11434".to_string(),
-        timeout: Duration::from_secs(60),
-    };
-    let ollama_client = OllamaClient::new(ollama_config);
+    // Create LLM client
+    let llm_client = Arc::new(MockLlmClient::new());
     
-    // Create workflow engine with signal handling
-    let signal_handler = SignalHandler::new(vec![WorkflowSignal::Interrupt, WorkflowSignal::Terminate]);
-    let workflow_engine = WorkflowEngine::new(signal_handler);
+    // Create signal handler and workflow engine
+    let signal_handler = AsyncSignalHandler::new_with_signals(vec![
+        WorkflowSignal::Interrupt,
+        WorkflowSignal::Terminate,
+    ]);
     
-    // Sample document to process
+    let engine = WorkflowEngine::new(signal_handler);
+    
+    // Create a sample document
     let document = Document::new(
-        "DOC-2023-05-15-001".to_string(),
-        "MCP Protocol Implementation Guide".to_string(),
-        "# Model Context Protocol Implementation Guide\n\n\
-        This document outlines the implementation steps for integrating the Model Context Protocol (MCP) \
-        into existing AI applications. The protocol standardizes context management for large language models.\n\n\
-        ## Key Components\n\n\
-        1. Context Window Management\n\
-        2. Token Compression Techniques\n\
-        3. Semantic Routing\n\
-        4. Security Considerations\n\n\
-        ## Integration Steps\n\n\
-        Begin by establishing the connection handlers as described in section 3.2 of the specification...\
-        ".to_string(),
-        "John Author".to_string()
+        "DOC-2023-001".to_string(),
+        "API Design Specification".to_string(),
+        "This document outlines the design specification for the Model Context Protocol API.\n\
+        The API provides a standardized interface for model-context interactions and supports\n\
+        streaming tokens, tool invocation, and state management.\n\n\
+        Key components include:\n\
+        1. Context management\n\
+        2. Token streaming\n\
+        3. Tool usage protocols\n\
+        4. State persistence\n\n\
+        Implementation details will be provided in subsequent sections.".to_string(),
+        "Jane Smith".to_string(),
     );
     
-    // Create and run state machine workflow with AI review
+    // Create the workflow
     let mut workflow = StateMachineWorkflow::new(
-        workflow_engine,
-        ollama_client,
+        engine.clone(),
+        llm_client.clone(),
         document,
-        true // Enable AI review
+        true, // Enable AI review
     );
     
-    info!("Starting document review state machine workflow...");
-    let result = workflow.run().await?;
+    // Queue up some transitions to simulate workflow
+    workflow.queue_transition(
+        ReviewTransition::StartReview,
+        "Beginning formal review process".to_string(),
+        "john.reviewer".to_string(),
+    );
+    
+    // Run the workflow
+    info!("Starting document review workflow...");
+    let result = execute_workflow(workflow).await?;
     
     if result.is_success() {
-        info!("State machine workflow completed successfully!");
-        println!("\nWorkflow Result:\n{}", result.output);
-        
-        // Print workflow metadata
-        println!("\nState Machine Workflow Metadata:");
-        for (key, value) in workflow.state.metadata() {
-            println!("- {}: {}", key, value);
-        }
+        println!("\n{}", result.output());
     } else {
-        error!("State machine workflow failed: {}", result.error.unwrap_or_default());
+        error!("Workflow failed: {}", result.error().unwrap_or_default());
+    }
+    
+    // Create another document with a different scenario
+    let document2 = Document::new(
+        "DOC-2023-002".to_string(),
+        "System Architecture with Known Issues".to_string(),
+        "This document describes the system architecture with several known issues and bugs.\n\
+        There are error conditions that need to be addressed in the authentication module.\n\
+        The current implementation has performance issues under high load conditions.\n\
+        Further testing is required before final approval.".to_string(),
+        "Bob Johnson".to_string(),
+    );
+    
+    // Create a second workflow with a different path
+    let mut workflow2 = StateMachineWorkflow::new(
+        engine,
+        llm_client,
+        document2,
+        true, // Enable AI review
+    );
+    
+    // Queue up transitions for the second workflow
+    workflow2.queue_transition(
+        ReviewTransition::Submit,
+        "Initial submission for architecture review".to_string(),
+        "bob.johnson".to_string(),
+    );
+    
+    workflow2.queue_transition(
+        ReviewTransition::StartReview,
+        "Starting architecture review".to_string(),
+        "alice.architect".to_string(),
+    );
+    
+    // Run the second workflow
+    info!("Starting second document review workflow...");
+    let result2 = execute_workflow(workflow2).await?;
+    
+    if result2.is_success() {
+        println!("\n{}", result2.output());
+    } else {
+        error!("Second workflow failed: {}", result2.error().unwrap_or_default());
     }
     
     Ok(())

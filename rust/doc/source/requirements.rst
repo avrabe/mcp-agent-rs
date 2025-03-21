@@ -201,4 +201,31 @@
    :type: req
    :tags: quality;verification;safety
    :links: REQ_021
-   :content: Critical components of the system must be formally verified using Rust's verification tools (such as KLEE or Creusot) to ensure correctness and safety properties. 
+   :content: Critical components of the system must be formally verified using Rust's verification tools (such as KLEE or Creusot) to ensure correctness and safety properties.
+
+.. need:: REQ_023
+   :id: REQ_023
+   :title: WebSocket/HTTP Transport
+   :status: open
+   :type: req
+   :tags: protocol;transport;network
+   :links: REQ_001
+   :content: The MCP protocol implementation must support WebSocket and HTTP transport layers for message exchange, with appropriate connection management and error handling.
+
+.. need:: REQ_024
+   :id: REQ_024
+   :title: JSON-RPC Batch Processing
+   :status: open
+   :type: req
+   :tags: protocol;performance
+   :links: REQ_001
+   :content: The JSON-RPC implementation must support batch requests and responses as per the JSON-RPC 2.0 specification to improve throughput and reduce network overhead.
+
+.. need:: REQ_025
+   :id: REQ_025
+   :title: Authentication and Security
+   :status: open
+   :type: req
+   :tags: security;protocol
+   :links: REQ_001;REQ_019
+   :content: The MCP protocol implementation must support authentication mechanisms such as API keys, OAuth, or JWT tokens, along with transport-level encryption to ensure secure communications. 

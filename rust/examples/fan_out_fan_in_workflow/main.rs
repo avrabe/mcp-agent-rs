@@ -7,17 +7,16 @@ use tokio::sync::Mutex;
 use std::sync::Arc;
 use std::cmp::Ordering;
 use rand::Rng;
+use async_trait::async_trait;
+use serde_json::json;
 
 use mcp_agent::telemetry::{init_telemetry, TelemetryConfig};
 use mcp_agent::workflow::{
-    WorkflowEngine, WorkflowState, WorkflowResult, 
-    TaskGroup, Task, TaskResult, TaskResultStatus,
-    SignalHandler, WorkflowSignal,
+    WorkflowEngine, WorkflowState, WorkflowResult, Workflow,
+    task, AsyncSignalHandler, WorkflowSignal, execute_workflow,
 };
-use mcp_agent::llm::{
-    ollama::{OllamaClient, OllamaConfig},
-    types::{Message, Role, CompletionRequest, Completion},
-};
+use mcp_agent::{LlmMessage as Message, MessageRole, CompletionRequest, Completion, LlmConfig};
+use mcp_agent::llm::types::LlmClient;
 
 /// Represents a chunk of data to be processed
 #[derive(Debug, Clone)]
@@ -120,7 +119,7 @@ impl AggregationOperation {
 struct FanOutFanInWorkflow {
     state: WorkflowState,
     engine: WorkflowEngine,
-    llm_client: OllamaClient,
+    llm_client: Arc<MockLlmClient>,
     data_chunks: Vec<DataChunk>,
     workers: Vec<WorkerConfig>,
     aggregation_operations: Vec<AggregationOperation>,
@@ -131,19 +130,21 @@ struct FanOutFanInWorkflow {
 impl FanOutFanInWorkflow {
     fn new(
         engine: WorkflowEngine,
-        llm_client: OllamaClient,
+        llm_client: Arc<MockLlmClient>,
         data_chunks: Vec<DataChunk>,
         workers: Vec<WorkerConfig>,
         aggregation_operations: Vec<AggregationOperation>,
         max_retries: usize,
     ) -> Self {
-        let mut state = WorkflowState::new();
-        state.set_metadata("workflow_type", "fan_out_fan_in".to_string());
-        state.set_metadata("chunk_count", data_chunks.len().to_string());
-        state.set_metadata("worker_count", workers.len().to_string());
+        let mut metadata = HashMap::new();
+        metadata.insert("chunk_count".to_string(), json!(data_chunks.len()));
+        metadata.insert("worker_count".to_string(), json!(workers.len()));
         
         Self {
-            state,
+            state: WorkflowState::new(
+                Some("FanOutFanInWorkflow".to_string()),
+                Some(metadata)
+            ),
             engine,
             llm_client,
             data_chunks,
@@ -155,50 +156,34 @@ impl FanOutFanInWorkflow {
     }
     
     /// Create a task for a worker to process a data chunk
-    fn create_processing_task(&self, worker: &WorkerConfig, chunk: &DataChunk) -> Task {
+    fn create_processing_task(&self, worker: &WorkerConfig, chunk: &DataChunk) -> task::WorkflowTask<String> {
         let worker_clone = worker.clone();
         let chunk_clone = chunk.clone();
         
-        Task::new(&format!("process_chunk_{}_by_{}", chunk.id, worker.id), move |_ctx| {
+        task::task(&format!("process_chunk_{}_by_{}", chunk.id, worker.id), move || async move {
             info!("Worker {} processing chunk {}", worker_clone.id, chunk_clone.id);
             
             let start_time = std::time::Instant::now();
             
             // Simulate processing time
-            tokio::task::block_in_place(|| {
-                std::thread::sleep(Duration::from_millis(worker_clone.processing_delay_ms));
-            });
+            tokio::time::sleep(Duration::from_millis(worker_clone.processing_delay_ms)).await;
             
             // Simulate random failures based on error rate
             let mut rng = rand::thread_rng();
             if rng.gen::<f32>() < worker_clone.error_rate {
                 error!("Worker {} failed to process chunk {}", worker_clone.id, chunk_clone.id);
-                return Err(anyhow!("Processing error in worker {}", worker_clone.id));
+                return Err(anyhow!("Worker {} failed to process chunk {}", worker_clone.id, chunk_clone.id));
             }
             
-            // Perform the actual processing (sum values in this example)
-            let result = chunk_clone.data.iter().sum();
+            // Calculate sum of values (simple processing task)
+            let sum: u32 = chunk_clone.data.iter().sum();
             
             let processing_time = start_time.elapsed().as_millis() as u64;
-            info!("Worker {} finished processing chunk {} in {} ms", 
-                 worker_clone.id, chunk_clone.id, processing_time);
+            info!("Worker {} completed processing chunk {} in {}ms", 
+                worker_clone.id, chunk_clone.id, processing_time);
             
-            // Return the result with metadata
-            let mut task_result = TaskResult::success(result.to_string());
-            task_result.metadata.insert(
-                "worker_id".to_string(),
-                worker_clone.id.clone()
-            );
-            task_result.metadata.insert(
-                "chunk_id".to_string(),
-                chunk_clone.id.clone()
-            );
-            task_result.metadata.insert(
-                "processing_time_ms".to_string(),
-                processing_time.to_string()
-            );
-            
-            Ok(task_result)
+            // Return result with metadata
+            Ok(format!("{}", sum))
         })
     }
     
@@ -229,9 +214,7 @@ impl FanOutFanInWorkflow {
             }
             
             // Execute tasks in parallel
-            let task_group = TaskGroup::new(tasks);
-            
-            match self.engine.execute_task_group(task_group).await {
+            match self.engine.execute_task_group(tasks).await {
                 Ok(results) => {
                     let mut processing_results = self.processing_results.lock().await;
                     let mut successful_chunks = Vec::new();
@@ -540,6 +523,66 @@ impl FanOutFanInWorkflow {
         }
         
         Ok(WorkflowResult::success(summary))
+    }
+}
+
+/// A mock LLM client for testing
+struct MockLlmClient {
+    config: LlmConfig,
+}
+
+impl MockLlmClient {
+    fn new() -> Self {
+        Self {
+            config: LlmConfig {
+                model: "mock-llama2".to_string(),
+                api_url: "http://localhost:11434".to_string(),
+                api_key: None,
+                max_tokens: Some(500),
+                temperature: Some(0.7),
+                top_p: Some(0.9),
+                parameters: HashMap::new(),
+            },
+        }
+    }
+}
+
+#[async_trait]
+impl LlmClient for MockLlmClient {
+    async fn complete(&self, request: CompletionRequest) -> Result<Completion> {
+        // Simulate processing time
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        
+        // Extract the prompt to generate appropriate mock responses
+        let prompt = if let Some(user_message) = request.messages.iter().find(|m| matches!(m.role, MessageRole::User)) {
+            &user_message.content
+        } else {
+            "Unknown prompt"
+        };
+        
+        // Generate a mock response
+        let response = "This is a mock response from the LLM service.".to_string();
+        
+        let prompt_len = prompt.len();
+        let response_len = response.len();
+        
+        Ok(Completion {
+            content: response,
+            model: Some(self.config.model.clone()),
+            prompt_tokens: Some(prompt_len as u32),
+            completion_tokens: Some(response_len as u32),
+            total_tokens: Some((prompt_len + response_len) as u32),
+            metadata: None,
+        })
+    }
+    
+    async fn is_available(&self) -> Result<bool> {
+        // Always available for the mock
+        Ok(true)
+    }
+    
+    fn config(&self) -> &LlmConfig {
+        &self.config
     }
 }
 

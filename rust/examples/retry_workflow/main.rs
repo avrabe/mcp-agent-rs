@@ -3,12 +3,16 @@ use std::sync::{Arc, Mutex};
 use rand::Rng;
 use anyhow::{anyhow, Result};
 use tracing::{info, warn, error, debug};
+use std::collections::HashMap;
+use tokio::sync::Mutex as TokioMutex;
+use serde_json::json;
+use async_trait::async_trait;
 
 use mcp_agent::telemetry::{init_telemetry, TelemetryConfig};
 use mcp_agent::workflow::{
-    WorkflowEngine, WorkflowState, WorkflowResult, 
+    WorkflowEngine, WorkflowState, WorkflowResult, Workflow,
     TaskGroup, Task, TaskResult, TaskResultStatus,
-    SignalHandler, WorkflowSignal,
+    SignalHandler, WorkflowSignal, execute_workflow,
 };
 use mcp_agent::llm::{
     ollama::{OllamaClient, OllamaConfig},
@@ -237,7 +241,7 @@ impl FlakyService {
 struct RetryWorkflow {
     state: WorkflowState,
     engine: WorkflowEngine,
-    flaky_service: Arc<Mutex<FlakyService>>,
+    flaky_service: Arc<TokioMutex<FlakyService>>,
     requests: Vec<String>,
     retry_strategy: RetryStrategy,
     max_retries: usize,
@@ -253,18 +257,21 @@ impl RetryWorkflow {
         retry_strategy: RetryStrategy,
         max_retries: usize,
     ) -> Self {
-        let flaky_service = Arc::new(Mutex::new(FlakyService::new(
+        // Create a flaky service with a circuit breaker
+        let flaky_service = Arc::new(TokioMutex::new(FlakyService::new(
             service_success_rate,
-            service_response_time,
+            service_response_time
         )));
         
-        let mut state = WorkflowState::new();
-        state.set_metadata("total_requests", requests.len().to_string());
-        state.set_metadata("max_retries", max_retries.to_string());
-        state.set_metadata("retry_strategy", format!("{:?}", retry_strategy));
+        let mut metadata = HashMap::new();
+        metadata.insert("request_count".to_string(), json!(requests.len()));
+        metadata.insert("max_retries".to_string(), json!(max_retries));
         
         Self {
-            state,
+            state: WorkflowState::new(
+                Some("RetryWorkflow".to_string()),
+                Some(metadata)
+            ),
             engine,
             flaky_service,
             requests,
@@ -302,7 +309,7 @@ impl RetryWorkflow {
                         return Err(anyhow!("Task cancelled during retry processing"));
                     }
                     
-                    match flaky_service.lock().unwrap().call(&request).await {
+                    match flaky_service.lock().await.call(&request).await {
                         Ok(response) => {
                             info!("Request succeeded on attempt {}: {}", attempt + 1, response);
                             success = true;
@@ -315,7 +322,7 @@ impl RetryWorkflow {
                             last_error = Some(e.to_string());
                             
                             // Check circuit breaker state
-                            let circuit_state = flaky_service.lock().unwrap().circuit_state();
+                            let circuit_state = flaky_service.lock().await.circuit_state();
                             if circuit_state == CircuitState::Open {
                                 warn!("Circuit breaker open, stopping retry attempts");
                                 break;
@@ -358,8 +365,7 @@ impl RetryWorkflow {
         }
         
         // Execute all tasks
-        let task_group = TaskGroup::new(tasks);
-        let results = self.engine.execute_task_group(task_group).await?;
+        let results = self.engine.execute_task_group(tasks).await?;
         
         // Process results
         let mut success_count = 0;
@@ -438,6 +444,28 @@ impl RetryWorkflow {
         } else {
             Ok(WorkflowResult::success(summary))
         }
+    }
+}
+
+#[async_trait]
+impl Workflow for RetryWorkflow {
+    async fn run(&mut self) -> Result<WorkflowResult> {
+        // ... existing implementation ...
+        
+        // Execute all tasks
+        // TaskGroup::new() no longer takes arguments
+        // execute_task_group now takes Vec<WorkflowTask<T>> directly
+        let results = self.engine.execute_task_group(tasks).await?;
+        
+        // ... rest of the method ...
+    }
+    
+    fn state(&self) -> &WorkflowState {
+        &self.state
+    }
+    
+    fn state_mut(&mut self) -> &mut WorkflowState {
+        &mut self.state
     }
 }
 

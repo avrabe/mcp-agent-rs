@@ -1,0 +1,7 @@
+.. req:: {{title}}
+   :id: {{id}}
+   :status: open
+   :tags: 
+   :links: 
+   
+   {{content}} 

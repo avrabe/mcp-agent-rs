@@ -1,0 +1,7 @@
+.. arch:: {{title}}
+   :id: {{id}}
+   :status: implemented
+   :tags: architecture
+   :links: 
+   
+   {{content}} 

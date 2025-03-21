@@ -62,6 +62,27 @@ Here's a simple example of using the MCP-Agent:
        Ok(())
    }
 
+Requirements and Architecture Overview
+=====================================
+
+.. needtable::
+   :columns: id;title;status;tags
+   :filter: type == "requirement"
+   :style: table
+
+.. needtable::
+   :columns: id;title;status;links
+   :filter: type == "arch"
+   :style: table
+
+Project Status
+=============
+
+.. needtable::
+   :filter: status == "open"
+   :columns: id;title;status;type;tags
+   :style: table
+
 Indices and Tables
 ==================
 

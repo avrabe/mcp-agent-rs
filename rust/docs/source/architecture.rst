@@ -16,12 +16,77 @@ System Components
 
 The MCP-Agent architecture consists of the following major components:
 
-1. **MCP Protocol Layer**: Provides the core protocol implementation with JSON-RPC
-2. **Agent System**: Implements agent patterns and lifecycle management
-3. **Workflow Engine**: Orchestrates tasks and manages workflows
-4. **Human Input Module**: Handles user interaction during workflow execution
-5. **Telemetry System**: Provides monitoring, metrics, and alerting
-6. **LLM Client**: Manages connections to various LLM providers
+.. arch:: MCP Protocol Layer
+   :id: ARCH-001
+   :status: implemented
+   :tags: core;protocol
+   :links: REQ-001;REQ-023;REQ-024;REQ-025
+   
+   Provides the core protocol implementation with JSON-RPC 2.0 specification, handling message serialization, deserialization, and transport protocols.
+
+.. arch:: Agent System
+   :id: ARCH-002
+   :status: partial
+   :tags: core;patterns
+   :links: REQ-002;REQ-003
+   
+   Implements agent patterns and lifecycle management for both single agents and multi-agent orchestration.
+
+.. arch:: Error Handling System
+   :id: ARCH-003
+   :status: implemented
+   :tags: quality;safety
+   :links: REQ-008
+   
+   Provides comprehensive error handling with proper propagation, logging, and recovery mechanisms across all components.
+
+.. arch:: Concurrency Management
+   :id: ARCH-004
+   :status: implemented
+   :tags: performance;concurrency
+   :links: REQ-005
+   
+   Implements async/await patterns for concurrent operations, leveraging Rust's async runtime for efficient resource utilization.
+
+.. arch:: Telemetry System
+   :id: ARCH-005
+   :status: implemented
+   :tags: observability;telemetry
+   :links: REQ-009
+   
+   Provides monitoring, metrics, and alerting through OpenTelemetry integration for comprehensive system observability.
+
+.. arch:: Workflow Engine
+   :id: ARCH-006
+   :status: implemented
+   :tags: orchestration;workflow
+   :links: REQ-012
+   
+   Orchestrates tasks and manages workflows with proper error recovery and state management capabilities.
+
+.. arch:: Human Input Module
+   :id: ARCH-007
+   :status: implemented
+   :tags: interface;interaction
+   :links: REQ-021
+   
+   Handles user interaction during workflow execution, including prompts, validation, and timeout handling.
+
+.. arch:: Extension System
+   :id: ARCH-008
+   :status: implemented
+   :tags: architecture;design
+   :links: REQ-020
+   
+   Provides extension points for adding new components, models, and tools with minimal changes to the core system.
+
+.. arch:: LLM Client
+   :id: ARCH-009
+   :status: partial
+   :tags: integration;ai
+   :links: REQ-011
+   
+   Manages connections to various LLM providers with standardized interfaces and proper error handling.
 
 Component Diagram
 ----------------
@@ -34,6 +99,14 @@ Module Dependencies
 
 .. uml:: _static/module_dependencies.puml
    :alt: Module Dependencies Diagram
+
+.. spec:: MCP Protocol Specification
+   :id: SPEC-001
+   :status: implemented
+   :tags: protocol;specification
+   :links: REQ-001;ARCH-001
+   
+   The Model Context Protocol specification defines the standards for communication between AI models and software components through a JSON-RPC interface.
 
 Core Communication Flow
 =======================
@@ -119,6 +192,14 @@ The MCP-Agent architecture provides several extension points:
 
 .. uml:: _static/extension_points.puml
    :alt: Extension Points Diagram
+
+Architecture-Requirements Traceability
+======================================
+
+.. needtable::
+   :filter: type == "arch"
+   :columns: id;title;status;links
+   :style: table
 
 Conclusion
 ==========

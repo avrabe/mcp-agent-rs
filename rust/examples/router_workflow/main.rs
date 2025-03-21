@@ -1,18 +1,17 @@
 use std::collections::HashMap;
 use std::time::Duration;
+use std::sync::Arc;
 use anyhow::{anyhow, Result};
 use tracing::{info, warn, error, debug};
+use async_trait::async_trait;
+use serde_json::json;
 
 use mcp_agent::telemetry::{init_telemetry, TelemetryConfig};
 use mcp_agent::workflow::{
-    WorkflowEngine, WorkflowState, WorkflowResult, 
-    TaskGroup, Task, TaskResult, TaskResultStatus,
-    SignalHandler, WorkflowSignal,
+    WorkflowEngine, WorkflowState, WorkflowResult, Workflow,
+    task, AsyncSignalHandler, WorkflowSignal, execute_workflow,
 };
-use mcp_agent::llm::{
-    ollama::{OllamaClient, OllamaConfig},
-    types::{Message, Role, CompletionRequest, Completion},
-};
+use mcp_agent::llm::types::{Message, MessageRole, CompletionRequest, Completion, LlmClient, LlmConfig};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 enum TaskType {
@@ -58,18 +57,21 @@ impl TaskType {
 struct RouterWorkflow {
     state: WorkflowState,
     engine: WorkflowEngine,
-    llm_client: OllamaClient,
+    llm_client: Arc<MockLlmClient>,
     user_queries: Vec<String>,
     results: HashMap<usize, String>,
 }
 
 impl RouterWorkflow {
-    fn new(engine: WorkflowEngine, llm_client: OllamaClient, user_queries: Vec<String>) -> Self {
-        let mut state = WorkflowState::new();
-        state.set_metadata("total_queries", user_queries.len().to_string());
+    fn new(engine: WorkflowEngine, llm_client: Arc<MockLlmClient>, user_queries: Vec<String>) -> Self {
+        let mut metadata = HashMap::new();
+        metadata.insert("total_queries".to_string(), json!(user_queries.len()));
         
         Self {
-            state,
+            state: WorkflowState::new(
+                Some("RouterWorkflow".to_string()),
+                Some(metadata)
+            ),
             engine,
             llm_client,
             user_queries,
@@ -77,18 +79,18 @@ impl RouterWorkflow {
         }
     }
     
-    fn create_classification_task(&self, query: String, index: usize) -> Task {
-        Task::new(&format!("classify_query_{}", index), move |_ctx| {
+    fn create_classification_task(&self, query: String, index: usize) -> task::WorkflowTask<String> {
+        task::task(&format!("classify_query_{}", index), move || async move {
             info!("Classifying query: {}", query);
             let task_type = TaskType::from_str(&query);
-            Ok(TaskResult::success(format!("{:?}", task_type)))
+            Ok(format!("{:?}", task_type))
         })
     }
     
-    fn create_execution_task(&self, query: String, task_type: TaskType, index: usize) -> Task {
+    fn create_execution_task(&self, query: String, task_type: TaskType, index: usize) -> task::WorkflowTask<String> {
         let llm_client = self.llm_client.clone();
         
-        Task::new(&format!("execute_query_{}", index), move |_ctx| {
+        task::task(&format!("execute_query_{}", index), move || async move {
             info!("Executing query for task type: {:?}", task_type);
             
             let model = task_type.get_model();
@@ -98,109 +100,104 @@ impl RouterWorkflow {
                 model: model.to_string(),
                 messages: vec![
                     Message {
-                        role: Role::System,
+                        role: MessageRole::System,
                         content: system_prompt.to_string(),
+                        metadata: None,
                     },
                     Message {
-                        role: Role::User,
+                        role: MessageRole::User,
                         content: query.clone(),
+                        metadata: None,
                     },
                 ],
-                stream: false,
-                options: None,
+                max_tokens: Some(500),
+                temperature: Some(0.7),
+                top_p: None,
+                parameters: HashMap::new(),
             };
             
-            match llm_client.create_completion(&request) {
+            match llm_client.complete(request).await {
                 Ok(completion) => {
-                    let response = completion.message.content.clone();
+                    let response = completion.content;
                     info!("Successfully processed query with task type: {:?}", task_type);
-                    Ok(TaskResult::success(response))
+                    Ok(response)
                 },
                 Err(e) => {
                     error!("Failed to process query: {}", e);
                     // Fallback to a generic response when the model fails
                     let fallback_msg = format!("Sorry, I couldn't process your request for {:?}. Error: {}", task_type, e);
-                    Ok(TaskResult::success(fallback_msg))
+                    Ok(fallback_msg)
                 }
             }
         })
     }
-    
+}
+
+#[async_trait]
+impl Workflow for RouterWorkflow {
     async fn run(&mut self) -> Result<WorkflowResult> {
-        // Initialize workflow
-        self.state.set_status("starting");
+        let mut result = WorkflowResult::new();
+        result.start();
         
         // Check if LLM is available
-        if let Err(e) = self.llm_client.check_availability().await {
-            error!("LLM client is not available: {}", e);
-            self.state.set_status("failed");
-            self.state.set_error(format!("LLM client is not available: {}", e));
-            return Ok(WorkflowResult::failed("LLM client is not available"));
+        if !self.llm_client.is_available().await? {
+            self.state.set_error("LLM service is not available");
+            return Ok(WorkflowResult::failed("LLM service is not available"));
         }
         
         self.state.set_status("processing");
         
         // Step 1: Classify all queries
-        let mut classification_tasks = Vec::new();
+        info!("Step 1: Classifying all queries");
+        let mut classification_results = Vec::new();
         
         for (index, query) in self.user_queries.iter().enumerate() {
             let task = self.create_classification_task(query.clone(), index);
-            classification_tasks.push(task);
+            let task_result = self.engine.execute_task(task).await?;
+            classification_results.push(task_result);
         }
-        
-        let classification_group = TaskGroup::new(classification_tasks);
-        let classification_results = self.engine.execute_task_group(classification_group).await?;
         
         // Step 2: Process each query based on its classification
-        let mut execution_tasks = Vec::new();
+        info!("Step 2: Processing queries based on their classifications");
         let mut task_types = Vec::new();
+        let mut execution_results = Vec::new();
         
-        for (index, result) in classification_results.iter().enumerate() {
-            if result.status == TaskResultStatus::Success {
-                let task_type_str = result.output.clone();
-                let task_type = match task_type_str.as_str() {
-                    "CodeGeneration" => TaskType::CodeGeneration,
-                    "TextSummarization" => TaskType::TextSummarization,
-                    "DataAnalysis" => TaskType::DataAnalysis,
-                    "ImageDescription" => TaskType::ImageDescription,
-                    _ => TaskType::Unknown,
-                };
-                
-                task_types.push(task_type.clone());
-                
-                let query = self.user_queries[index].clone();
-                let task = self.create_execution_task(query, task_type, index);
-                execution_tasks.push(task);
-                
-                debug!("Query {} classified as {:?}", index, task_type);
-            } else {
-                warn!("Failed to classify query {}: {}", index, result.error.clone().unwrap_or_default());
-                task_types.push(TaskType::Unknown);
-            }
+        for (index, task_type_str) in classification_results.iter().enumerate() {
+            let task_type = match task_type_str.as_str() {
+                "CodeGeneration" => TaskType::CodeGeneration,
+                "TextSummarization" => TaskType::TextSummarization,
+                "DataAnalysis" => TaskType::DataAnalysis,
+                "ImageDescription" => TaskType::ImageDescription,
+                _ => TaskType::Unknown,
+            };
+            
+            debug!("Query {} classified as {:?}", index, &task_type);
+            task_types.push(task_type.clone());
+            
+            let query = self.user_queries[index].clone();
+            let task = self.create_execution_task(query, task_type.clone(), index);
+            let task_result = self.engine.execute_task(task).await?;
+            execution_results.push(task_result);
         }
         
-        self.state.set_metadata("task_types", format!("{:?}", task_types));
-        
-        // Execute all tasks in parallel
-        let execution_group = TaskGroup::new(execution_tasks);
-        let execution_results = self.engine.execute_task_group(execution_group).await?;
+        self.state.set_metadata("task_types", json!(format!("{:?}", task_types)));
         
         // Process results
         let mut success_count = 0;
         let mut failure_count = 0;
         
-        for (index, result) in execution_results.iter().enumerate() {
-            if result.status == TaskResultStatus::Success {
-                self.results.insert(index, result.output.clone());
+        for (index, result_value) in execution_results.iter().enumerate() {
+            if !result_value.is_empty() {
+                self.results.insert(index, result_value.clone());
                 success_count += 1;
             } else {
-                self.results.insert(index, format!("Failed: {}", result.error.clone().unwrap_or_default()));
+                self.results.insert(index, "Failed to process query".to_string());
                 failure_count += 1;
             }
         }
         
-        self.state.set_metadata("success_count", success_count.to_string());
-        self.state.set_metadata("failure_count", failure_count.to_string());
+        self.state.set_metadata("success_count", json!(success_count));
+        self.state.set_metadata("failure_count", json!(failure_count));
         
         // Finalize workflow
         if failure_count == 0 {
@@ -229,66 +226,137 @@ impl RouterWorkflow {
         
         // Return overall workflow result
         if self.state.status() == "failed" {
-            Ok(WorkflowResult::failed(&format!("Router workflow failed with {} failures", failure_count)))
+            return Ok(WorkflowResult::failed(&format!("Router workflow failed with {} failures", failure_count)));
         } else {
-            Ok(WorkflowResult::success(result_str))
+            result.value = Some(json!(result_str));
         }
+        
+        result.complete();
+        Ok(result)
+    }
+    
+    fn state(&self) -> &WorkflowState {
+        &self.state
+    }
+    
+    fn state_mut(&mut self) -> &mut WorkflowState {
+        &mut self.state
+    }
+}
+
+/// A mock LLM client for testing
+struct MockLlmClient {
+    config: LlmConfig,
+}
+
+impl MockLlmClient {
+    fn new() -> Self {
+        Self {
+            config: LlmConfig {
+                model: "mock-model".to_string(),
+                api_url: "http://localhost:11434".to_string(),
+                api_key: None,
+                max_tokens: Some(500),
+                temperature: Some(0.7),
+                top_p: Some(0.9),
+                parameters: HashMap::new(),
+            },
+        }
+    }
+}
+
+#[async_trait]
+impl LlmClient for MockLlmClient {
+    async fn complete(&self, request: CompletionRequest) -> Result<Completion> {
+        // Simulate processing time
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        
+        // Extract the prompt to generate appropriate mock responses
+        let prompt = if let Some(user_message) = request.messages.iter().find(|m| matches!(m.role, MessageRole::User)) {
+            &user_message.content
+        } else {
+            "Unknown prompt"
+        };
+        
+        // Get model to determine response style
+        let model = &request.model;
+        
+        // Generate mock response based on the task type
+        let response = if model.contains("codellama") {
+            "```python\ndef process_data(data):\n    result = []\n    for item in data:\n        if item.valid:\n            result.append(item.value * 2)\n    return result\n```"
+        } else if model.contains("llava") {
+            "The image shows a landscape with mountains and a lake. There are trees in the foreground and the sky is clear blue."
+        } else if prompt.contains("summarize") || prompt.contains("summary") {
+            "This text discusses the importance of workflow automation in modern business processes. It highlights how automation can reduce errors, increase efficiency, and free up human resources for more creative tasks."
+        } else if prompt.contains("analyze") || prompt.contains("data") {
+            "Analysis shows an upward trend of 15% in the primary metrics. The data indicates seasonal patterns with peaks in Q2 and Q4. Three outliers were identified which correlate with market events."
+        } else {
+            "I've processed your request and here is a helpful response that addresses your query in a general way."
+        }.to_string();
+        
+        let prompt_len = prompt.len();
+        let response_len = response.len();
+        
+        Ok(Completion {
+            content: response,
+            model: Some(request.model),
+            prompt_tokens: Some(prompt_len as u32),
+            completion_tokens: Some(response_len as u32),
+            total_tokens: Some((prompt_len + response_len) as u32),
+            metadata: None,
+        })
+    }
+    
+    async fn is_available(&self) -> Result<bool> {
+        // Always available for the mock
+        Ok(true)
+    }
+    
+    fn config(&self) -> &LlmConfig {
+        &self.config
     }
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     // Initialize telemetry
-    let telemetry_config = TelemetryConfig::default();
-    init_telemetry(telemetry_config);
+    let _guard = init_telemetry(TelemetryConfig {
+        service_name: "router_workflow".to_string(),
+        enable_console: true,
+        ..TelemetryConfig::default()
+    }).map_err(|e| anyhow!("Failed to initialize telemetry: {}", e))?;
     
-    // Create Ollama client
-    let ollama_config = OllamaConfig {
-        base_url: "http://localhost:11434".to_string(),
-        timeout: Duration::from_secs(60),
-    };
-    let ollama_client = OllamaClient::new(ollama_config);
+    // Create LLM client
+    let client = Arc::new(MockLlmClient::new());
     
-    // Check if Ollama is available before proceeding
-    match ollama_client.check_availability().await {
-        Ok(_) => info!("Ollama service is available"),
-        Err(e) => {
-            error!("Ollama service is not available: {}. Using fallback mode.", e);
-            // In a real app, you might want to use a fallback or exit
-        }
-    }
+    // Create signal handler and workflow engine
+    let signal_handler = AsyncSignalHandler::new_with_signals(vec![
+        WorkflowSignal::Interrupt,
+        WorkflowSignal::Terminate,
+    ]);
     
-    // Create workflow engine with signal handling
-    let signal_handler = SignalHandler::new(vec![WorkflowSignal::Interrupt, WorkflowSignal::Terminate]);
-    let workflow_engine = WorkflowEngine::new(signal_handler);
+    let engine = WorkflowEngine::new(signal_handler);
     
-    // Sample user queries of different types
+    // Example user queries for different task types
     let user_queries = vec![
-        "Write a Python function to calculate the Fibonacci sequence".to_string(),
-        "Summarize the key points of the Model Context Protocol".to_string(),
-        "Analyze the trend data: 10, 15, 13, 17, 20, 22, 25, 23".to_string(),
-        "What are the best practices for implementing AI workflows?".to_string(),
+        "Write a Python function to process a list of data objects and return the valid ones with doubled values.".to_string(),
+        "Summarize the benefits of workflow automation for businesses.".to_string(),
+        "Analyze this dataset: Monthly sales [150, 200, 175, 300, 250] and provide insights.".to_string(),
+        "Describe this image of a mountain landscape with a lake.".to_string(),
+        "What's the weather like today?".to_string(),
     ];
     
-    // Create and run router workflow
-    let mut workflow = RouterWorkflow::new(
-        workflow_engine, 
-        ollama_client,
-        user_queries
-    );
+    // Create and execute workflow
+    println!("Starting Router Workflow...");
+    let workflow = RouterWorkflow::new(engine, client, user_queries);
+    let result = execute_workflow(workflow).await?;
     
-    info!("Starting router workflow...");
-    let result = workflow.run().await?;
-    
+    // Display results
     if result.is_success() {
-        info!("Router workflow completed successfully!");
-        println!("\nWorkflow Results:\n{}", result.output);
-        println!("\nWorkflow Metadata:");
-        println!("- Status: {}", workflow.state.status());
-        println!("- Success Count: {}", workflow.state.metadata().get("success_count").unwrap_or(&"0".to_string()));
-        println!("- Failure Count: {}", workflow.state.metadata().get("failure_count").unwrap_or(&"0".to_string()));
+        println!("\nWorkflow Result:\n{}", result.output());
     } else {
-        error!("Router workflow failed: {}", result.error.unwrap_or_default());
+        error!("Router workflow failed: {}", result.error().unwrap_or_default());
+        println!("\nWorkflow Failed: {}", result.error().unwrap_or_default());
     }
     
     Ok(())

@@ -1,0 +1,26 @@
+@startuml
+!theme plain
+
+participant "Client" as client
+participant "JsonRpcHandler" as handler
+participant "Method Implementation" as method
+
+client -> handler: Send JSON-RPC request
+activate handler
+
+handler -> handler: Parse request
+
+handler -> method: Invoke registered method
+activate method
+
+method -> method: Process request
+
+method --> handler: Return result
+deactivate method
+
+handler -> handler: Format JSON-RPC response
+
+handler --> client: Return response
+deactivate handler
+
+@enduml

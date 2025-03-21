@@ -1,0 +1,43 @@
+@startuml
+!theme plain
+
+actor User
+participant "Workflow Engine" as workflow
+participant "Task" as task
+participant "Human Input" as human
+participant "LLM Client" as llm
+
+User -> workflow: Initialize workflow
+activate workflow
+
+workflow -> task: Create task
+activate task
+
+loop Until completion
+    task -> llm: Request model response
+    activate llm
+    
+    llm --> task: Return model output
+    deactivate llm
+    
+    alt Human input required
+        task -> human: Request human input
+        activate human
+        
+        human -> User: Display prompt
+        User --> human: Provide input
+        
+        human --> task: Return input
+        deactivate human
+    end
+    
+    task -> task: Process results
+end
+
+task --> workflow: Return workflow result
+deactivate task
+
+workflow --> User: Return final result
+deactivate workflow
+
+@enduml

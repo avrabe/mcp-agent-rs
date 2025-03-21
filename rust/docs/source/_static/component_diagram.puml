@@ -1,0 +1,44 @@
+@startuml
+!theme plain
+
+package "MCP-Agent Framework" {
+    package "Core" {
+        [MCP Protocol] as mcpproto
+        [Agent System] as agent
+        [Workflow Engine] as workflow
+        [Human Input] as human
+    }
+    
+    package "Infrastructure" {
+        [Telemetry] as telemetry
+        [Error Handling] as error
+        [Configuration] as config
+    }
+    
+    package "Integration" {
+        [LLM Client] as llm
+        [External APIs] as external
+    }
+}
+
+[Applications] as app
+
+app --> workflow
+app --> agent
+
+workflow --> agent
+workflow --> human
+workflow --> llm
+
+agent --> mcpproto
+agent --> telemetry
+
+mcpproto --> error
+mcpproto --> telemetry
+
+llm --> external
+llm --> telemetry
+
+human --> telemetry
+
+@enduml

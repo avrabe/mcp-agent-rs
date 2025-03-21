@@ -1,0 +1,27 @@
+@startuml
+!theme plain
+
+participant "Client Application" as client
+participant "Agent" as agent
+participant "MCP Protocol" as mcp
+participant "External API" as api
+
+client -> agent: Submit request
+activate agent
+
+agent -> mcp: Create JSON-RPC request
+activate mcp
+
+mcp -> api: Send request
+activate api
+
+api --> mcp: Return response
+deactivate api
+
+mcp --> agent: Parse JSON-RPC response
+deactivate mcp
+
+agent --> client: Return result
+deactivate agent
+
+@enduml

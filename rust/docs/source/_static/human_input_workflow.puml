@@ -1,0 +1,29 @@
+@startuml
+!theme plain
+
+actor User
+participant "Workflow Engine" as engine
+participant "Human Input Handler" as handler
+participant "Console Interface" as console
+
+engine -> handler: Request human input
+activate handler
+
+handler -> console: Display prompt
+activate console
+
+console -> User: Show input request
+
+alt Input provided before timeout
+    User -> console: Provide input
+    console --> handler: Return input
+    handler --> engine: Return response
+else Timeout occurs
+    console --> handler: Signal timeout
+    handler --> engine: Return timeout error
+end
+
+deactivate console
+deactivate handler
+
+@enduml

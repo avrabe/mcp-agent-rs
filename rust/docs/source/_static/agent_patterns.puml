@@ -1,0 +1,27 @@
+@startuml
+!theme plain
+
+package "Agent Patterns" {
+    class "Basic Agent" as basic
+    class "Router Agent" as router
+    class "ReAct Agent" as react
+    class "Reflection Agent" as reflection
+    class "Swarm Agent" as swarm
+    class "Human-in-the-loop Agent" as human
+}
+
+class "Agent" as agent {
+    +initialize()
+    +process_message()
+    +execute_workflow()
+    +handle_response()
+}
+
+agent <|-- basic
+agent <|-- router
+agent <|-- react
+agent <|-- reflection
+agent <|-- swarm
+agent <|-- human
+
+@enduml

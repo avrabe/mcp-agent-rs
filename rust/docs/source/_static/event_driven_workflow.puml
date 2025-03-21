@@ -1,0 +1,37 @@
+@startuml
+!theme plain
+
+participant "Client" as client
+participant "Workflow Engine" as engine
+participant "Event Processor" as processor
+participant "Event Queue" as queue
+
+client -> engine: Submit events
+activate engine
+
+engine -> queue: Queue events
+activate queue
+
+loop For each event batch
+    engine -> queue: Get next batch
+    queue --> engine: Return batch
+    
+    engine -> processor: Process event batch
+    activate processor
+    
+    loop For each event
+        processor -> processor: Process single event
+    end
+    
+    processor --> engine: Return processing results
+    deactivate processor
+    
+    engine -> engine: Update workflow state
+end
+
+deactivate queue
+
+engine --> client: Return workflow results
+deactivate engine
+
+@enduml

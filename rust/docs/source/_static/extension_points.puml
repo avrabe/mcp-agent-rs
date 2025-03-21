@@ -1,0 +1,62 @@
+@startuml
+!theme plain
+
+interface "LLM Provider" as llmProvider {
+    +generate_response()
+    +stream_response()
+    +get_embedding()
+}
+
+interface "Transport Layer" as transport {
+    +connect()
+    +disconnect()
+    +send_message()
+    +receive_message()
+}
+
+interface "Agent Pattern" as agentPattern {
+    +process_request()
+    +generate_response()
+    +handle_error()
+}
+
+interface "Workflow Type" as workflowType {
+    +initialize()
+    +execute_step()
+    +handle_signal()
+    +finalize()
+}
+
+class "OpenAI Provider" as openai
+class "Anthropic Provider" as anthropic
+class "Ollama Provider" as ollama
+
+class "TCP Transport" as tcp
+class "WebSocket Transport" as websocket
+class "HTTP Transport" as http
+
+class "ReAct Pattern" as react
+class "Router Pattern" as router
+class "Reflection Pattern" as reflection
+
+class "Pipeline Workflow" as pipeline
+class "Saga Workflow" as saga
+class "Event-Driven Workflow" as event
+
+llmProvider <|.. openai
+llmProvider <|.. anthropic
+llmProvider <|.. ollama
+
+transport <|.. tcp
+transport <|.. websocket
+transport <|.. http
+
+agentPattern <|.. react
+agentPattern <|.. router
+agentPattern <|.. reflection
+
+workflowType <|.. pipeline
+workflowType <|.. saga
+workflowType <|.. event
+
+@enduml

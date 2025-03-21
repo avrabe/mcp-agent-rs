@@ -1,0 +1,43 @@
+@startuml
+!theme plain
+
+frame "Input Layer" {
+    [External Request] as externalReq
+    [User Input] as userInput
+    [API Call] as apiCall
+}
+
+frame "Processing Layer" {
+    [MCP JSON-RPC] as jsonrpc
+    [Workflow Engine] as workflow
+    [Task Processor] as task
+}
+
+frame "Integration Layer" {
+    [LLM Client] as llm
+    [External Services] as external
+    [Data Store] as data
+}
+
+frame "Output Layer" {
+    [Response] as response
+    [Metrics] as metrics
+    [Logs] as logs
+}
+
+externalReq --> jsonrpc
+userInput --> workflow
+apiCall --> jsonrpc
+
+jsonrpc --> workflow
+workflow --> task
+
+task --> llm
+task --> external
+task --> data
+
+workflow --> response
+workflow --> metrics
+workflow --> logs
+
+@enduml

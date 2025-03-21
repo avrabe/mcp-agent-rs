@@ -1,0 +1,35 @@
+@startuml
+!theme plain
+
+class McpError {
+    +Protocol(String)
+    +ConnectionFailed(String)
+    +InvalidMessage(String)
+    +InvalidState(String)
+    +Timeout
+    +NotConnected
+    +Config(String)
+    +ServerNotFound(String)
+    +Io(String)
+    +Utf8(String)
+    +Custom{code: u32, message: String}
+    +NotImplemented
+    +Json(String)
+    +Execution(String)
+    +Signal(String)
+    +Join(String)
+    +Serialization(String)
+    +Deserialization(String)
+}
+
+class "Result<T, McpError>" as result
+
+McpError --> result : used in
+
+note right of McpError
+  All errors are propagated through
+  the Result type, providing
+  consistent error handling
+end note
+
+@enduml

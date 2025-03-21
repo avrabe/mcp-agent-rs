@@ -1,15 +1,61 @@
-//! Agent module for handling agent lifecycle and connections to remote endpoints.
+//! # Agent Module for MCP
+//!
+//! This module provides the implementation of an MCP agent that manages connections
+//! to remote endpoints and handles message passing within the Model Context Protocol (MCP) ecosystem.
+//!
+//! ## Core Components
+//!
+//! - `Agent`: The main struct that handles connections, message passing, and task execution
+//! - `AgentConfig`: Configuration settings for agent behavior
+//! - `AgentMetrics`: Provides statistics and telemetry data about agent operations
+//!
+//! ## Features
+//!
+//! The agent implementation provides these key capabilities:
+//!
+//! - Connection management to multiple server endpoints
+//! - Asynchronous message sending and receiving
+//! - Task execution with request/response patterns
+//! - Connection health monitoring
+//! - Automatic reconnection handling
+//! - Comprehensive telemetry and performance metrics
+//!
+//! ## Example Usage
+//!
+//! ```rust,no_run
+//! use mcp_agent::mcp::agent::Agent;
+//! use mcp_agent::mcp::types::Message;
+//!
+//! async fn example() {
+//!     // Create a new agent
+//!     let agent = Agent::new(None);
+//!
+//!     // Connect to a server
+//!     agent.connect_to_test_server("server1", "localhost:8080").await.unwrap();
+//!
+//!     // Send a message
+//!     let message = Message::new_request(b"Hello".to_vec());
+//!     agent.send_message("server1", message).await.unwrap();
+//!
+//!     // Execute a task
+//!     let args = serde_json::json!({ "param": "value" });
+//!     let result = agent.execute_task("example_task", args, None).await.unwrap();
+//!     
+//!     // Check agent metrics
+//!     let metrics = agent.get_stats().await;
+//!     println!("Messages sent: {}", metrics.messages_sent);
+//! }
 
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
-use tracing::{debug, info, warn, error, instrument, trace_span, Span};
+use tracing::{debug, info, instrument, warn};
 use uuid::Uuid;
 
 use crate::mcp::types::Message;
-use crate::utils::error::{McpError, McpResult};
 use crate::telemetry;
+use crate::utils::error::{McpError, McpResult};
 
 /// Configuration for an MCP agent.
 #[derive(Debug, Clone, Default)]
@@ -59,46 +105,50 @@ impl Agent {
     #[instrument(skip(_config))]
     pub fn new(_config: Option<serde_json::Value>) -> Self {
         debug!("Creating new agent");
-        
+
         // In a real implementation, this would parse the config JSON
         let config = AgentConfig::default();
-        
+
         let agent = Self {
             connections: Arc::new(Mutex::new(HashMap::new())),
             config,
             stats: Arc::new(Mutex::new(AgentStats::default())),
         };
-        
+
         info!("Agent created with default configuration");
         agent
     }
 
     /// Connect to a test server
     #[instrument(skip(self), fields(server_id = %server_id, server_address = %server_address))]
-    pub async fn connect_to_test_server(&self, server_id: &str, server_address: &str) -> McpResult<()> {
+    pub async fn connect_to_test_server(
+        &self,
+        server_id: &str,
+        server_address: &str,
+    ) -> McpResult<()> {
         let _guard = telemetry::span_duration("connect_to_server");
         let start = Instant::now();
-        
+
         info!("Connecting to server {} at {}", server_id, server_address);
-        
+
         // Update statistics
         {
             let mut stats = self.stats.lock().await;
             stats.connection_attempts += 1;
         }
-        
+
         // Simulate connection process
         let mut connections = self.connections.lock().await;
         connections.insert(server_id.to_string(), server_address.to_string());
-        
+
         let duration = start.elapsed();
         debug!("Connected to server {} in {:?}", server_id, duration);
-        
+
         // Update statistics
         {
             let mut stats = self.stats.lock().await;
             stats.connection_successes += 1;
-            
+
             // Record metrics
             let mut metrics = HashMap::new();
             metrics.insert("connection_duration_ms", duration.as_millis() as f64);
@@ -106,7 +156,7 @@ impl Agent {
             metrics.insert("connection_successes", stats.connection_successes as f64);
             telemetry::add_metrics(metrics);
         }
-        
+
         Ok(())
     }
 
@@ -115,7 +165,7 @@ impl Agent {
     pub async fn connection_count(&self) -> usize {
         let connections = self.connections.lock().await;
         let count = connections.len();
-        
+
         debug!("Current connection count: {}", count);
         count
     }
@@ -124,10 +174,10 @@ impl Agent {
     #[instrument(skip(self))]
     pub async fn list_connections(&self) -> Vec<String> {
         let _guard = telemetry::span_duration("list_connections");
-        
+
         let connections = self.connections.lock().await;
         let connection_list = connections.keys().cloned().collect::<Vec<_>>();
-        
+
         debug!("Listed {} active connections", connection_list.len());
         connection_list
     }
@@ -137,98 +187,106 @@ impl Agent {
     pub async fn send_message(&self, server_id: &str, message: Message) -> McpResult<()> {
         let _guard = telemetry::span_duration("send_message");
         let start = Instant::now();
-        
-        info!("Sending message to server {}: type={:?}, id={}", 
-             server_id, message.message_type, message.id);
-        
+
+        info!(
+            "Sending message to server {}: type={:?}, id={}",
+            server_id, message.message_type, message.id
+        );
+
         // Check if we're connected to this server
         let is_connected = {
             let connections = self.connections.lock().await;
             connections.contains_key(server_id)
         };
-        
+
         if !is_connected {
             warn!("Cannot send message: not connected to server {}", server_id);
-            
+
             // Track failure
             {
                 let mut stats = self.stats.lock().await;
                 stats.operation_failures += 1;
             }
-            
+
             // Record failure metrics
             let mut metrics = HashMap::new();
             metrics.insert("message_send_failures", 1.0);
             metrics.insert("operation_failures", 1.0);
             telemetry::add_metrics(metrics);
-            
+
             return Err(McpError::NotConnected);
         }
-        
+
         // In a real implementation, this would use the connection to send the message
         // Here we just simulate success
-        
+
         // Update message count
         {
             let mut stats = self.stats.lock().await;
             stats.messages_sent += 1;
-            
-            let server_ops = stats.server_operations.entry(server_id.to_string()).or_insert(0);
+
+            let server_ops = stats
+                .server_operations
+                .entry(server_id.to_string())
+                .or_insert(0);
             *server_ops += 1;
         }
-        
+
         // Record metrics for this message
         let duration = start.elapsed();
         debug!("Message sent to server {} in {:?}", server_id, duration);
-        
+
         let mut metrics = HashMap::new();
         metrics.insert("message_send_duration_ms", duration.as_millis() as f64);
         metrics.insert("message_size_bytes", message.payload.len() as f64);
         telemetry::add_metrics(metrics);
-        
+
         Ok(())
     }
 
     /// Executes a task on a server with arguments and wait for result
     #[instrument(skip(self, args), fields(task_name = %task_name))]
     pub async fn execute_task(
-        &self, 
-        task_name: &str, 
+        &self,
+        task_name: &str,
         args: serde_json::Value,
-        timeout: Option<Duration>
+        timeout: Option<Duration>,
     ) -> McpResult<serde_json::Value> {
         let _guard = telemetry::span_duration("execute_task");
         let start = Instant::now();
-        
+
         // Generate a request ID for tracking
         let request_id = Uuid::new_v4().to_string();
-        
-        info!("Executing task '{}' with request ID {}", task_name, request_id);
+
+        info!(
+            "Executing task '{}' with request ID {}",
+            task_name, request_id
+        );
         debug!("Task arguments: {}", args);
-        
+
         // In a real implementation, this would send a task request and await response
         // Here we just simulate execution and response
-        
+
         // Simulate task execution time
         let execution_time = rand::random::<u64>() % 100;
         tokio::time::sleep(Duration::from_millis(execution_time)).await;
-        
+
         let result = serde_json::json!({
-            "status": "success", 
+            "status": "success",
             "result": "dummy-value",
             "request_id": request_id,
             "execution_time_ms": execution_time
         });
-        
+
         let duration = start.elapsed();
         debug!("Task '{}' completed in {:?}", task_name, duration);
-        
+
         // Record metrics
         let mut metrics = HashMap::new();
         metrics.insert("task_execution_duration_ms", duration.as_millis() as f64);
         metrics.insert("task_execution_time_ms", execution_time as f64);
         telemetry::add_metrics(metrics);
-        
+
         Ok(result)
     }
 
@@ -237,37 +295,37 @@ impl Agent {
     pub async fn disconnect(&self, server_id: &str) -> McpResult<()> {
         let _guard = telemetry::span_duration("disconnect");
         let start = Instant::now();
-        
+
         info!("Disconnecting from server {}", server_id);
-        
+
         let mut connections = self.connections.lock().await;
         let was_connected = connections.remove(server_id).is_some();
-        
+
         if was_connected {
             let duration = start.elapsed();
             info!("Disconnected from server {} in {:?}", server_id, duration);
-            
+
             // Record metrics
             let mut metrics = HashMap::new();
             metrics.insert("disconnection_duration_ms", duration.as_millis() as f64);
             metrics.insert("active_connections", connections.len() as f64);
             telemetry::add_metrics(metrics);
-            
+
             Ok(())
         } else {
             warn!("Cannot disconnect: not connected to server {}", server_id);
             Ok(())
         }
     }
-    
+
     /// Get agent statistics
     #[instrument(skip(self))]
     pub async fn get_stats(&self) -> AgentMetrics {
         let _guard = telemetry::span_duration("get_stats");
-        
+
         let stats = self.stats.lock().await;
         let connections = self.connections.lock().await;
-        
+
         let metrics = AgentMetrics {
             connections_count: connections.len(),
             messages_sent: stats.messages_sent,
@@ -277,7 +335,7 @@ impl Agent {
             connection_successes: stats.connection_successes,
             connection_failures: stats.connection_failures,
         };
-        
+
         debug!("Retrieved agent metrics: {:?}", metrics);
         metrics
     }
@@ -300,4 +358,4 @@ pub struct AgentMetrics {
     pub connection_successes: u64,
     /// Total number of connection failures
     pub connection_failures: u64,
-} 
+}

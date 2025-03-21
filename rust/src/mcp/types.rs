@@ -1,3 +1,51 @@
+//! # MCP Protocol Types
+//!
+//! This module defines the core types used throughout the Model Context Protocol (MCP) implementation.
+//! It includes message structures, identifiers, enums for message classification, and JSON-RPC related types.
+//!
+//! ## Core Message Types
+//!
+//! The module provides several key structures:
+//!
+//! - `MessageId`: A UUID-based identifier for messages
+//! - `Message`: The complete message structure with header information and payload
+//! - `MessageEnvelope`: An intermediate representation for serialization
+//! - `MessageHeader`: Contains metadata about a message
+//!
+//! ## Message Classification
+//!
+//! Messages are classified using these enums:
+//!
+//! - `MessageType`: Defines whether a message is a Request, Response, Event, or KeepAlive
+//! - `Priority`: Specifies the urgency of a message (Low, Normal, High)
+//!
+//! ## JSON-RPC Types
+//!
+//! For JSON-RPC compatibility, the module includes:
+//!
+//! - `JsonRpcRequest`: Represents a method invocation request
+//! - `JsonRpcResponse`: Contains the result of a method call
+//! - `JsonRpcNotification`: One-way messages that require no response
+//! - `JsonRpcError`: Standard error format for JSON-RPC
+//!
+//! ## Example
+//!
+//! ```rust
+//! use mcp_agent::mcp::types::{Message, MessageType, Priority};
+//!
+//! // Create a request message with payload
+//! let payload = b"Hello, world!".to_vec();
+//! let request = Message::request(payload, Priority::Normal);
+//!
+//! // Create a response to the request
+//! let response_payload = b"Response data".to_vec();
+//! let response = Message::response(response_payload, request.id.clone());
+//!
+//! // Access message properties
+//! assert_eq!(response.message_type, MessageType::Response);
+//! assert_eq!(response.correlation_id, Some(request.id));
+//! ```
+
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use uuid::Uuid;

@@ -1,0 +1,28 @@
+@startuml
+!theme plain
+
+node "Client Application" as client {
+    [MCP Client] as mcpClient
+}
+
+node "MCP-Agent Server" as server {
+    [MCP Server] as mcpServer
+    [Workflow Engine] as workflow
+    [Agent System] as agent
+}
+
+cloud "External Services" as external {
+    [LLM API] as llm
+    [External APIs] as api
+}
+
+database "Persistent Storage" as db {
+    [State] as state
+    [Metrics] as metrics
+}
+
+client <--> server : JSON-RPC over TCP/WebSocket
+server <--> external : HTTPS/REST
+server <--> db : Persistence
+
+@enduml

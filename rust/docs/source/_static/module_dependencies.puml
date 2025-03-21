@@ -1,0 +1,80 @@
+@startuml
+!theme plain
+
+package "src" {
+    [lib.rs] as lib
+    
+    package "mcp" {
+        [types.rs] as mcptypes
+        [protocol.rs] as mcpprotocol
+        [jsonrpc.rs] as jsonrpc
+        [connection.rs] as connection
+        [agent.rs] as mcpagent
+        [executor.rs] as mcpexecutor
+        
+        mcpprotocol --> mcptypes
+        jsonrpc --> mcptypes
+        connection --> mcptypes
+        connection --> mcpprotocol
+        mcpagent --> mcptypes
+        mcpagent --> connection
+        mcpexecutor --> mcpagent
+    }
+    
+    package "workflow" {
+        [engine.rs] as engine
+        [task.rs] as task
+        [state.rs] as state
+        [signal.rs] as signal
+        
+        engine --> task
+        engine --> state
+        engine --> signal
+        task --> state
+        task --> signal
+    }
+    
+    package "human_input" {
+        [types.rs] as humantypes
+        [handler.rs] as humanhandler
+        
+        humanhandler --> humantypes
+    }
+    
+    package "llm" {
+        [types.rs] as llmtypes
+        [ollama.rs] as ollama
+        
+        ollama --> llmtypes
+    }
+    
+    package "telemetry" {
+        [alerts.rs] as alerts
+    }
+    
+    package "utils" {
+        [error.rs] as errorutils
+    }
+    
+    lib --> mcp
+    lib --> workflow
+    lib --> human_input
+    lib --> llm
+    lib --> telemetry
+    lib --> utils
+    
+    workflow --> mcp
+    workflow --> telemetry
+    workflow --> utils
+    
+    human_input --> telemetry
+    human_input --> utils
+    
+    llm --> telemetry
+    llm --> utils
+    
+    mcp --> telemetry
+    mcp --> utils
+}
+
+@enduml

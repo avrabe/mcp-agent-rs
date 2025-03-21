@@ -1,0 +1,41 @@
+@startuml
+!theme plain
+
+frame "Security Layers" {
+    frame "Transport Security" {
+        [TLS/SSL] as tls
+        [Secure WebSockets] as wss
+    }
+    
+    frame "Authentication" {
+        [API Keys] as apiKeys
+        [JWT] as jwt
+        [OAuth] as oauth
+    }
+    
+    frame "Authorization" {
+        [Role-Based Access] as rbac
+        [Resource Permissions] as permissions
+    }
+    
+    frame "Data Security" {
+        [Input Validation] as validation
+        [Error Handling] as error
+        [Sanitization] as sanitize
+    }
+}
+
+tls --> apiKeys
+wss --> apiKeys
+
+apiKeys --> rbac
+jwt --> rbac
+oauth --> rbac
+
+rbac --> validation
+permissions --> validation
+
+validation --> error
+validation --> sanitize
+
+@enduml

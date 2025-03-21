@@ -4,7 +4,7 @@ use tokio::time::sleep;
 use tracing::{debug, info, warn};
 
 use mcp_agent::mcp::jsonrpc::JsonRpcHandler;
-use mcp_agent::mcp::types::{JsonRpcError, JsonRpcNotification, JsonRpcRequest, JsonRpcResponse};
+use mcp_agent::mcp::types::{JsonRpcNotification, JsonRpcRequest, JsonRpcResponse};
 use mcp_agent::telemetry::{self, TelemetryConfig};
 
 #[tokio::main]
@@ -14,7 +14,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         service_name: "jsonrpc_example".to_string(),
         ..Default::default()
     };
-    telemetry::init_telemetry(config);
+    let _ = telemetry::init_telemetry(config);
     
     info!("Starting JSON-RPC example");
     

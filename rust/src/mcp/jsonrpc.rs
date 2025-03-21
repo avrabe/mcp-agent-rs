@@ -297,7 +297,6 @@ impl Default for JsonRpcHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
     
     #[tokio::test]
     async fn test_register_and_handle_method() {
@@ -323,8 +322,8 @@ mod tests {
         // Verify the response
         assert_eq!(response.jsonrpc, "2.0");
         assert_eq!(response.id, serde_json::Value::String("1".to_string()));
-        assert_eq!(response.error, None);
-        assert_eq!(response.result, Some(serde_json::Value::String("hello world".to_string())));
+        assert!(response.error.is_none());
+        assert_eq!(response.result.as_ref().unwrap(), &serde_json::Value::String("hello world".to_string()));
     }
     
     #[tokio::test]

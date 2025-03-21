@@ -1,14 +1,14 @@
 //! Alerting system for telemetry thresholds
-//! 
+//!
 //! This module provides functionality to create alerts based on telemetry metrics
 //! and report them to various outputs, including terminal.
 
+use colored::Colorize;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
-use tracing::{warn, error, info, debug};
-use colored::Colorize;
+use tracing::debug;
 
 /// Alert severity levels
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -116,13 +116,15 @@ impl Alert {
         let elapsed = self.triggered_at.elapsed();
         let cooldown = self.definition.cooldown;
         let is_expired = elapsed > cooldown;
-        
+
         // Debug output to help with test troubleshooting
         if is_expired {
-            debug!("Alert '{}' has expired. Elapsed: {:?}, Cooldown: {:?}", 
-                  self.definition.id, elapsed, cooldown);
+            debug!(
+                "Alert '{}' has expired. Elapsed: {:?}, Cooldown: {:?}",
+                self.definition.id, elapsed, cooldown
+            );
         }
-        
+
         is_expired
     }
 
@@ -141,7 +143,8 @@ impl Alert {
             AlertSeverity::Critical => self.definition.severity.to_string().bright_red().bold(),
         };
 
-        format!("[{}] {}: {} {} {} (current: {})",
+        format!(
+            "[{}] {}: {} {} {} (current: {})",
             severity,
             self.definition.name,
             self.definition.metric_name,
@@ -209,6 +212,12 @@ pub struct SessionSuppression {
     pub temp_suppressed: HashMap<String, Instant>,
 }
 
+impl Default for SessionSuppression {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SessionSuppression {
     /// Create a new session suppression tracker
     pub fn new() -> Self {
@@ -228,14 +237,15 @@ impl SessionSuppression {
     /// Suppress an alert temporarily
     pub fn suppress_temporarily(&mut self, alert_id: &str, duration: Duration) {
         let expiration = Instant::now() + duration;
-        self.temp_suppressed.insert(alert_id.to_string(), expiration);
+        self.temp_suppressed
+            .insert(alert_id.to_string(), expiration);
     }
 
     /// Check if an alert is suppressed
     pub fn is_suppressed(&mut self, alert_id: &str) -> bool {
         // Clean up expired temporary suppressions
         self.clean_expired_suppressions();
-        
+
         // Check if suppressed for session or temporarily
         self.session_suppressed.contains(alert_id) || self.temp_suppressed.contains_key(alert_id)
     }
@@ -243,7 +253,8 @@ impl SessionSuppression {
     /// Clean up expired temporary suppressions
     fn clean_expired_suppressions(&mut self) {
         let now = Instant::now();
-        self.temp_suppressed.retain(|_, expiration| *expiration > now);
+        self.temp_suppressed
+            .retain(|_, expiration| *expiration > now);
     }
 
     /// Reset all suppressions
@@ -283,12 +294,12 @@ impl AlertingSystem {
     /// Add a new alert definition
     pub fn add_definition(&self, definition: AlertDefinition) {
         let mut definitions = self.definitions.write().unwrap();
-        
+
         // Check if definition with this ID already exists
         if let Some(index) = definitions.iter().position(|d| d.id == definition.id) {
             // Save the ID for logging
             let def_id = definition.id.clone();
-            
+
             // Replace existing definition
             definitions[index] = definition;
             debug!("Replaced alert definition: {}", def_id);
@@ -302,7 +313,7 @@ impl AlertingSystem {
     /// Remove alert definition by ID
     pub fn remove_definition(&self, id: &str) -> bool {
         let mut definitions = self.definitions.write().unwrap();
-        
+
         if let Some(index) = definitions.iter().position(|d| d.id == id) {
             definitions.remove(index);
             debug!("Removed alert definition: {}", id);
@@ -317,27 +328,27 @@ impl AlertingSystem {
         if !self.config.enabled {
             return;
         }
-        
+
         // Clean up expired alerts first
         self.cleanup_expired_alerts();
-        
+
         let definitions = self.definitions.read().unwrap();
-        
+
         // Debug metrics
         debug!("Processing metrics: {:?}", metrics);
-        
+
         for definition in definitions.iter() {
             if !definition.enabled {
                 continue;
             }
-            
+
             // Skip if alert is suppressed
             let mut suppression = self.suppression.lock().unwrap();
             if suppression.is_suppressed(&definition.id) {
                 continue;
             }
             drop(suppression);
-            
+
             // Check if metric exists and compare against threshold
             if let Some(&value) = metrics.get(definition.metric_name.as_str()) {
                 let should_trigger = match definition.operator {
@@ -345,26 +356,34 @@ impl AlertingSystem {
                     AlertOperator::LessThan => {
                         // Special case: don't trigger LessThan for exact matches
                         let equals_epsilon = 1e-9;
-                        value < definition.threshold && 
-                        (definition.threshold - value).abs() > equals_epsilon
-                    },
+                        value < definition.threshold
+                            && (definition.threshold - value).abs() > equals_epsilon
+                    }
                     AlertOperator::GreaterThanOrEqual => value >= definition.threshold,
                     AlertOperator::LessThanOrEqual => value <= definition.threshold,
                     AlertOperator::Equal => {
                         let equals_epsilon = 1e-9;
                         (value - definition.threshold).abs() < equals_epsilon
-                    },
+                    }
                 };
-                
-                debug!("Evaluating metric {} (value: {}) against threshold {} with operator {}: should_trigger = {}",
-                    definition.metric_name, value, definition.threshold, definition.operator, should_trigger);
-                
+
+                debug!(
+                    "Evaluating metric {} (value: {}) against threshold {} with operator {}: should_trigger = {}",
+                    definition.metric_name,
+                    value,
+                    definition.threshold,
+                    definition.operator,
+                    should_trigger
+                );
+
                 if should_trigger {
                     // Check if alert is already active
                     let active_alerts = self.active_alerts.lock().unwrap();
-                    let is_active = active_alerts.iter().any(|a| a.definition.id == definition.id);
+                    let is_active = active_alerts
+                        .iter()
+                        .any(|a| a.definition.id == definition.id);
                     drop(active_alerts);
-                    
+
                     if !is_active {
                         // Trigger new alert
                         self.trigger_alert(definition.clone(), value);
@@ -379,39 +398,42 @@ impl AlertingSystem {
     /// Trigger a new alert
     fn trigger_alert(&self, definition: AlertDefinition, value: f64) {
         let alert = Alert::new(definition, value);
-        
+
         // Add to active alerts
         {
             let mut active_alerts = self.active_alerts.lock().unwrap();
-            debug!("Triggering alert: {} ({})", alert.definition.name, alert.definition.id);
+            debug!(
+                "Triggering alert: {} ({})",
+                alert.definition.name, alert.definition.id
+            );
             active_alerts.push(alert.clone());
         }
-        
+
         // Add to history
         {
             let mut history = self.alert_history.lock().unwrap();
             history.push(alert.clone());
-            
+
             // Limit history size
             if history.len() > 1000 {
                 history.remove(0);
             }
         }
-        
+
         // Report to terminal if enabled
         if self.config.terminal_reporting {
             self.report_to_terminal(&alert);
         }
     }
-    
+
     /// Clean up expired alerts
     fn cleanup_expired_alerts(&self) {
         let mut active_alerts = self.active_alerts.lock().unwrap();
         let before_count = active_alerts.len();
-        
+
         // Remove expired alerts
         active_alerts.retain(|alert| !alert.is_expired());
-        
+
         let after_count = active_alerts.len();
         if before_count != after_count {
             debug!("Cleaned up {} expired alerts", before_count - after_count);
@@ -421,32 +443,32 @@ impl AlertingSystem {
     /// Report alert to terminal
     fn report_to_terminal(&self, alert: &Alert) {
         let options = &self.config.terminal_options;
-        
+
         // Skip if alert is acknowledged and we don't show acknowledged
         if alert.acknowledged && !options.show_acknowledged {
             return;
         }
-        
+
         // Skip if severity filter is applied
         if let Some(max_severity) = options.max_severity {
             if alert.definition.severity > max_severity {
                 return;
             }
         }
-        
+
         // Format and print alert
         let mut alert_text = alert.format();
-        
+
         // Add timestamp if enabled
         if options.show_timestamps {
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs();
-                
+
             alert_text = format!("[{}] {}", now, alert_text);
         }
-        
+
         // Print to terminal
         println!("{}", alert_text);
     }
@@ -454,11 +476,11 @@ impl AlertingSystem {
     /// Acknowledge an alert by ID
     pub fn acknowledge_alert(&self, alert_id: &str) -> bool {
         let mut acknowledged = false;
-        
+
         // Acknowledge in active alerts
         {
             let mut active_alerts = self.active_alerts.lock().unwrap();
-            
+
             for alert in active_alerts.iter_mut() {
                 if alert.definition.id == alert_id && !alert.acknowledged {
                     alert.acknowledge();
@@ -467,18 +489,18 @@ impl AlertingSystem {
                 }
             }
         }
-        
+
         // Acknowledge in history too
         if acknowledged {
             let mut history = self.alert_history.lock().unwrap();
-            
+
             for alert in history.iter_mut() {
                 if alert.definition.id == alert_id && !alert.acknowledged {
                     alert.acknowledge();
                 }
             }
         }
-        
+
         acknowledged
     }
 
@@ -494,17 +516,20 @@ impl AlertingSystem {
     pub fn suppress_alert_temporarily(&self, alert_id: &str, duration: Duration) -> bool {
         let mut suppression = self.suppression.lock().unwrap();
         suppression.suppress_temporarily(alert_id, duration);
-        debug!("Suppressed alert temporarily: {} (for {:?})", alert_id, duration);
+        debug!(
+            "Suppressed alert temporarily: {} (for {:?})",
+            alert_id, duration
+        );
         true
     }
 
     /// Get active alerts
     pub fn get_active_alerts(&self) -> Vec<Alert> {
         let mut active_alerts = self.active_alerts.lock().unwrap();
-        
+
         // Clean up expired alerts
         active_alerts.retain(|alert| !alert.is_expired());
-        
+
         active_alerts.clone()
     }
 
@@ -591,7 +616,7 @@ mod tests {
         };
 
         let alerting = AlertingSystem::new(config);
-        
+
         // Add a test definition
         let alert_def = AlertDefinition::new(
             "test_alert",
@@ -601,35 +626,36 @@ mod tests {
             50.0,
             AlertOperator::GreaterThan,
             AlertSeverity::Info,
-        ).with_cooldown(Duration::from_millis(50));
-        
+        )
+        .with_cooldown(Duration::from_millis(50));
+
         alerting.add_definition(alert_def);
-        
+
         // Test with metric below threshold
         let mut metrics = HashMap::new();
         metrics.insert("test_metric", 40.0);
         alerting.process_metrics(&metrics);
-        
+
         // Should not trigger
         assert_eq!(alerting.get_active_alerts().len(), 0);
-        
+
         // Test with metric above threshold
         metrics.insert("test_metric", 60.0);
         alerting.process_metrics(&metrics);
-        
+
         // Should trigger
         assert_eq!(alerting.get_active_alerts().len(), 1);
-        
+
         // Test cooldown - shouldn't trigger again immediately
         alerting.process_metrics(&metrics);
         assert_eq!(alerting.get_active_alerts().len(), 1);
-        
+
         // Wait for cooldown to expire
         thread::sleep(Duration::from_millis(60));
-        
+
         // Active alerts should be empty now (expired)
         assert_eq!(alerting.get_active_alerts().len(), 0);
-        
+
         // But history should have the alert
         assert_eq!(alerting.get_alert_history().len(), 1);
     }
@@ -637,7 +663,7 @@ mod tests {
     #[test]
     fn test_suppression() {
         let alerting = AlertingSystem::new(AlertingConfig::default());
-        
+
         // Add a test definition
         let alert_def = AlertDefinition::new(
             "test_suppress",
@@ -648,25 +674,25 @@ mod tests {
             AlertOperator::GreaterThan,
             AlertSeverity::Info,
         );
-        
+
         alerting.add_definition(alert_def);
-        
+
         // Suppress the alert
         assert!(alerting.suppress_alert_for_session("test_suppress"));
-        
+
         // Test - should not trigger due to suppression
         let mut metrics = HashMap::new();
         metrics.insert("test_metric", 60.0);
         alerting.process_metrics(&metrics);
-        
+
         // Should not trigger
         assert_eq!(alerting.get_active_alerts().len(), 0);
-        
+
         // Reset suppressions
         alerting.reset_suppressions();
-        
+
         // Now it should trigger
         alerting.process_metrics(&metrics);
         assert_eq!(alerting.get_active_alerts().len(), 1);
     }
-} 
+}

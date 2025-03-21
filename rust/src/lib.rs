@@ -30,54 +30,40 @@ pub mod workflow;
 /// LLM integrations with various providers
 pub mod llm;
 
+/// Human input handling for interactive workflows
+pub mod human_input;
+
 // Re-export key MCP types
 pub use mcp::{
+    executor::Executor,
     protocol::McpProtocol,
     types::{Message, MessageType, Priority},
-    executor::Executor,
 };
 
 // Re-export workflow types
 pub use workflow::{
-    task,
-    TaskGroup,
-    WorkflowEngine,
-    WorkflowState,
-    WorkflowResult,
-    SignalHandler,
-    WorkflowSignal,
+    SignalHandler, TaskGroup, WorkflowEngine, WorkflowResult, WorkflowSignal, WorkflowState, task,
 };
 
 // Re-export error types
 pub use utils::error::{McpError, McpResult};
 
 /// Re-export telemetry types and functions for easier access
-pub use telemetry::{
-    TelemetryConfig, 
-    init_telemetry, 
-    shutdown_telemetry, 
-    span_duration,
-    alerting,
-};
+pub use telemetry::{TelemetryConfig, alerting, init_telemetry, shutdown_telemetry, span_duration};
 
 /// Re-export alerting system types for easier access
 pub use telemetry::alerts::{
-    AlertingSystem,
-    AlertingConfig,
-    AlertDefinition,
-    AlertSeverity,
-    AlertOperator,
-    Alert,
+    Alert, AlertDefinition, AlertOperator, AlertSeverity, AlertingConfig, AlertingSystem,
     TerminalAlertOptions,
 };
 
 // Re-export LLM types for easier access
-pub use llm::{
-    LlmConfig, 
-    Message as LlmMessage, 
-    MessageRole, 
-    Completion,
-    CompletionRequest,
+pub use llm::{Completion, CompletionRequest, LlmConfig, Message as LlmMessage, MessageRole};
+
+/// Re-export human input types for easier access
+pub use human_input::{
+    ConsoleInputHandler, HUMAN_INPUT_SIGNAL_NAME, HumanInputHandler, HumanInputRequest,
+    HumanInputResponse,
 };
 
 #[cfg(feature = "ollama")]

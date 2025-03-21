@@ -8,14 +8,12 @@
 //! - Alerting system based on telemetry thresholds
 
 use std::collections::HashMap;
-use tracing::{span, Span, Level, field};
-use tracing_subscriber::layer::SubscriberExt;
+use tracing::{Level, Span, field, span};
 use tracing_subscriber::util::SubscriberInitExt;
-use tracing_subscriber::EnvFilter;
 
 // Re-export alerts module
 pub mod alerts;
-use alerts::{AlertingSystem, AlertingConfig, AlertDefinition};
+use alerts::{AlertingConfig, AlertingSystem};
 
 // Global alerting system
 use std::sync::OnceLock;
@@ -23,9 +21,7 @@ static ALERTING_SYSTEM: OnceLock<AlertingSystem> = OnceLock::new();
 
 /// Get the global alerting system instance
 pub fn alerting() -> &'static AlertingSystem {
-    ALERTING_SYSTEM.get_or_init(|| {
-        AlertingSystem::new(AlertingConfig::default())
-    })
+    ALERTING_SYSTEM.get_or_init(|| AlertingSystem::new(AlertingConfig::default()))
 }
 
 /// Configuration for the telemetry system
@@ -74,23 +70,19 @@ impl Default for TelemetryConfig {
 pub fn init_telemetry(config: TelemetryConfig) -> Result<(), Box<dyn std::error::Error>> {
     // Initialize alerting system
     if let Some(alerting_config) = &config.alerting_config {
-        let _ = ALERTING_SYSTEM.get_or_init(|| {
-            AlertingSystem::new(alerting_config.clone())
-        });
+        let _ = ALERTING_SYSTEM.get_or_init(|| AlertingSystem::new(alerting_config.clone()));
     } else {
         // Initialize with default configuration
-        let _ = ALERTING_SYSTEM.get_or_init(|| {
-            AlertingSystem::new(AlertingConfig::default())
-        });
+        let _ = ALERTING_SYSTEM.get_or_init(|| AlertingSystem::new(AlertingConfig::default()));
     }
-    
+
     #[cfg(any(feature = "telemetry-jaeger", feature = "telemetry-otlp"))]
     {
         if config.enable_tracing {
             return init_opentelemetry(config);
         }
     }
-    
+
     // Fall back to simple tracing if no OpenTelemetry features are enabled
     // or if tracing is disabled
     if config.enable_console {
@@ -104,7 +96,7 @@ pub fn init_telemetry(config: TelemetryConfig) -> Result<(), Box<dyn std::error:
                 .init();
         }
     }
-    
+
     Ok(())
 }
 
@@ -112,54 +104,57 @@ pub fn init_telemetry(config: TelemetryConfig) -> Result<(), Box<dyn std::error:
 #[cfg(any(feature = "telemetry-jaeger", feature = "telemetry-otlp"))]
 fn init_opentelemetry(config: TelemetryConfig) -> Result<(), Box<dyn std::error::Error>> {
     use opentelemetry::KeyValue;
-    
+
     // Build resource with service name and custom attributes
     let mut resource_attributes = Vec::new();
     resource_attributes.push(KeyValue::new("service.name", config.service_name.clone()));
     resource_attributes.push(KeyValue::new("service.version", env!("CARGO_PKG_VERSION")));
-    
+
     // Add custom attributes
     for (key, value) in &config.attributes {
         resource_attributes.push(KeyValue::new(key.clone(), value.clone()));
     }
 
     // Create tracer based on available features
-    
+
     #[cfg(feature = "telemetry-otlp")]
     if let Some(endpoint) = &config.otlp_endpoint {
         return setup_otlp_tracer(&config, endpoint, resource_attributes);
     }
-    
+
     #[cfg(feature = "telemetry-jaeger")]
     if let Some(endpoint) = &config.jaeger_endpoint {
         return setup_jaeger_tracer(&config, endpoint, resource_attributes);
     }
-    
+
     #[cfg(feature = "telemetry-jaeger")]
     return setup_jaeger_tracer(&config, "127.0.0.1:6831", resource_attributes);
-    
+
     #[allow(unreachable_code)]
     {
         // Fallback to console-only tracing
         if config.enable_console {
             if config.enable_json {
                 tracing_subscriber::fmt()
-                    .with_env_filter(EnvFilter::try_from_default_env()
-                        .unwrap_or_else(|_| EnvFilter::new("info")))
+                    .with_env_filter(
+                        EnvFilter::try_from_default_env()
+                            .unwrap_or_else(|_| EnvFilter::new("info")),
+                    )
                     .init();
             } else {
                 tracing_subscriber::fmt()
-                    .with_env_filter(EnvFilter::try_from_default_env()
-                        .unwrap_or_else(|_| EnvFilter::new("info")))
+                    .with_env_filter(
+                        EnvFilter::try_from_default_env()
+                            .unwrap_or_else(|_| EnvFilter::new("info")),
+                    )
                     .init();
             }
         } else {
             tracing_subscriber::registry()
-                .with(EnvFilter::try_from_default_env()
-                    .unwrap_or_else(|_| EnvFilter::new("info")))
+                .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")))
                 .init();
         }
-        
+
         Ok(())
     }
 }
@@ -168,12 +163,12 @@ fn init_opentelemetry(config: TelemetryConfig) -> Result<(), Box<dyn std::error:
 #[cfg(feature = "telemetry-otlp")]
 fn setup_otlp_tracer(
     config: &TelemetryConfig,
-    endpoint: &str, 
-    resource_attributes: Vec<opentelemetry::KeyValue>
+    endpoint: &str,
+    resource_attributes: Vec<opentelemetry::KeyValue>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use opentelemetry_otlp::WithExportConfig;
     use tracing_opentelemetry::OpenTelemetryLayer;
-    
+
     // Set up the tracer
     let tracer = opentelemetry_otlp::new_pipeline()
         .tracing()
@@ -184,39 +179,38 @@ fn setup_otlp_tracer(
         )
         .with_trace_config(
             opentelemetry_sdk::trace::config()
-                .with_sampler(opentelemetry_sdk::trace::Sampler::TraceIdRatioBased(config.sampling_ratio))
-                .with_resource(opentelemetry_sdk::Resource::new(resource_attributes))
+                .with_sampler(opentelemetry_sdk::trace::Sampler::TraceIdRatioBased(
+                    config.sampling_ratio,
+                ))
+                .with_resource(opentelemetry_sdk::Resource::new(resource_attributes)),
         )
         .install_batch(opentelemetry_sdk::runtime::Tokio)?;
-    
+
     // Create registry with OpenTelemetry layer
     let otel_layer = OpenTelemetryLayer::new(tracer);
-    
+
     // Combine layers based on configuration
     if config.enable_console {
         if config.enable_json {
             tracing_subscriber::registry()
                 .with(otel_layer)
                 .with(tracing_subscriber::fmt::layer().json())
-                .with(EnvFilter::try_from_default_env()
-                    .unwrap_or_else(|_| EnvFilter::new("info")))
+                .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")))
                 .init();
         } else {
             tracing_subscriber::registry()
                 .with(otel_layer)
                 .with(tracing_subscriber::fmt::layer())
-                .with(EnvFilter::try_from_default_env()
-                    .unwrap_or_else(|_| EnvFilter::new("info")))
+                .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")))
                 .init();
         }
     } else {
         tracing_subscriber::registry()
             .with(otel_layer)
-            .with(EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| EnvFilter::new("info")))
+            .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")))
             .init();
     }
-    
+
     Ok(())
 }
 
@@ -225,57 +219,56 @@ fn setup_otlp_tracer(
 fn setup_jaeger_tracer(
     config: &TelemetryConfig,
     endpoint: &str,
-    resource_attributes: Vec<opentelemetry::KeyValue>
+    resource_attributes: Vec<opentelemetry::KeyValue>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use tracing_opentelemetry::OpenTelemetryLayer;
-    
+
     // Parse agent endpoint into host and port
     let parts: Vec<&str> = endpoint.split(':').collect();
     let (agent_host, agent_port) = match parts.as_slice() {
         [host, port] => (host.to_string(), port.parse::<u16>().unwrap_or(6831)),
         _ => ("127.0.0.1".to_string(), 6831),
     };
-    
+
     // Configure trace config
     let trace_config = opentelemetry_sdk::trace::config()
-        .with_sampler(opentelemetry_sdk::trace::Sampler::TraceIdRatioBased(config.sampling_ratio))
+        .with_sampler(opentelemetry_sdk::trace::Sampler::TraceIdRatioBased(
+            config.sampling_ratio,
+        ))
         .with_resource(opentelemetry_sdk::Resource::new(resource_attributes));
-    
+
     // Configure and install Jaeger tracer
     let tracer = opentelemetry_jaeger::new_agent_pipeline()
         .with_service_name(config.service_name.clone())
         .with_endpoint(format!("{}:{}", agent_host, agent_port))
         .with_trace_config(trace_config)
         .install_simple()?;
-    
+
     // Create registry with OpenTelemetry layer
     let otel_layer = OpenTelemetryLayer::new(tracer);
-    
+
     // Combine layers based on configuration
     if config.enable_console {
         if config.enable_json {
             tracing_subscriber::registry()
                 .with(otel_layer)
                 .with(tracing_subscriber::fmt::layer().json())
-                .with(EnvFilter::try_from_default_env()
-                    .unwrap_or_else(|_| EnvFilter::new("info")))
+                .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")))
                 .init();
         } else {
             tracing_subscriber::registry()
                 .with(otel_layer)
                 .with(tracing_subscriber::fmt::layer())
-                .with(EnvFilter::try_from_default_env()
-                    .unwrap_or_else(|_| EnvFilter::new("info")))
+                .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")))
                 .init();
         }
     } else {
         tracing_subscriber::registry()
             .with(otel_layer)
-            .with(EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| EnvFilter::new("info")))
+            .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")))
             .init();
     }
-    
+
     Ok(())
 }
 
@@ -293,16 +286,16 @@ pub fn shutdown_telemetry() {
 /// then records that duration as a metric.
 pub fn span_duration(name: &'static str) -> impl Drop {
     let start = std::time::Instant::now();
-    
+
     // Create a tracing span
     let span = tracing::info_span!("operation", name = name);
     let _guard = span.enter();
-    
+
     struct Guard {
         name: &'static str,
         start: std::time::Instant,
     }
-    
+
     impl Drop for Guard {
         fn drop(&mut self) {
             let duration = self.start.elapsed();
@@ -314,7 +307,7 @@ pub fn span_duration(name: &'static str) -> impl Drop {
             );
         }
     }
-    
+
     Guard { name, start }
 }
 
@@ -332,7 +325,7 @@ pub fn add_metrics(metrics: HashMap<&'static str, f64>) {
             value = value,
         );
     }
-    
+
     // Process alerts based on metrics
     alerting().process_metrics(&metrics);
 }
@@ -351,7 +344,7 @@ pub fn create_trace_context(name: &'static str, level: Level) -> Span {
 /// Sets the error flag and message on the current span
 pub fn set_error_on_current_span(error: &dyn std::error::Error) {
     span::Span::current().record("error", true);
-    span::Span::current().record("error.message", &field::display(error));
+    span::Span::current().record("error.message", field::display(error));
 }
 
 /// Add a single metric with tags to the telemetry system
@@ -359,27 +352,28 @@ pub fn add_metric(name: &'static str, value: f64, tags: &[(&str, String)]) {
     let mut metrics = HashMap::new();
     metrics.insert(name, value);
     add_metrics(metrics);
-    
+
     // Log metric for tracing
-    let tags_str = tags.iter()
+    let tags_str = tags
+        .iter()
         .map(|(k, v)| format!("{}={}", k, v))
         .collect::<Vec<_>>()
         .join(",");
-    
+
     tracing::trace!(
-        metric_name = name, 
-        metric_value = value, 
+        metric_name = name,
+        metric_value = value,
         metric_tags = tags_str,
         "Metric recorded"
     );
 }
 
-/// Record the duration of a span 
+/// Record the duration of a span
 pub fn record_span_duration(span_name: &'static str, duration_ms: f64) {
     add_metric(
-        "span_duration_ms", 
-        duration_ms, 
-        &[("span_name", span_name.to_string())]
+        "span_duration_ms",
+        duration_ms,
+        &[("span_name", span_name.to_string())],
     );
 }
 
@@ -387,7 +381,7 @@ pub fn record_span_duration(span_name: &'static str, duration_ms: f64) {
 mod tests {
     use super::*;
     use std::time::Duration;
-    
+
     #[test]
     fn test_telemetry_config_default() {
         let config = TelemetryConfig::default();
@@ -401,7 +395,7 @@ mod tests {
         assert_eq!(config.sampling_ratio, 1.0);
         assert!(config.attributes.is_empty());
     }
-    
+
     #[tokio::test]
     async fn test_span_duration() {
         // This is mostly to test that span_duration doesn't panic
@@ -409,7 +403,7 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(10)).await;
         // Guard will be dropped here and should record the duration
     }
-    
+
     #[test]
     fn test_add_metrics() {
         // Just ensure it doesn't panic
@@ -417,4 +411,4 @@ mod tests {
         metrics.insert("test_metric", 42.0);
         add_metrics(metrics);
     }
-} 
+}

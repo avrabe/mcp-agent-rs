@@ -1,33 +1,33 @@
+use anyhow::{Result, anyhow};
+use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{Mutex, mpsc, oneshot};
-use tokio::time::timeout;
-use uuid::Uuid;
-use async_trait::async_trait;
-use anyhow::{Result, anyhow};
 use std::time::Duration;
-use tracing::{debug, info, warn, error, instrument};
+use tokio::sync::{Mutex, oneshot};
+use tokio::time::timeout;
+use tracing::{debug, instrument};
+use uuid::Uuid;
 
 /// A signal that can be sent to or from a workflow
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkflowSignal {
     /// Unique ID of the signal
     pub id: String,
-    
+
     /// Name of the signal
     pub name: String,
-    
+
     /// Description of the signal
     pub description: Option<String>,
-    
+
     /// Payload for the signal
     pub payload: Option<serde_json::Value>,
-    
+
     /// ID of the workflow this signal belongs to
     pub workflow_id: Option<String>,
-    
+
     /// Time the signal was created
     pub created_at: DateTime<Utc>,
 }
@@ -44,14 +44,18 @@ impl WorkflowSignal {
             created_at: Utc::now(),
         }
     }
-    
+
     /// Create a new signal with a description
-    pub fn with_description(name: &str, description: &str, payload: Option<serde_json::Value>) -> Self {
+    pub fn with_description(
+        name: &str,
+        description: &str,
+        payload: Option<serde_json::Value>,
+    ) -> Self {
         let mut signal = Self::new(name, payload);
         signal.description = Some(description.to_string());
         signal
     }
-    
+
     /// Create a signal for a specific workflow
     pub fn for_workflow(name: &str, workflow_id: &str, payload: Option<serde_json::Value>) -> Self {
         let mut signal = Self::new(name, payload);
@@ -62,16 +66,16 @@ impl WorkflowSignal {
     // Predefined signal constants
     /// Interrupt signal name
     pub const Interrupt: &'static str = "interrupt";
-    
+
     /// Terminate signal name
     pub const Terminate: &'static str = "terminate";
-    
+
     /// Pause signal name
     pub const Pause: &'static str = "pause";
-    
+
     /// Resume signal name
     pub const Resume: &'static str = "resume";
-    
+
     /// Cancel signal name
     pub const Cancel: &'static str = "cancel";
 }
@@ -81,10 +85,10 @@ impl WorkflowSignal {
 pub struct SignalRegistration {
     /// Name of the signal
     pub signal_name: String,
-    
+
     /// Unique name of the registration
     pub unique_name: String,
-    
+
     /// ID of the workflow this signal belongs to
     pub workflow_id: Option<String>,
 }
@@ -105,7 +109,7 @@ impl SignalRegistration {
 pub struct PendingSignal {
     /// Registration of the signal
     pub registration: SignalRegistration,
-    
+
     /// Channel sender for resolving the waiting signal
     pub sender: oneshot::Sender<WorkflowSignal>,
 }
@@ -115,7 +119,7 @@ pub struct PendingSignal {
 pub trait SignalHandler: Send + Sync + std::fmt::Debug {
     /// Send a signal to the workflow
     async fn signal(&self, signal: WorkflowSignal) -> Result<()>;
-    
+
     /// Wait for a signal with the given name
     async fn wait_for_signal(
         &self,
@@ -139,7 +143,7 @@ impl AsyncSignalHandler {
             pending_signals: Arc::new(Mutex::new(HashMap::new())),
         }
     }
-    
+
     /// Create a new signal handler with predefined signal types
     pub fn new_with_signals(signal_types: Vec<&str>) -> Self {
         let handler = Self::new();
@@ -155,16 +159,16 @@ impl SignalHandler for AsyncSignalHandler {
     #[instrument(skip(self), fields(signal.name = %signal.name, signal.id = %signal.id))]
     async fn signal(&self, signal: WorkflowSignal) -> Result<()> {
         debug!("Emitting signal: {}", signal.name);
-        
+
         let mut pending_signals = self.pending_signals.lock().await;
-        
+
         if let Some(handlers) = pending_signals.get_mut(&signal.name) {
             // Make a copy of the handlers to avoid mutable borrow issues
             let pending_handlers = std::mem::take(handlers);
-            
+
             // Keep track of handlers that weren't matched
             let mut remaining_handlers = Vec::new();
-            
+
             // Process each handler
             for handler in pending_handlers {
                 let matched = match (&signal.workflow_id, &handler.registration.workflow_id) {
@@ -175,7 +179,7 @@ impl SignalHandler for AsyncSignalHandler {
                     // Otherwise match (handler has workflow ID but signal doesn't, or neither has workflow ID)
                     _ => true,
                 };
-                
+
                 if matched {
                     // We found a match, send the signal
                     debug!("Found matching handler for signal: {}", signal.name);
@@ -185,10 +189,10 @@ impl SignalHandler for AsyncSignalHandler {
                     remaining_handlers.push(handler);
                 }
             }
-            
+
             // Restore the remaining handlers
             *handlers = remaining_handlers;
-            
+
             Ok(())
         } else {
             // No handlers registered for this signal
@@ -196,7 +200,7 @@ impl SignalHandler for AsyncSignalHandler {
             Ok(())
         }
     }
-    
+
     #[instrument(skip(self), fields(signal.name = %signal_name))]
     async fn wait_for_signal(
         &self,
@@ -205,23 +209,24 @@ impl SignalHandler for AsyncSignalHandler {
         timeout_duration: Option<Duration>,
     ) -> Result<WorkflowSignal> {
         debug!("Waiting for signal: {}", signal_name);
-        
+
         let registration = SignalRegistration::new(signal_name, workflow_id);
         let (sender, receiver) = oneshot::channel();
-        
+
         let pending_signal = PendingSignal {
             registration: registration.clone(),
             sender,
         };
-        
+
         // Register the pending signal
         {
             let mut pending_signals = self.pending_signals.lock().await;
-            pending_signals.entry(signal_name.to_string())
+            pending_signals
+                .entry(signal_name.to_string())
                 .or_insert_with(Vec::new)
                 .push(pending_signal);
         }
-        
+
         // Wait for the signal with optional timeout
         let signal = if let Some(duration) = timeout_duration {
             match timeout(duration, receiver).await {
@@ -230,19 +235,22 @@ impl SignalHandler for AsyncSignalHandler {
                     // Timeout occurred, remove the registration
                     let mut pending_signals = self.pending_signals.lock().await;
                     if let Some(handlers) = pending_signals.get_mut(signal_name) {
-                        handlers.retain(|ps| ps.registration.unique_name != registration.unique_name);
+                        handlers
+                            .retain(|ps| ps.registration.unique_name != registration.unique_name);
                         if handlers.is_empty() {
                             pending_signals.remove(signal_name);
                         }
                     }
-                    
+
                     return Err(anyhow!("Timeout waiting for signal: {}", signal_name));
                 }
             }
         } else {
-            receiver.await.map_err(|_| anyhow!("Signal channel closed"))?
+            receiver
+                .await
+                .map_err(|_| anyhow!("Signal channel closed"))?
         };
-        
+
         debug!("Received signal: {}", signal_name);
         Ok(signal)
     }
@@ -258,49 +266,57 @@ impl Default for AsyncSignalHandler {
 mod tests {
     use super::*;
     use tokio::time::sleep;
-    
+
     #[tokio::test]
     async fn test_basic_signal() {
         let handler = AsyncSignalHandler::new();
-        
+
         // Set up a task to wait for a signal
         let handler_clone = Arc::new(handler);
         let wait_task = tokio::spawn({
             let handler = Arc::clone(&handler_clone);
             async move {
-                handler.wait_for_signal("test_signal", None, Some(Duration::from_secs(1))).await
+                handler
+                    .wait_for_signal("test_signal", None, Some(Duration::from_secs(1)))
+                    .await
             }
         });
-        
+
         // Give the wait task time to register
         sleep(Duration::from_millis(50)).await;
-        
+
         // Send the signal
         let signal = WorkflowSignal::new("test_signal", Some(serde_json::json!({"value": "test"})));
         handler_clone.signal(signal.clone()).await.unwrap();
-        
+
         // Check that the wait task received the signal
         let result = wait_task.await.unwrap();
         assert!(result.is_ok());
-        
+
         let received_signal = result.unwrap();
         assert_eq!(received_signal.name, "test_signal");
-        assert_eq!(received_signal.payload, Some(serde_json::json!({"value": "test"})));
+        assert_eq!(
+            received_signal.payload,
+            Some(serde_json::json!({"value": "test"}))
+        );
     }
-    
+
     #[tokio::test]
     async fn test_signal_timeout() {
         let handler = AsyncSignalHandler::new();
-        
+
         // Wait for a signal with a short timeout
-        let result = handler.wait_for_signal(
-            "timeout_signal", 
-            None, 
-            Some(Duration::from_millis(100))
-        ).await;
-        
+        let result = handler
+            .wait_for_signal("timeout_signal", None, Some(Duration::from_millis(100)))
+            .await;
+
         // Should timeout
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Timeout waiting for signal"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Timeout waiting for signal")
+        );
     }
-} 
+}

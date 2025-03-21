@@ -8,7 +8,10 @@ async fn test_protocol_serialization() {
     let message = Message::request(b"test payload".to_vec(), Priority::Normal);
 
     let mut buffer = Vec::new();
-    protocol.write_message_async(&mut buffer, &message).await.unwrap();
+    protocol
+        .write_message_async(&mut buffer, &message)
+        .await
+        .unwrap();
 
     let mut reader = Cursor::new(&buffer);
     let reconstructed = protocol.read_message_async(&mut reader).await.unwrap();
@@ -25,7 +28,10 @@ async fn test_protocol_large_message() {
     let message = Message::request(large_payload, Priority::Normal);
 
     let mut buffer = Vec::new();
-    protocol.write_message_async(&mut buffer, &message).await.unwrap();
+    protocol
+        .write_message_async(&mut buffer, &message)
+        .await
+        .unwrap();
 
     let mut reader = Cursor::new(&buffer);
     let reconstructed = protocol.read_message_async(&mut reader).await.unwrap();
@@ -53,7 +59,10 @@ async fn test_protocol_multiple_messages() {
 
     let mut buffer = Vec::new();
     for message in &messages {
-        protocol.write_message_async(&mut buffer, message).await.unwrap();
+        protocol
+            .write_message_async(&mut buffer, message)
+            .await
+            .unwrap();
     }
 
     let mut reader = Cursor::new(&buffer);
@@ -63,4 +72,4 @@ async fn test_protocol_multiple_messages() {
         assert_eq!(reconstructed.priority, expected.priority);
         assert_eq!(reconstructed.payload, expected.payload);
     }
-} 
+}

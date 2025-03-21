@@ -32,7 +32,7 @@ async fn test_task_result_methods() {
     assert!(success.is_success());
     assert_eq!(success.success_value(), Some(&value));
     assert_eq!(success.error_message(), None);
-    
+
     // Test failure result
     let error_msg = "Something went wrong";
     let failure = TaskResult::Failure(error_msg.to_string());
@@ -48,11 +48,11 @@ async fn test_signal_construction() {
     assert_eq!(signal.name, "test_signal");
     assert_eq!(signal.workflow_id, None);
     assert!(signal.payload.is_some());
-    
+
     // Test signal for workflow
     let workflow_id = "test_workflow";
     let signal = Signal::for_workflow("test_signal", workflow_id, None);
     assert_eq!(signal.name, "test_signal");
     assert_eq!(signal.workflow_id, Some(workflow_id.to_string()));
     assert!(signal.payload.is_none());
-} 
+}

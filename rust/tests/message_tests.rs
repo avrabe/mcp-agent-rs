@@ -52,11 +52,11 @@ fn test_message_envelope_roundtrip() {
 #[test]
 fn test_message_custom_construction() {
     let message = Message::new(
-        MessageType::Event, 
+        MessageType::Event,
         Priority::High,
         b"test payload".to_vec(),
         None,
-        None
+        None,
     );
 
     assert_eq!(message.message_type, MessageType::Event);
@@ -76,4 +76,4 @@ fn test_message_type_conversion() {
     assert_eq!(MessageType::Response as u8, 1);
     assert_eq!(MessageType::Event as u8, 2);
     assert_eq!(MessageType::KeepAlive as u8, 3);
-} 
+}

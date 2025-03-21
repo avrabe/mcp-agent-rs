@@ -356,9 +356,7 @@ impl Workflow for StateMachineWorkflow {
         if self.requires_ai_review {
             if !self.llm_client.is_available().await? {
                 self.state.set_error("LLM service is not available for AI review");
-                let mut failed_result = WorkflowResult::new();
-                failed_result.set_error("LLM service is not available for AI review");
-                return Ok(failed_result);
+                return Ok(WorkflowResult::failed("LLM service is not available for AI review"));
             }
         }
         

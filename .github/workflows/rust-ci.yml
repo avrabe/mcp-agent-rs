@@ -1,0 +1,107 @@
+name: Rust CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "rust/**"
+      - ".github/workflows/rust-ci.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "rust/**"
+      - ".github/workflows/rust-ci.yml"
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: Test on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        rust: [stable]
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Install Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: ${{ matrix.rust }}
+          override: true
+          components: rustfmt, clippy
+
+      - name: Cache dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Check formatting
+        run: cd rust && cargo fmt -- --check
+
+      - name: Clippy
+        run: cd rust && cargo clippy -- -D warnings
+
+      - name: Test (Default features)
+        run: cd rust && cargo test
+
+      - name: Test (All features)
+        run: cd rust && cargo test --all-features
+
+      - name: Test specific feature combinations
+        run: |
+          cd rust
+          cargo test --no-default-features
+          cargo test --features ollama
+          cargo test --features telemetry-jaeger,ollama
+
+  build:
+    name: Build on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        rust: [stable]
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Install Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: ${{ matrix.rust }}
+          override: true
+
+      - name: Cache dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-build-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-build-
+            ${{ runner.os }}-cargo-
+
+      - name: Build (Default features)
+        run: cd rust && cargo build --release
+
+      - name: Build (All features)
+        run: cd rust && cargo build --release --all-features
+
+      - name: Build examples
+        run: cd rust && cargo build --release --examples

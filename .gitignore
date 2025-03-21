@@ -176,3 +176,5 @@ project_contents.md
 
 # example logs
 examples/**/*.jsonl
+rust/docs/_build/
+rust/.ide_helper/

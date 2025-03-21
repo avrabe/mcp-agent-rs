@@ -1,5 +1,5 @@
 use std::time::{Duration, Instant};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use rand::Rng;
 use anyhow::{anyhow, Result};
 use tracing::{info, warn, error, debug};
@@ -11,13 +11,10 @@ use async_trait::async_trait;
 use mcp_agent::telemetry::{init_telemetry, TelemetryConfig};
 use mcp_agent::workflow::{
     WorkflowEngine, WorkflowState, WorkflowResult, Workflow,
-    TaskGroup, Task, TaskResult, TaskResultStatus,
-    SignalHandler, WorkflowSignal, execute_workflow,
+    task, AsyncSignalHandler, WorkflowSignal, execute_workflow,
 };
-use mcp_agent::llm::{
-    ollama::{OllamaClient, OllamaConfig},
-    types::{Message, Role, CompletionRequest, Completion},
-};
+use mcp_agent::{CompletionRequest, Completion, LlmConfig};
+use mcp_agent::llm::types::LlmClient;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum RetryStrategy {
@@ -61,208 +58,65 @@ impl RetryStrategy {
             },
             
             Self::Jitter { min_ms, max_ms } => {
-                let delay = rand::thread_rng().gen_range(*min_ms..*max_ms);
-                Duration::from_millis(delay)
-            },
-        }
-    }
-}
-
-/// Circuit breaker states
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum CircuitState {
-    Closed,     // Normal operation, requests allowed
-    Open,       // Failing, requests rejected
-    HalfOpen,   // Testing if service recovered
-}
-
-/// Circuit breaker for handling service failures
-struct CircuitBreaker {
-    state: CircuitState,
-    failure_threshold: usize,
-    failure_count: usize,
-    recovery_timeout: Duration,
-    last_failure_time: Option<Instant>,
-    half_open_max_calls: usize,
-    half_open_call_count: usize,
-}
-
-impl CircuitBreaker {
-    fn new(failure_threshold: usize, recovery_timeout: Duration, half_open_max_calls: usize) -> Self {
-        Self {
-            state: CircuitState::Closed,
-            failure_threshold,
-            failure_count: 0,
-            recovery_timeout,
-            last_failure_time: None,
-            half_open_max_calls,
-            half_open_call_count: 0,
-        }
-    }
-    
-    fn allow_request(&mut self) -> bool {
-        match self.state {
-            CircuitState::Closed => true,
-            
-            CircuitState::Open => {
-                // Check if recovery timeout has elapsed
-                if let Some(last_failure) = self.last_failure_time {
-                    if last_failure.elapsed() >= self.recovery_timeout {
-                        // Move to half-open state to test recovery
-                        debug!("Circuit breaker transitioning from Open to HalfOpen state");
-                        self.state = CircuitState::HalfOpen;
-                        self.half_open_call_count = 0;
-                        true
-                    } else {
-                        false
-                    }
-                } else {
-                    false
-                }
-            },
-            
-            CircuitState::HalfOpen => {
-                // Allow limited number of test requests
-                if self.half_open_call_count < self.half_open_max_calls {
-                    self.half_open_call_count += 1;
-                    true
-                } else {
-                    false
-                }
+                let range = *max_ms - *min_ms;
+                let jitter = rand::thread_rng().gen_range(0..=range);
+                Duration::from_millis(*min_ms + jitter)
             }
         }
     }
-    
-    fn record_success(&mut self) {
-        match self.state {
-            CircuitState::Closed => {
-                // Reset failure count on success
-                self.failure_count = 0;
-            },
-            
-            CircuitState::HalfOpen => {
-                // On success in half-open state, go back to closed
-                debug!("Circuit breaker transitioning from HalfOpen to Closed state");
-                self.state = CircuitState::Closed;
-                self.failure_count = 0;
-            },
-            
-            CircuitState::Open => {
-                // Should not happen, but handle it anyway
-                warn!("Unexpected success recorded while circuit breaker is Open");
-            }
-        }
-    }
-    
-    fn record_failure(&mut self) {
-        self.last_failure_time = Some(Instant::now());
-        
-        match self.state {
-            CircuitState::Closed => {
-                self.failure_count += 1;
-                
-                // If we hit the threshold, open the circuit
-                if self.failure_count >= self.failure_threshold {
-                    debug!("Circuit breaker transitioning from Closed to Open state");
-                    self.state = CircuitState::Open;
-                }
-            },
-            
-            CircuitState::HalfOpen => {
-                // If we fail in half-open state, go back to open
-                debug!("Circuit breaker transitioning from HalfOpen to Open state");
-                self.state = CircuitState::Open;
-            },
-            
-            CircuitState::Open => {
-                // Already open, just update the failure time
-            }
-        }
-    }
-    
-    fn state(&self) -> CircuitState {
-        self.state
-    }
 }
 
-/// Simulates a flaky external service with configurable reliability
+/// A mock flaky service that randomly fails
 struct FlakyService {
-    // Probability of request success (0.0 to 1.0)
-    success_rate: f64,
-    // Time it takes for service to respond
-    response_time: Duration,
-    // Circuit breaker
-    circuit_breaker: CircuitBreaker,
+    failure_rate: f64,
+    min_delay_ms: u64,
+    max_delay_ms: u64,
 }
 
 impl FlakyService {
-    fn new(success_rate: f64, response_time: Duration) -> Self {
-        let circuit_breaker = CircuitBreaker::new(
-            3,                         // Fail after 3 consecutive failures
-            Duration::from_secs(5),    // Try again after 5 seconds
-            2,                         // Allow 2 test requests in half-open state
-        );
-        
-        Self { 
-            success_rate, 
-            response_time,
-            circuit_breaker,
+    fn new(failure_rate: f64, min_delay_ms: u64, max_delay_ms: u64) -> Self {
+        Self {
+            failure_rate,
+            min_delay_ms,
+            max_delay_ms,
         }
     }
     
-    async fn call(&mut self, request: &str) -> Result<String> {
-        // Check if request is allowed by circuit breaker
-        if !self.circuit_breaker.allow_request() {
-            return Err(anyhow!("Circuit breaker is open, request rejected"));
-        }
-        
+    /// Process a request, with potential for failure
+    async fn process_request(&self, request: &str) -> Result<String> {
         // Simulate processing time
-        tokio::time::sleep(self.response_time).await;
+        let processing_time = rand::thread_rng().gen_range(self.min_delay_ms..=self.max_delay_ms);
+        tokio::time::sleep(Duration::from_millis(processing_time)).await;
         
-        // Simulate random failures
-        let success = rand::thread_rng().gen_bool(self.success_rate);
-        
-        if success {
-            // Simulate successful response
-            self.circuit_breaker.record_success();
-            Ok(format!("Processed: {}", request))
+        // Randomly fail based on failure rate
+        if rand::thread_rng().gen_range(0.0..1.0) < self.failure_rate {
+            Err(anyhow!("Service error: Request processing failed"))
         } else {
-            // Simulate failure
-            self.circuit_breaker.record_failure();
-            Err(anyhow!("Service failed to process request"))
+            // Successful response
+            Ok(format!("Processed: {}", request))
         }
-    }
-    
-    fn circuit_state(&self) -> CircuitState {
-        self.circuit_breaker.state()
     }
 }
 
+/// Retry workflow that handles retrying failed operations
 struct RetryWorkflow {
     state: WorkflowState,
     engine: WorkflowEngine,
-    flaky_service: Arc<TokioMutex<FlakyService>>,
+    flaky_service: Arc<FlakyService>,
     requests: Vec<String>,
     retry_strategy: RetryStrategy,
     max_retries: usize,
-    results: Vec<(String, bool, usize)>, // (request, success, attempts)
+    results: Arc<TokioMutex<Vec<(String, Option<String>, Option<String>)>>>,
 }
 
 impl RetryWorkflow {
     fn new(
         engine: WorkflowEngine,
+        flaky_service: Arc<FlakyService>,
         requests: Vec<String>,
-        service_success_rate: f64,
-        service_response_time: Duration,
         retry_strategy: RetryStrategy,
         max_retries: usize,
     ) -> Self {
-        // Create a flaky service with a circuit breaker
-        let flaky_service = Arc::new(TokioMutex::new(FlakyService::new(
-            service_success_rate,
-            service_response_time
-        )));
-        
         let mut metadata = HashMap::new();
         metadata.insert("request_count".to_string(), json!(requests.len()));
         metadata.insert("max_retries".to_string(), json!(max_retries));
@@ -277,94 +131,84 @@ impl RetryWorkflow {
             requests,
             retry_strategy,
             max_retries,
-            results: Vec::new(),
+            results: Arc::new(TokioMutex::new(Vec::new())),
         }
     }
     
-    fn create_retry_task(&self, request: String, request_index: usize) -> Task {
+    /// Create a task to process a request with retries
+    fn create_retry_task(&self, request: String, request_index: usize) -> task::WorkflowTask<String> {
         let flaky_service = self.flaky_service.clone();
         let retry_strategy = self.retry_strategy;
         let max_retries = self.max_retries;
         
-        Task::new(&format!("process_request_{}", request_index), move |ctx| {
-            async move {
-                info!("Processing request: {}", request);
-                
-                let mut attempt = 0;
-                let mut last_error = None;
-                
-                // Track whether the task was completed successfully
-                let mut success = false;
-                
-                // Try until max retries reached
-                while attempt <= max_retries {
-                    debug!("Attempt {} of {} for request: {}", attempt + 1, max_retries + 1, request);
-                    
-                    // Update task context with current attempt
-                    ctx.set_metadata("current_attempt", (attempt + 1).to_string());
-                    
-                    // Check if task was cancelled
-                    if ctx.is_cancelled() {
-                        warn!("Task cancelled during retry loop");
-                        return Err(anyhow!("Task cancelled during retry processing"));
-                    }
-                    
-                    match flaky_service.lock().await.call(&request).await {
-                        Ok(response) => {
-                            info!("Request succeeded on attempt {}: {}", attempt + 1, response);
-                            success = true;
-                            
-                            // Return success with attempt count
-                            return Ok(TaskResult::success(format!("{{\"success\":true,\"attempts\":{}}}", attempt + 1)));
-                        },
-                        Err(e) => {
-                            warn!("Request failed on attempt {}: {}", attempt + 1, e);
-                            last_error = Some(e.to_string());
-                            
-                            // Check circuit breaker state
-                            let circuit_state = flaky_service.lock().await.circuit_state();
-                            if circuit_state == CircuitState::Open {
-                                warn!("Circuit breaker open, stopping retry attempts");
-                                break;
-                            }
-                            
-                            // If we haven't reached max retries, wait before trying again
-                            if attempt < max_retries {
-                                let delay = retry_strategy.calculate_delay(attempt);
-                                debug!("Waiting {:?} before next retry", delay);
-                                tokio::time::sleep(delay).await;
-                            }
-                        }
-                    }
-                    
-                    attempt += 1;
+        task::task(&format!("process_request_{}", request_index), move || async move {
+            info!("Processing request: {}", request);
+            
+            let mut attempt = 0;
+            let mut last_error = None;
+            
+            loop {
+                if attempt >= max_retries {
+                    warn!("Max retries ({}) reached for request: {}", max_retries, request);
+                    break;
                 }
                 
-                // If we got here, all retries failed
-                error!("All retry attempts failed for request: {}", request);
+                debug!("Attempt {} for request: {}", attempt + 1, request);
+                let start_time = Instant::now();
                 
-                let error_msg = last_error.unwrap_or_else(|| "Unknown error".to_string());
-                Ok(TaskResult::success(format!("{{\"success\":false,\"attempts\":{},\"error\":\"{}\"}}", attempt, error_msg)))
-            }.await
+                match flaky_service.process_request(&request).await {
+                    Ok(_response) => {
+                        let elapsed = start_time.elapsed();
+                        info!(
+                            "Request succeeded on attempt {}: {} (took {:?})",
+                            attempt + 1, request, elapsed
+                        );
+                        
+                        // Return success with attempt count
+                        return Ok(format!("{{\"success\":true,\"attempts\":{}}}", attempt + 1));
+                    },
+                    Err(e) => {
+                        let elapsed = start_time.elapsed();
+                        error!(
+                            "Request failed on attempt {}: {} (took {:?}): {}",
+                            attempt + 1, request, elapsed, e
+                        );
+                        
+                        last_error = Some(e.to_string());
+                        
+                        // Calculate delay before next retry
+                        let delay = retry_strategy.calculate_delay(attempt);
+                        info!(
+                            "Retrying in {:?} (attempt {}/{})",
+                            delay, attempt + 1, max_retries
+                        );
+                        
+                        tokio::time::sleep(delay).await;
+                        attempt += 1;
+                    }
+                }
+            }
+            
+            let error_msg = last_error.unwrap_or_else(|| "Unknown error".to_string());
+            Ok(format!("{{\"success\":false,\"attempts\":{},\"error\":\"{}\"}}", attempt, error_msg))
         })
     }
-    
+}
+
+#[async_trait]
+impl Workflow for RetryWorkflow {
     async fn run(&mut self) -> Result<WorkflowResult> {
-        // Initialize workflow
         self.state.set_status("starting");
-        info!("Starting retry workflow");
         
-        self.state.set_status("processing");
-        
-        // Create tasks for each request
+        // Create a task for each request
         let mut tasks = Vec::new();
-        
-        for (index, request) in self.requests.iter().enumerate() {
-            let task = self.create_retry_task(request.clone(), index);
+        for (i, request) in self.requests.iter().enumerate() {
+            let task = self.create_retry_task(request.clone(), i);
             tasks.push(task);
         }
         
         // Execute all tasks
+        self.state.set_status("processing");
         let results = self.engine.execute_task_group(tasks).await?;
         
         // Process results
@@ -372,92 +216,75 @@ impl RetryWorkflow {
         let mut failure_count = 0;
         let mut total_attempts = 0;
         
-        for (index, result) in results.iter().enumerate() {
-            if result.status == TaskResultStatus::Success {
-                // Parse the JSON response
-                let output = result.output.clone();
+        let mut result_data = self.results.lock().await;
+        
+        for (i, result) in results.iter().enumerate() {
+            if i < self.requests.len() {
+                let request = &self.requests[i];
                 
-                // In a real implementation, use a proper JSON parser
-                // This is a simple parsing for demo purposes
-                let success_str = output.split("\"success\":").nth(1).unwrap_or("").split(",").next().unwrap_or("");
-                let success = success_str.trim() == "true";
-                
-                let attempts_str = output.split("\"attempts\":").nth(1).unwrap_or("").split("}").next().unwrap_or("");
-                let attempts = attempts_str.trim().parse::<usize>().unwrap_or(0);
-                
-                // Store the result
-                self.results.push((self.requests[index].clone(), success, attempts));
-                
-                if success {
-                    success_count += 1;
-                } else {
-                    failure_count += 1;
+                // Parse the JSON result
+                if let Ok(json_result) = serde_json::from_str::<serde_json::Value>(result) {
+                    let success = json_result.get("success")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
+                    
+                    let attempts = json_result.get("attempts")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0);
+                    
+                    let error = json_result.get("error")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
+                    
+                    if success {
+                        success_count += 1;
+                        info!("Request {} succeeded after {} attempts", request, attempts);
+                        result_data.push((request.clone(), Some(format!("Success after {} attempts", attempts)), None));
+                    } else {
+                        failure_count += 1;
+                        warn!("Request {} failed after {} attempts: {}", 
+                             request, attempts, error.clone().unwrap_or_default());
+                        result_data.push((request.clone(), None, error));
+                    }
+                    
+                    total_attempts += attempts as usize;
                 }
-                
-                total_attempts += attempts;
-            } else {
-                // Task execution failed
-                failure_count += 1;
-                self.results.push((self.requests[index].clone(), false, 0));
             }
         }
         
-        // Update workflow metrics
-        self.state.set_metadata("success_count", success_count.to_string());
-        self.state.set_metadata("failure_count", failure_count.to_string());
-        self.state.set_metadata("total_attempts", total_attempts.to_string());
+        // Update workflow state with summary
+        self.state.set_metadata("success_count", json!(success_count));
+        self.state.set_metadata("failure_count", json!(failure_count));
+        self.state.set_metadata("total_attempts", json!(total_attempts));
         
-        if let Some(avg_attempts) = if success_count > 0 { Some(total_attempts as f64 / success_count as f64) } else { None } {
-            self.state.set_metadata("avg_attempts_per_success", format!("{:.2}", avg_attempts));
-        }
+        // Create workflow result
+        let mut result = WorkflowResult::new();
         
-        // Finalize workflow
+        // Add summary data to result
+        result.value = Some(json!({
+            "requests": self.requests.len(),
+            "successful": success_count,
+            "failed": failure_count,
+            "total_attempts": total_attempts,
+            "results": result_data.iter().map(|(req, success, error)| {
+                json!({
+                    "request": req,
+                    "success": success.is_some(),
+                    "result": success,
+                    "error": error
+                })
+            }).collect::<Vec<_>>()
+        }));
+        
+        // Update the final state of the result
         if failure_count == 0 {
             self.state.set_status("completed");
-        } else if success_count == 0 {
-            self.state.set_status("failed");
+            Ok(WorkflowResult::success(serde_json::to_string(&result.value.unwrap()).unwrap_or_default()))
         } else {
             self.state.set_status("completed_with_errors");
+            let error_msg = "Some requests failed after retries".to_string();
+            Ok(WorkflowResult::failed(&error_msg))
         }
-        
-        // Generate summary
-        let mut summary = String::new();
-        summary.push_str(&format!("Processed {} requests with {} successful and {} failed\n", 
-                                 self.requests.len(), success_count, failure_count));
-        summary.push_str(&format!("Total attempts: {}\n", total_attempts));
-        
-        if let Some(avg_attempts) = if success_count > 0 { Some(total_attempts as f64 / success_count as f64) } else { None } {
-            summary.push_str(&format!("Average attempts per successful request: {:.2}\n\n", avg_attempts));
-        }
-        
-        summary.push_str("Request Results:\n");
-        for (index, (request, success, attempts)) in self.results.iter().enumerate() {
-            summary.push_str(&format!("{}. \"{}\" - {}, Attempts: {}\n", 
-                                     index + 1, request, 
-                                     if *success { "SUCCESS" } else { "FAILED" }, 
-                                     attempts));
-        }
-        
-        // Return workflow result
-        if self.state.status() == "failed" {
-            Ok(WorkflowResult::failed(&format!("Retry workflow failed - all {} requests failed", failure_count)))
-        } else {
-            Ok(WorkflowResult::success(summary))
-        }
-    }
-}
-
-#[async_trait]
-impl Workflow for RetryWorkflow {
-    async fn run(&mut self) -> Result<WorkflowResult> {
-        // ... existing implementation ...
-        
-        // Execute all tasks
-        // TaskGroup::new() no longer takes arguments
-        // execute_task_group now takes Vec<WorkflowTask<T>> directly
-        let results = self.engine.execute_task_group(tasks).await?;
-        
-        // ... rest of the method ...
     }
     
     fn state(&self) -> &WorkflowState {
@@ -469,56 +296,120 @@ impl Workflow for RetryWorkflow {
     }
 }
 
+/// A mock LLM client for testing
+struct MockLlmClient {
+    config: LlmConfig,
+}
+
+impl MockLlmClient {
+    fn new(config: LlmConfig) -> Self {
+        Self { config }
+    }
+}
+
+#[async_trait]
+impl LlmClient for MockLlmClient {
+    async fn complete(&self, _request: CompletionRequest) -> Result<Completion> {
+        // Simulate a response
+        Ok(Completion {
+            content: "This is a mock response.".to_string(),
+            model: Some(self.config.model.clone()),
+            prompt_tokens: Some(10),
+            completion_tokens: Some(10),
+            total_tokens: Some(20),
+            metadata: None,
+        })
+    }
+    
+    async fn is_available(&self) -> Result<bool> {
+        Ok(true)
+    }
+    
+    fn config(&self) -> &LlmConfig {
+        &self.config
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     // Initialize telemetry
-    let telemetry_config = TelemetryConfig::default();
-    init_telemetry(telemetry_config);
-    
-    // Create workflow engine with signal handling
-    let signal_handler = SignalHandler::new(vec![WorkflowSignal::Interrupt, WorkflowSignal::Terminate]);
-    let workflow_engine = WorkflowEngine::new(signal_handler);
-    
-    // Sample requests
-    let requests = vec![
-        "Process user data for user_123".to_string(),
-        "Generate monthly report for department_456".to_string(),
-        "Send notification to device_789".to_string(),
-        "Update database record for order_321".to_string(),
-        "Validate payment for transaction_654".to_string(),
-    ];
-    
-    // Configure retry workflow
-    let retry_strategy = RetryStrategy::ExponentialBackoff { 
-        base_ms: 100, 
-        factor: 2.0, 
-        max_ms: Some(2000) 
+    let telemetry_config = TelemetryConfig {
+        service_name: "retry_workflow".to_string(),
+        enable_console: true,
+        ..TelemetryConfig::default()
     };
     
-    // Create and run retry workflow with a moderately flaky service
-    let mut workflow = RetryWorkflow::new(
+    // Handle the Result<(), Error> from init_telemetry without using ?
+    if let Err(e) = init_telemetry(telemetry_config) {
+        eprintln!("Failed to initialize telemetry: {}", e);
+        // Continue anyway
+    }
+    
+    // Create LLM client
+    let llm_config = LlmConfig {
+        model: "llama2".to_string(),
+        api_url: "http://localhost:11434".to_string(),
+        api_key: None,
+        max_tokens: Some(1000),
+        temperature: Some(0.7),
+        top_p: Some(0.9),
+        parameters: HashMap::new(),
+    };
+    
+    let llm_client = Arc::new(MockLlmClient::new(llm_config));
+    
+    // Create a flaky service for testing
+    let flaky_service = Arc::new(FlakyService::new(
+        0.7,     // 70% failure rate
+        100,     // 100ms min delay
+        500      // 500ms max delay
+    ));
+    
+    // Create workflow engine with signal handling
+    let signal_handler = AsyncSignalHandler::new_with_signals(vec![
+        WorkflowSignal::Interrupt, 
+        WorkflowSignal::Terminate
+    ]);
+    let workflow_engine = WorkflowEngine::new(signal_handler);
+    
+    // Sample requests to process
+    let requests = vec![
+        "request_1".to_string(),
+        "request_2".to_string(),
+        "request_3".to_string(),
+        "request_4".to_string(),
+        "request_5".to_string(),
+    ];
+    
+    // Create workflow with exponential backoff retry strategy
+    let retry_strategy = RetryStrategy::ExponentialBackoff {
+        base_ms: 100,
+        factor: 2.0,
+        max_ms: Some(3000),
+    };
+    
+    let retry_workflow = RetryWorkflow::new(
         workflow_engine,
+        flaky_service,
         requests,
-        0.6,                              // 60% success rate
-        Duration::from_millis(100),       // 100ms response time
         retry_strategy,
-        5,                                // Maximum 5 retries
+        5,  // max retries
     );
     
-    info!("Starting retry workflow...");
-    let result = workflow.run().await?;
+    // Execute workflow
+    info!("Starting retry workflow");
+    let result = execute_workflow(retry_workflow).await?;
     
     if result.is_success() {
-        info!("Retry workflow completed!");
-        println!("\nWorkflow Result:\n{}", result.output);
+        info!("Retry workflow completed successfully");
+        println!("\nWorkflow Result:\n{}", result.output());
         
-        // Print workflow metadata
-        println!("\nRetry Workflow Metadata:");
-        for (key, value) in workflow.state.metadata() {
-            println!("- {}: {}", key, value);
+        // Print workflow metrics
+        if let Some(duration) = result.duration_ms() {
+            println!("Workflow completed in {} ms", duration);
         }
     } else {
-        error!("Retry workflow failed: {}", result.error.unwrap_or_default());
+        error!("Retry workflow failed: {}", result.error().unwrap_or_default());
     }
     
     Ok(())

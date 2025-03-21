@@ -88,6 +88,14 @@ The MCP-Agent architecture consists of the following major components:
    
    Manages connections to various LLM providers with standardized interfaces and proper error handling.
 
+.. arch:: Terminal System
+   :id: ARCH-010
+   :status: open
+   :tags: interface;terminal
+   :links: REQ-026;REQ-027;REQ-028;REQ-029;REQ-030
+   
+   Provides a unified terminal interface layer supporting both console and web-based terminals with synchronized I/O, configurable activation, and secure remote access.
+
 Component Diagram
 ----------------
 
@@ -192,6 +200,20 @@ The MCP-Agent architecture provides several extension points:
 
 .. uml:: _static/extension_points.puml
    :alt: Extension Points Diagram
+
+Terminal Interface Architecture
+==============================
+
+The dual terminal system allows for both local console and remote web-based interaction with the MCP-Agent:
+
+.. uml:: _static/terminal_system_architecture.puml
+   :alt: Terminal System Architecture Diagram
+
+Terminal I/O Flow
+----------------
+
+.. uml:: _static/terminal_io_flow.puml
+   :alt: Terminal I/O Flow Diagram
 
 Architecture-Requirements Traceability
 ======================================

@@ -1,0 +1,51 @@
+@startuml
+!define PRIMARY_COLOR #1a73e8
+!define SECONDARY_COLOR #4285f4
+!define ACCENT_COLOR #ea4335
+!define GRAY #9e9e9e
+
+skinparam componentStyle rectangle
+skinparam defaultFontName Arial
+skinparam defaultFontSize 12
+
+package "Terminal System" {
+  [Terminal Router] as router
+  [Console Terminal] as console
+  [Web Terminal Server] as webserver
+  [Terminal Synchronizer] as sync
+  [Session Manager] as session
+  [Authentication] as auth
+}
+
+[MCP-Agent Core] as core
+[Human Input Module] as human
+[Web Browser] as browser
+
+router --> console : "routes I/O"
+router --> webserver : "routes I/O"
+router --> sync : "coordinates"
+webserver --> auth : "authenticates"
+webserver --> session : "manages sessions"
+webserver --> browser : "WebSocket connection"
+browser --> webserver : "user input"
+
+core <--> router : "terminal I/O"
+human --> router : "human input requests"
+sync <--> console : "synchronizes state"
+sync <--> webserver : "synchronizes state"
+
+note bottom of router
+  Dynamically routes terminal I/O 
+  based on active configuration
+end note
+
+note right of sync
+  Ensures all terminal interfaces
+  maintain consistent state
+end note
+
+note bottom of webserver
+  Provides secure WebSocket
+  connection for web clients
+end note
+@enduml 

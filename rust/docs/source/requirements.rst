@@ -276,4 +276,47 @@ Architecture
    :tags: architecture;design
    :links: REQ-018;REQ-021;ARCH-008
    
-   The system must be designed for extensibility, allowing easy addition of new components, models, and tools. 
+   The system must be designed for extensibility, allowing easy addition of new components, models, and tools.
+
+Terminal Interface
+================
+
+.. req:: Dual Terminal Support
+   :id: REQ-026
+   :status: open
+   :tags: interface;terminal;usability
+   :links: REQ-013;REQ-021
+   
+   The system must support both console-based terminal and web-based terminal interfaces, allowing operators to interact with the agent through either interface or both simultaneously.
+
+.. req:: Terminal Configuration
+   :id: REQ-027
+   :status: open
+   :tags: interface;terminal;configuration
+   :links: REQ-026
+   
+   The system must allow configuration to use console terminal only, web terminal only, or both terminals simultaneously through runtime configuration options.
+
+.. req:: Terminal Synchronization
+   :id: REQ-028
+   :status: open
+   :tags: interface;terminal;synchronization
+   :links: REQ-026;REQ-027
+   
+   When both console and web terminals are active, all input and output must be synchronized between them, ensuring consistent state and visibility of interactions across interfaces.
+
+.. req:: Web Terminal Security
+   :id: REQ-029
+   :status: open
+   :tags: interface;terminal;security
+   :links: REQ-026;REQ-027;REQ-019;REQ-025
+   
+   The web terminal interface must implement proper authentication, authorization, and encryption to ensure secure remote access and prevent unauthorized interactions.
+
+.. req:: Dynamic Terminal Switching
+   :id: REQ-030
+   :status: open
+   :tags: interface;terminal;usability
+   :links: REQ-026;REQ-027
+   
+   The system must support dynamic enabling and disabling of the web terminal interface at runtime without restarting the application or disrupting ongoing operations. 

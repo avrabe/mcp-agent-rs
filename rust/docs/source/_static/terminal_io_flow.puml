@@ -1,0 +1,48 @@
+@startuml
+!define PRIMARY_COLOR #1a73e8
+!define SECONDARY_COLOR #4285f4
+!define ACCENT_COLOR #ea4335
+
+actor "Console User" as console_user
+actor "Web User" as web_user
+participant "Terminal Router" as router
+participant "Console Terminal" as console
+participant "Web Terminal" as web
+participant "Terminal Synchronizer" as sync
+participant "MCP-Agent" as agent
+
+== Output Flow ==
+
+agent -> router: Send output
+router -> sync: Broadcast output
+sync -> console: Display output
+sync -> web: Display output
+console -> console_user: View output
+web -> web_user: View output
+
+== Input Flow ==
+
+alt Console Input
+  console_user -> console: Enter input
+  console -> sync: Broadcast input
+  sync -> web: Update display
+  sync -> router: Process input
+  router -> agent: Handle input
+  web -> web_user: Display input from console
+else Web Input
+  web_user -> web: Enter input
+  web -> sync: Broadcast input
+  sync -> console: Update display
+  sync -> router: Process input
+  router -> agent: Handle input
+  console -> console_user: Display input from web
+end
+
+== Terminal Activation/Deactivation ==
+
+console_user -> console: Toggle web terminal
+console -> router: Update active terminals
+router -> web: Activate/Deactivate
+web -> web_user: Connection established/terminated
+
+@enduml 

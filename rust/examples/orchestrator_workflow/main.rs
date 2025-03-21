@@ -31,12 +31,13 @@ struct SubWorkflow {
 impl SubWorkflow {
     fn new(workflow_type: SubWorkflowType, dependencies: Vec<SubWorkflowType>) -> Self {
         let mut metadata = HashMap::new();
-        metadata.insert("workflow_type".to_string(), json!(format!("{:?}", workflow_type)));
+        let type_str = format!("{:?}", workflow_type);
+        metadata.insert("workflow_type".to_string(), json!(type_str));
         
         Self {
             workflow_type,
             state: WorkflowState::new(
-                Some(format!("SubWorkflow_{:?}", workflow_type)),
+                Some(format!("SubWorkflow_{}", type_str)),
                 Some(metadata)
             ),
             result: None,
@@ -241,31 +242,11 @@ impl Workflow for OrchestratorWorkflow {
         
         self.state.set_status("processing");
         
+        // Process the workflows in sequence, respecting dependencies
         // Step 1: Run data preparation workflow (no dependencies)
-        let data_preparation_type = SubWorkflowType::DataPreparation;
-        if let Some(sub_workflow) = self.sub_workflows.get_mut(&data_preparation_type) {
-            info!("Starting data preparation sub-workflow");
-            sub_workflow.state.set_status("running");
-            
-            let task = self.create_data_preparation_task();
-            match self.engine.execute_task(task).await {
-                Ok(result) => {
-                    info!("Data preparation completed successfully");
-                    sub_workflow.result = Some(result.clone());
-                    sub_workflow.state.set_status("completed");
-                    
-                    // Run the next workflow that depends on this one
-                    self.run_analysis(result).await?;
-                },
-                Err(e) => {
-                    error!("Data preparation failed: {}", e);
-                    sub_workflow.state.set_status("failed");
-                    sub_workflow.state.set_error(format!("Data preparation failed: {}", e));
-                }
-            }
-        }
+        self.process_data_preparation().await?;
         
-        // Check if we can get to a final result
+        // Step 2: Check if we can get to a final result
         if let Some(sub_workflow) = self.sub_workflows.get(&SubWorkflowType::Summarization) {
             if sub_workflow.state.status() == "completed" {
                 self.final_result = sub_workflow.result.clone();
@@ -293,27 +274,65 @@ impl Workflow for OrchestratorWorkflow {
 }
 
 impl OrchestratorWorkflow {
-    async fn run_analysis(&mut self, prepared_data: String) -> Result<()> {
-        let analysis_type = SubWorkflowType::Analysis;
-        if let Some(sub_workflow) = self.sub_workflows.get_mut(&analysis_type) {
-            // Check if dependencies are completed
-            if !self.check_dependencies_completed(&analysis_type) {
-                warn!("Cannot run analysis workflow - dependencies not met");
-                return Ok(());
-            }
+    // New method to process data preparation
+    async fn process_data_preparation(&mut self) -> Result<()> {
+        let data_preparation_type = SubWorkflowType::DataPreparation;
+        
+        // Create task outside the mutable borrow scope
+        let task = self.create_data_preparation_task();
+        
+        if let Some(sub_workflow) = self.sub_workflows.get_mut(&data_preparation_type) {
+            info!("Starting data preparation sub-workflow");
+            sub_workflow.state.set_status("running");
             
+            match self.engine.execute_task(task).await {
+                Ok(result) => {
+                    info!("Data preparation completed successfully");
+                    sub_workflow.result = Some(result.clone());
+                    sub_workflow.state.set_status("completed");
+                    
+                    // Process the next workflow outside this mutable borrow scope
+                    let _ = sub_workflow; // Explicitly end the mutable borrow
+                    self.process_analysis(result).await?;
+                },
+                Err(e) => {
+                    error!("Data preparation failed: {}", e);
+                    sub_workflow.state.set_status("failed");
+                    sub_workflow.state.set_error(format!("Data preparation failed: {}", e));
+                }
+            }
+        }
+        
+        Ok(())
+    }
+    
+    // New method to process analysis
+    async fn process_analysis(&mut self, prepared_data: String) -> Result<()> {
+        let analysis_type = SubWorkflowType::Analysis;
+        
+        // Check dependencies before obtaining mutable borrow
+        let dependencies_met = self.check_dependencies_completed(&analysis_type);
+        if !dependencies_met {
+            warn!("Cannot run analysis workflow - dependencies not met");
+            return Ok(());
+        }
+        
+        // Create task outside the mutable borrow scope
+        let task = self.create_analysis_task(prepared_data);
+        
+        if let Some(sub_workflow) = self.sub_workflows.get_mut(&analysis_type) {
             info!("Starting analysis sub-workflow");
             sub_workflow.state.set_status("running");
             
-            let task = self.create_analysis_task(prepared_data);
             match self.engine.execute_task(task).await {
                 Ok(result) => {
                     info!("Analysis completed successfully");
                     sub_workflow.result = Some(result.clone());
                     sub_workflow.state.set_status("completed");
                     
-                    // Run the next workflow that depends on this one
-                    self.run_summarization(result).await?;
+                    // Process the next workflow outside this mutable borrow scope
+                    let _ = sub_workflow; // Explicitly end the mutable borrow
+                    self.process_summarization(result).await?;
                 },
                 Err(e) => {
                     error!("Analysis failed: {}", e);
@@ -326,19 +345,24 @@ impl OrchestratorWorkflow {
         Ok(())
     }
     
-    async fn run_summarization(&mut self, analysis: String) -> Result<()> {
+    // New method to process summarization
+    async fn process_summarization(&mut self, analysis: String) -> Result<()> {
         let summarization_type = SubWorkflowType::Summarization;
+        
+        // Check dependencies before obtaining mutable borrow
+        let dependencies_met = self.check_dependencies_completed(&summarization_type);
+        if !dependencies_met {
+            warn!("Cannot run summarization workflow - dependencies not met");
+            return Ok(());
+        }
+        
+        // Create task outside the mutable borrow scope
+        let task = self.create_summarization_task(analysis);
+        
         if let Some(sub_workflow) = self.sub_workflows.get_mut(&summarization_type) {
-            // Check if dependencies are completed
-            if !self.check_dependencies_completed(&summarization_type) {
-                warn!("Cannot run summarization workflow - dependencies not met");
-                return Ok(());
-            }
-            
             info!("Starting summarization sub-workflow");
             sub_workflow.state.set_status("running");
             
-            let task = self.create_summarization_task(analysis);
             match self.engine.execute_task(task).await {
                 Ok(result) => {
                     info!("Summarization completed successfully");

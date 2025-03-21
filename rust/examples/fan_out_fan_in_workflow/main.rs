@@ -115,6 +115,13 @@ impl AggregationOperation {
     }
 }
 
+/// Task result status
+#[derive(Debug, Clone, PartialEq)]
+enum TaskResultStatus {
+    Success,
+    Failure,
+}
+
 /// A fan-out/fan-in workflow for parallel data processing
 struct FanOutFanInWorkflow {
     state: WorkflowState,
@@ -170,7 +177,7 @@ impl FanOutFanInWorkflow {
             
             // Simulate random failures based on error rate
             let mut rng = rand::thread_rng();
-            if rng.gen::<f32>() < worker_clone.error_rate {
+            if rng.gen_range(0.0..1.0) < worker_clone.error_rate {
                 error!("Worker {} failed to process chunk {}", worker_clone.id, chunk_clone.id);
                 return Err(anyhow!("Worker {} failed to process chunk {}", worker_clone.id, chunk_clone.id));
             }
@@ -188,7 +195,7 @@ impl FanOutFanInWorkflow {
     }
     
     /// Distribute data chunks among workers (fan-out phase)
-    async fn fan_out_phase(&self) -> Result<()> {
+    async fn fan_out_phase(&mut self) -> Result<()> {
         info!("Starting fan-out phase");
         self.state.set_metadata("current_phase", "fan_out".to_string());
         
@@ -220,36 +227,30 @@ impl FanOutFanInWorkflow {
                     let mut successful_chunks = Vec::new();
                     let mut failed_chunks = Vec::new();
                     
-                    for (i, result) in results.iter().enumerate() {
+                    for (i, result_string) in results.iter().enumerate() {
                         if i < chunks_to_process.len() {
                             let chunk = &chunks_to_process[i];
                             
-                            let worker_id = result.metadata.get("worker_id")
-                                .cloned()
-                                .unwrap_or_else(|| "unknown".to_string());
+                            // Basic success/failure parsing - assume success if we can parse the number
+                            let parse_result = result_string.parse::<u32>();
                             
-                            let processing_time = result.metadata.get("processing_time_ms")
-                                .and_then(|s| s.parse::<u64>().ok())
-                                .unwrap_or(0);
+                            let worker_id = "worker".to_string(); // Default worker id
+                            let processing_time = 0; // Default processing time
                             
-                            if result.status == TaskResultStatus::Success {
+                            if let Ok(numeric_result) = parse_result {
                                 info!("Successfully processed chunk {}", chunk.id);
-                                
-                                // Parse the result (sum of values)
-                                let numeric_result = result.output.parse::<u32>().ok();
                                 
                                 processing_results.push(ProcessingResult {
                                     chunk_id: chunk.id.clone(),
                                     worker_id,
-                                    result: numeric_result,
+                                    result: Some(numeric_result),
                                     error: None,
                                     processing_time_ms: processing_time,
                                 });
                                 
                                 successful_chunks.push(chunk.id.clone());
                             } else {
-                                error!("Failed to process chunk {}: {}", 
-                                     chunk.id, result.error.as_deref().unwrap_or("Unknown error"));
+                                error!("Failed to process chunk {}: Unable to parse result", chunk.id);
                                 
                                 // Increment retry count
                                 let retry_count = retry_counts.entry(chunk.id.clone()).or_insert(0);
@@ -262,7 +263,7 @@ impl FanOutFanInWorkflow {
                                         chunk_id: chunk.id.clone(),
                                         worker_id,
                                         result: None,
-                                        error: result.error.clone(),
+                                        error: Some("Failed to parse result".to_string()),
                                         processing_time_ms: processing_time,
                                     });
                                     
@@ -305,7 +306,7 @@ impl FanOutFanInWorkflow {
     }
     
     /// Aggregate results from all workers (fan-in phase)
-    async fn fan_in_phase(&self) -> Result<HashMap<String, f64>> {
+    async fn fan_in_phase(&mut self) -> Result<HashMap<String, f64>> {
         info!("Starting fan-in phase");
         self.state.set_metadata("current_phase", "fan_in".to_string());
         
@@ -480,49 +481,44 @@ impl FanOutFanInWorkflow {
     
     /// Run the fan-out/fan-in workflow
     async fn run(&mut self) -> Result<WorkflowResult> {
-        // Initialize workflow
-        self.state.set_status("starting");
-        info!("Starting fan-out/fan-in workflow");
+        info!("Starting Fan-out/Fan-in workflow");
         
-        // Start fan-out phase
-        self.state.set_status("fan_out");
-        if let Err(e) = self.fan_out_phase().await {
+        // Update workflow state to processing
+        self.state.set_status("processing");
+        
+        // Execute the fan-out phase
+        let fan_out_result = self.fan_out_phase().await;
+        if let Err(e) = fan_out_result {
             error!("Fan-out phase failed: {}", e);
-            self.state.set_error(format!("Fan-out phase error: {}", e));
-            return Ok(WorkflowResult::failed(&format!("Fan-out phase failed: {}", e)));
+            self.state.set_status("failed");
+            self.state.set_error(format!("Fan-out phase failed: {}", e));
+            return Ok(WorkflowResult::failed(e.to_string()));
         }
         
-        // Start fan-in phase
-        self.state.set_status("fan_in");
-        let aggregation_results = match self.fan_in_phase().await {
+        // Execute the fan-in phase
+        let aggregation_result = match self.fan_in_phase().await {
             Ok(results) => results,
             Err(e) => {
                 error!("Fan-in phase failed: {}", e);
-                self.state.set_error(format!("Fan-in phase error: {}", e));
-                return Ok(WorkflowResult::failed(&format!("Fan-in phase failed: {}", e)));
+                self.state.set_status("failed");
+                self.state.set_error(format!("Fan-in phase failed: {}", e));
+                return Ok(WorkflowResult::failed(e.to_string()));
             }
         };
         
-        // Generate summary report
-        self.state.set_status("completed");
+        // Format the final output
+        let mut output = String::new();
+        output.push_str("Fan-out/Fan-in Workflow Results:\n\n");
         
-        let processing_results = self.processing_results.lock().await;
-        let summary = self.generate_summary_report(&processing_results, &aggregation_results);
-        
-        self.state.set_metadata("successful_chunks", 
-                              processing_results.iter()
-                                  .filter(|r| r.result.is_some())
-                                  .count()
-                                  .to_string());
-        
-        for (op_name, result) in &aggregation_results {
-            self.state.set_metadata(
-                &format!("aggregation_{}", op_name.to_lowercase()),
-                format!("{:.4}", result)
-            );
+        for (operation, result) in &aggregation_result {
+            output.push_str(&format!("{}: {}\n", operation, result));
         }
         
-        Ok(WorkflowResult::success(summary))
+        // Mark workflow as completed
+        self.state.set_status("completed");
+        
+        // Return success result with the output
+        Ok(WorkflowResult::success(output))
     }
 }
 
@@ -532,52 +528,26 @@ struct MockLlmClient {
 }
 
 impl MockLlmClient {
-    fn new() -> Self {
-        Self {
-            config: LlmConfig {
-                model: "mock-llama2".to_string(),
-                api_url: "http://localhost:11434".to_string(),
-                api_key: None,
-                max_tokens: Some(500),
-                temperature: Some(0.7),
-                top_p: Some(0.9),
-                parameters: HashMap::new(),
-            },
-        }
+    fn new(config: LlmConfig) -> Self {
+        Self { config }
     }
 }
 
 #[async_trait]
 impl LlmClient for MockLlmClient {
-    async fn complete(&self, request: CompletionRequest) -> Result<Completion> {
-        // Simulate processing time
-        tokio::time::sleep(Duration::from_millis(300)).await;
-        
-        // Extract the prompt to generate appropriate mock responses
-        let prompt = if let Some(user_message) = request.messages.iter().find(|m| matches!(m.role, MessageRole::User)) {
-            &user_message.content
-        } else {
-            "Unknown prompt"
-        };
-        
-        // Generate a mock response
-        let response = "This is a mock response from the LLM service.".to_string();
-        
-        let prompt_len = prompt.len();
-        let response_len = response.len();
-        
+    async fn complete(&self, _request: CompletionRequest) -> Result<Completion> {
+        // Simulate a response
         Ok(Completion {
-            content: response,
+            content: "This is a mock response.".to_string(),
             model: Some(self.config.model.clone()),
-            prompt_tokens: Some(prompt_len as u32),
-            completion_tokens: Some(response_len as u32),
-            total_tokens: Some((prompt_len + response_len) as u32),
+            prompt_tokens: Some(10),
+            completion_tokens: Some(10),
+            total_tokens: Some(20),
             metadata: None,
         })
     }
     
     async fn is_available(&self) -> Result<bool> {
-        // Always available for the mock
         Ok(true)
     }
     
@@ -590,17 +560,26 @@ impl LlmClient for MockLlmClient {
 async fn main() -> Result<()> {
     // Initialize telemetry
     let telemetry_config = TelemetryConfig::default();
-    init_telemetry(telemetry_config);
+    let _ = init_telemetry(telemetry_config);
     
-    // Create Ollama client
-    let ollama_config = OllamaConfig {
-        base_url: "http://localhost:11434".to_string(),
-        timeout: Duration::from_secs(60),
+    // Create LLM client
+    let llm_config = LlmConfig {
+        model: "llama2".to_string(),
+        api_url: "http://localhost:11434".to_string(),
+        api_key: None,
+        max_tokens: Some(1000),
+        temperature: Some(0.7),
+        top_p: Some(0.9),
+        parameters: HashMap::new(),
     };
-    let ollama_client = OllamaClient::new(ollama_config);
+    
+    let llm_client = Arc::new(MockLlmClient::new(llm_config));
     
     // Create workflow engine with signal handling
-    let signal_handler = SignalHandler::new(vec![WorkflowSignal::Interrupt, WorkflowSignal::Terminate]);
+    let signal_handler = AsyncSignalHandler::new_with_signals(vec![
+        WorkflowSignal::Interrupt, 
+        WorkflowSignal::Terminate
+    ]);
     let workflow_engine = WorkflowEngine::new(signal_handler);
     
     // Generate sample data and workers
@@ -620,7 +599,7 @@ async fn main() -> Result<()> {
     // Create and run fan-out/fan-in workflow
     let mut workflow = FanOutFanInWorkflow::new(
         workflow_engine,
-        ollama_client,
+        llm_client,
         data_chunks,
         workers,
         aggregation_operations,
@@ -631,10 +610,10 @@ async fn main() -> Result<()> {
     let result = workflow.run().await?;
     
     if result.is_success() {
-        info!("Fan-out/fan-in workflow completed successfully!");
-        println!("\n{}\n", result.output);
+        info!("Fan-out/fan-in workflow completed successfully");
+        println!("\n{}\n", result.output());
     } else {
-        error!("Fan-out/fan-in workflow failed: {}", result.error.unwrap_or_default());
+        error!("Fan-out/fan-in workflow failed: {}", result.error().unwrap_or_default());
     }
     
     Ok(())

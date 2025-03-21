@@ -13,4 +13,7 @@ pub mod executor;
 pub mod connection;
 
 /// Agent for managing connections and message passing
-pub mod agent; 
+pub mod agent;
+
+/// JSON-RPC implementation for the MCP protocol
+pub mod jsonrpc;

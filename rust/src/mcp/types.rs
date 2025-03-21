@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 use std::fmt;
+use uuid::Uuid;
 
 use crate::utils::error::{McpError, McpResult};
 
@@ -20,17 +20,17 @@ impl MessageId {
         let bytes = Uuid::new_v4().into_bytes();
         Self(bytes)
     }
-    
+
     /// Create a MessageId from raw bytes
     pub fn from_bytes(bytes: [u8; 16]) -> Self {
         Self(bytes)
     }
-    
+
     /// Get the raw bytes of the MessageId
     pub fn bytes(&self) -> &[u8; 16] {
         &self.0
     }
-    
+
     /// Convert to a UUID
     pub fn to_uuid(&self) -> Uuid {
         Uuid::from_bytes(self.0)
@@ -181,7 +181,13 @@ impl Message {
 
     /// Creates a new response message
     pub fn response(payload: Vec<u8>, request_id: MessageId) -> Self {
-        Self::new(MessageType::Response, Priority::Normal, payload, Some(request_id), None)
+        Self::new(
+            MessageType::Response,
+            Priority::Normal,
+            payload,
+            Some(request_id),
+            None,
+        )
     }
 
     /// Creates a new event message
@@ -196,7 +202,13 @@ impl Message {
 
     /// Creates a new error response
     pub fn error(error: McpError, request_id: Option<MessageId>) -> Self {
-        Self::new(MessageType::Response, Priority::High, vec![], request_id, Some(error))
+        Self::new(
+            MessageType::Response,
+            Priority::High,
+            vec![],
+            request_id,
+            Some(error),
+        )
     }
 
     /// Converts a message to an envelope
@@ -219,16 +231,18 @@ impl Message {
         let id_bytes = Uuid::parse_str(&envelope.header.id)
             .map_err(|_| McpError::InvalidMessage("Invalid UUID format".to_string()))?
             .into_bytes();
-            
+
         let correlation_id = if let Some(id_str) = envelope.header.correlation_id {
             let id_bytes = Uuid::parse_str(&id_str)
-                .map_err(|_| McpError::InvalidMessage("Invalid correlation ID UUID format".to_string()))?
+                .map_err(|_| {
+                    McpError::InvalidMessage("Invalid correlation ID UUID format".to_string())
+                })?
                 .into_bytes();
             Some(MessageId(id_bytes))
         } else {
             None
         };
-        
+
         Ok(Self {
             id: MessageId(id_bytes),
             message_type: envelope.header.message_type,
@@ -237,6 +251,182 @@ impl Message {
             correlation_id,
             error: envelope.header.error,
         })
+    }
+}
+
+/// JSON-RPC 2.0 request object for MCP protocol
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JsonRpcRequest {
+    /// JSON-RPC version, always "2.0"
+    pub jsonrpc: String,
+    /// Method name to invoke
+    pub method: String,
+    /// Parameters for the method
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub params: Option<serde_json::Value>,
+    /// Unique identifier for the request
+    pub id: serde_json::Value,
+}
+
+impl JsonRpcRequest {
+    /// Create a new JSON-RPC request
+    pub fn new(method: &str, params: Option<serde_json::Value>, id: serde_json::Value) -> Self {
+        Self {
+            jsonrpc: "2.0".to_string(),
+            method: method.to_string(),
+            params,
+            id,
+        }
+    }
+
+    /// Serialize the request to JSON bytes
+    pub fn to_bytes(&self) -> McpResult<Vec<u8>> {
+        serde_json::to_vec(self)
+            .map_err(|e| McpError::Serialization(format!("Failed to serialize request: {}", e)))
+    }
+
+    /// Deserialize from JSON bytes
+    pub fn from_bytes(bytes: &[u8]) -> McpResult<Self> {
+        serde_json::from_slice(bytes)
+            .map_err(|e| McpError::Deserialization(format!("Failed to deserialize request: {}", e)))
+    }
+}
+
+/// JSON-RPC 2.0 response object for MCP protocol
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JsonRpcResponse {
+    /// JSON-RPC version, always "2.0"
+    pub jsonrpc: String,
+    /// Result of the method call, must be present if no error
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub result: Option<serde_json::Value>,
+    /// Error information, must be present if no result
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<JsonRpcError>,
+    /// Request identifier that this response corresponds to
+    pub id: serde_json::Value,
+}
+
+impl JsonRpcResponse {
+    /// Create a new successful JSON-RPC response
+    pub fn success(result: serde_json::Value, id: serde_json::Value) -> Self {
+        Self {
+            jsonrpc: "2.0".to_string(),
+            result: Some(result),
+            error: None,
+            id,
+        }
+    }
+
+    /// Create a new error JSON-RPC response
+    pub fn error(error: JsonRpcError, id: serde_json::Value) -> Self {
+        Self {
+            jsonrpc: "2.0".to_string(),
+            result: None,
+            error: Some(error),
+            id,
+        }
+    }
+
+    /// Serialize the response to JSON bytes
+    pub fn to_bytes(&self) -> McpResult<Vec<u8>> {
+        serde_json::to_vec(self)
+            .map_err(|e| McpError::Serialization(format!("Failed to serialize response: {}", e)))
+    }
+
+    /// Deserialize from JSON bytes
+    pub fn from_bytes(bytes: &[u8]) -> McpResult<Self> {
+        serde_json::from_slice(bytes)
+            .map_err(|e| McpError::Deserialization(format!("Failed to deserialize response: {}", e)))
+    }
+}
+
+/// JSON-RPC 2.0 notification object for MCP protocol (has no ID)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JsonRpcNotification {
+    /// JSON-RPC version, always "2.0"
+    pub jsonrpc: String,
+    /// Method name to invoke
+    pub method: String,
+    /// Parameters for the method
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub params: Option<serde_json::Value>,
+}
+
+impl JsonRpcNotification {
+    /// Create a new JSON-RPC notification
+    pub fn new(method: &str, params: Option<serde_json::Value>) -> Self {
+        Self {
+            jsonrpc: "2.0".to_string(),
+            method: method.to_string(),
+            params,
+        }
+    }
+
+    /// Serialize the notification to JSON bytes
+    pub fn to_bytes(&self) -> McpResult<Vec<u8>> {
+        serde_json::to_vec(self)
+            .map_err(|e| McpError::Serialization(format!("Failed to serialize notification: {}", e)))
+    }
+
+    /// Deserialize from JSON bytes
+    pub fn from_bytes(bytes: &[u8]) -> McpResult<Self> {
+        serde_json::from_slice(bytes)
+            .map_err(|e| McpError::Deserialization(format!("Failed to deserialize notification: {}", e)))
+    }
+}
+
+/// JSON-RPC 2.0 error object for MCP protocol
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JsonRpcError {
+    /// Error code
+    pub code: i32,
+    /// Error message
+    pub message: String,
+    /// Additional error data
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data: Option<serde_json::Value>,
+}
+
+impl JsonRpcError {
+    /// Create a new JSON-RPC error
+    pub fn new(code: i32, message: &str, data: Option<serde_json::Value>) -> Self {
+        Self {
+            code,
+            message: message.to_string(),
+            data,
+        }
+    }
+
+    /// Parse error (-32700)
+    pub fn parse_error(message: &str) -> Self {
+        Self::new(-32700, message, None)
+    }
+
+    /// Invalid request error (-32600)
+    pub fn invalid_request(message: &str) -> Self {
+        Self::new(-32600, message, None)
+    }
+
+    /// Method not found error (-32601)
+    pub fn method_not_found(message: &str) -> Self {
+        Self::new(-32601, message, None)
+    }
+
+    /// Invalid params error (-32602)
+    pub fn invalid_params(message: &str) -> Self {
+        Self::new(-32602, message, None)
+    }
+
+    /// Internal error (-32603)
+    pub fn internal_error(message: &str) -> Self {
+        Self::new(-32603, message, None)
+    }
+
+    /// Server error (-32000 to -32099)
+    pub fn server_error(code: i32, message: &str, data: Option<serde_json::Value>) -> Self {
+        assert!(-32099 <= code && code <= -32000, "Server error code must be between -32099 and -32000");
+        Self::new(code, message, data)
     }
 }
 
@@ -274,4 +464,4 @@ mod tests {
         assert_eq!(reconstructed.priority, Priority::Normal);
         assert_eq!(reconstructed.payload, vec![1, 2, 3]);
     }
-} 
+}

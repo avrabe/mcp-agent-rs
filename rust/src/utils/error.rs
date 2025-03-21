@@ -1,7 +1,7 @@
-use thiserror::Error;
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::str::FromStr;
+use thiserror::Error;
 
 /// Result type for MCP operations
 pub type McpResult<T> = Result<T, McpError>;
@@ -77,16 +77,24 @@ pub enum McpError {
     /// Task join error
     #[error("Join error: {0}")]
     Join(String),
+
+    /// Serialization error
+    #[error("Serialization error: {0}")]
+    Serialization(String),
+
+    /// Deserialization error
+    #[error("Deserialization error: {0}")]
+    Deserialization(String),
 }
 
 // Implement FromStr for McpError to replace the custom from_str method
 impl FromStr for McpError {
     type Err = McpError;
-    
+
     /// Converts a string to an error
-    /// 
+    ///
     /// # Errors
-    /// 
+    ///
     /// This function never returns an error - it always converts the input string
     /// to an InvalidMessage error.
     fn from_str(s: &str) -> Result<Self, Self::Err> {
@@ -116,4 +124,4 @@ impl From<std::str::Utf8Error> for McpError {
     fn from(err: std::str::Utf8Error) -> Self {
         McpError::Utf8(err.to_string())
     }
-} 
+}

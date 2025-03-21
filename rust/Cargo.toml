@@ -123,3 +123,8 @@ path = "examples/fan_out_fan_in_workflow/main.rs"
 [[example]]
 name = "human_input_example"
 path = "examples/human_input_example/main.rs"
+
+[[example]]
+name = "jsonrpc_example"
+path = "examples/jsonrpc_example/main.rs"
+required-features = []

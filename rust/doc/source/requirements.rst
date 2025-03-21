@@ -8,7 +8,7 @@
 .. need:: REQ_001
    :id: REQ_001
    :title: MCP Protocol Implementation
-   :status: partial
+   :status: implemented
    :type: req
    :tags: core;protocol
    :links: REQ_002;REQ_003

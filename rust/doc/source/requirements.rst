@@ -80,7 +80,7 @@
 .. need:: REQ_009
    :id: REQ_009
    :title: Monitoring Integration
-   :status: partial
+   :status: implemented
    :type: req
    :tags: observability;telemetry
    :links: REQ_007;REQ_011
@@ -107,11 +107,11 @@
 .. need:: REQ_012
    :id: REQ_012
    :title: Workflow Orchestration
-   :status: open
+   :status: implemented
    :type: req
    :tags: orchestration;workflow
    :links: REQ_010;REQ_014
-   :content: The system must support optional Temporal integration for workflow orchestration with proper error recovery.
+   :content: The system must support workflow orchestration with proper error recovery and state management.
 
 .. need:: REQ_013
    :id: REQ_013
@@ -173,7 +173,7 @@
    :status: partial
    :type: req
    :tags: security;safety
-   :links: REQ_017
+   :links: REQ_017;REQ_021
    :content: The system must implement proper security measures including secure API key handling and input sanitization.
 
 .. need:: REQ_020
@@ -182,5 +182,23 @@
    :status: implemented
    :type: req
    :tags: architecture;design
-   :links: REQ_018
-   :content: The system must be designed for extensibility, allowing easy addition of new agent patterns and model integrations. 
+   :links: REQ_018;REQ_021
+   :content: The system must be designed for extensibility, allowing easy addition of new agent patterns and model integrations.
+
+.. need:: REQ_021
+   :id: REQ_021
+   :title: Human Input Support
+   :status: implemented
+   :type: req
+   :tags: interface;interaction
+   :links: REQ_019;REQ_020;REQ_022
+   :content: The system must provide a mechanism for human input during workflow execution, including interactive prompts and timeouts.
+
+.. need:: REQ_022
+   :id: REQ_022
+   :title: Formal Verification
+   :status: open
+   :type: req
+   :tags: quality;verification;safety
+   :links: REQ_021
+   :content: Critical components of the system must be formally verified using Rust's verification tools (such as KLEE or Creusot) to ensure correctness and safety properties. 

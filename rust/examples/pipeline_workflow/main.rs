@@ -1,18 +1,19 @@
 use std::time::Duration;
+use std::collections::HashMap;
+use std::sync::Arc;
 use anyhow::{anyhow, Result};
-use tracing::{info, warn, error};
+use tracing::{info, warn, error, debug};
+use async_trait::async_trait;
+use serde_json::json;
 
 use mcp_agent::telemetry::{init_telemetry, TelemetryConfig};
 use mcp_agent::workflow::{
-    WorkflowEngine, WorkflowState, WorkflowResult, 
-    TaskGroup, Task, TaskResult, TaskResultStatus,
-    SignalHandler, WorkflowSignal,
+    WorkflowEngine, WorkflowState, WorkflowResult, Workflow,
+    task, AsyncSignalHandler, WorkflowSignal, execute_workflow,
 };
-use mcp_agent::llm::{
-    ollama::{OllamaClient, OllamaConfig},
-    types::{Message, Role, CompletionRequest, Completion},
-};
+use mcp_agent::llm::types::{Message, MessageRole, CompletionRequest, Completion, LlmClient, LlmConfig};
 
+#[derive(Debug, Clone, Copy)]
 enum PipelineStage {
     Translation,
     Summarization,
@@ -23,7 +24,7 @@ enum PipelineStage {
 struct PipelineWorkflow {
     state: WorkflowState,
     engine: WorkflowEngine,
-    llm_client: OllamaClient,
+    llm_client: Arc<MockLlmClient>,
     input_text: String,
     target_language: String,
     current_output: Option<String>,
@@ -32,16 +33,19 @@ struct PipelineWorkflow {
 impl PipelineWorkflow {
     fn new(
         engine: WorkflowEngine, 
-        llm_client: OllamaClient, 
+        llm_client: Arc<MockLlmClient>, 
         input_text: String,
         target_language: String,
     ) -> Self {
-        let mut state = WorkflowState::new();
-        state.set_metadata("input_length", input_text.len().to_string());
-        state.set_metadata("target_language", target_language.clone());
+        let mut metadata = HashMap::new();
+        metadata.insert("input_length".to_string(), json!(input_text.len()));
+        metadata.insert("target_language".to_string(), json!(target_language.clone()));
         
         Self {
-            state,
+            state: WorkflowState::new(
+                Some("PipelineWorkflow".to_string()),
+                Some(metadata)
+            ),
             engine,
             llm_client,
             input_text,
@@ -50,12 +54,12 @@ impl PipelineWorkflow {
         }
     }
     
-    fn create_translation_task(&self) -> Task {
+    fn create_translation_task(&self) -> task::WorkflowTask<String> {
         let llm_client = self.llm_client.clone();
         let input_text = self.input_text.clone();
         let target_language = self.target_language.clone();
         
-        Task::new("translate_text", move |_ctx| {
+        task::task("translate_text", move || async move {
             info!("Starting translation task to {}", target_language);
             
             let prompt = format!(
@@ -66,18 +70,21 @@ impl PipelineWorkflow {
             let request = CompletionRequest {
                 model: "llama2".to_string(),
                 messages: vec![Message {
-                    role: Role::User,
+                    role: MessageRole::User,
                     content: prompt,
+                    metadata: None,
                 }],
-                stream: false,
-                options: None,
+                max_tokens: Some(1000),
+                temperature: Some(0.3),
+                top_p: None,
+                parameters: HashMap::new(),
             };
             
-            match llm_client.create_completion(&request) {
+            match llm_client.complete(request).await {
                 Ok(completion) => {
-                    let translated_text = completion.message.content.clone();
+                    let translated_text = completion.content;
                     info!("Translation completed successfully");
-                    Ok(TaskResult::success(translated_text))
+                    Ok(translated_text)
                 },
                 Err(e) => {
                     error!("Translation failed: {}", e);
@@ -87,10 +94,10 @@ impl PipelineWorkflow {
         })
     }
     
-    fn create_summarization_task(&self, input: String) -> Task {
+    fn create_summarization_task(&self, input: String) -> task::WorkflowTask<String> {
         let llm_client = self.llm_client.clone();
         
-        Task::new("summarize_text", move |_ctx| {
+        task::task("summarize_text", move || async move {
             info!("Starting summarization task");
             
             let prompt = format!(
@@ -101,18 +108,21 @@ impl PipelineWorkflow {
             let request = CompletionRequest {
                 model: "llama2".to_string(),
                 messages: vec![Message {
-                    role: Role::User,
+                    role: MessageRole::User,
                     content: prompt,
+                    metadata: None,
                 }],
-                stream: false,
-                options: None,
+                max_tokens: Some(500),
+                temperature: Some(0.5),
+                top_p: None,
+                parameters: HashMap::new(),
             };
             
-            match llm_client.create_completion(&request) {
+            match llm_client.complete(request).await {
                 Ok(completion) => {
-                    let summarized_text = completion.message.content.clone();
+                    let summarized_text = completion.content;
                     info!("Summarization completed successfully");
-                    Ok(TaskResult::success(summarized_text))
+                    Ok(summarized_text)
                 },
                 Err(e) => {
                     error!("Summarization failed: {}", e);
@@ -122,10 +132,10 @@ impl PipelineWorkflow {
         })
     }
     
-    fn create_keypoint_extraction_task(&self, input: String) -> Task {
+    fn create_keypoint_extraction_task(&self, input: String) -> task::WorkflowTask<String> {
         let llm_client = self.llm_client.clone();
         
-        Task::new("extract_keypoints", move |_ctx| {
+        task::task("extract_keypoints", move || async move {
             info!("Starting keypoint extraction task");
             
             let prompt = format!(
@@ -136,18 +146,21 @@ impl PipelineWorkflow {
             let request = CompletionRequest {
                 model: "llama2".to_string(),
                 messages: vec![Message {
-                    role: Role::User,
+                    role: MessageRole::User,
                     content: prompt,
+                    metadata: None,
                 }],
-                stream: false,
-                options: None,
+                max_tokens: Some(500),
+                temperature: Some(0.4),
+                top_p: None,
+                parameters: HashMap::new(),
             };
             
-            match llm_client.create_completion(&request) {
+            match llm_client.complete(request).await {
                 Ok(completion) => {
-                    let keypoints = completion.message.content.clone();
+                    let keypoints = completion.content;
                     info!("Keypoint extraction completed successfully");
-                    Ok(TaskResult::success(keypoints))
+                    Ok(keypoints)
                 },
                 Err(e) => {
                     error!("Keypoint extraction failed: {}", e);
@@ -157,10 +170,10 @@ impl PipelineWorkflow {
         })
     }
     
-    fn create_formatting_task(&self, input: String) -> Task {
+    fn create_formatting_task(&self, input: String) -> task::WorkflowTask<String> {
         let llm_client = self.llm_client.clone();
         
-        Task::new("format_output", move |_ctx| {
+        task::task("format_output", move || async move {
             info!("Starting formatting task");
             
             let prompt = format!(
@@ -172,18 +185,21 @@ impl PipelineWorkflow {
             let request = CompletionRequest {
                 model: "llama2".to_string(),
                 messages: vec![Message {
-                    role: Role::User,
+                    role: MessageRole::User,
                     content: prompt,
+                    metadata: None,
                 }],
-                stream: false,
-                options: None,
+                max_tokens: Some(800),
+                temperature: Some(0.4),
+                top_p: None,
+                parameters: HashMap::new(),
             };
             
-            match llm_client.create_completion(&request) {
+            match llm_client.complete(request).await {
                 Ok(completion) => {
-                    let formatted_text = completion.message.content.clone();
+                    let formatted_text = completion.content;
                     info!("Formatting completed successfully");
-                    Ok(TaskResult::success(formatted_text))
+                    Ok(formatted_text)
                 },
                 Err(e) => {
                     error!("Formatting failed: {}", e);
@@ -194,7 +210,7 @@ impl PipelineWorkflow {
     }
     
     async fn process_stage(&mut self, stage: PipelineStage, input: String) -> Result<String> {
-        self.state.set_metadata("current_stage", format!("{:?}", stage));
+        self.state.set_metadata("current_stage", json!(format!("{:?}", stage)));
         
         let task = match stage {
             PipelineStage::Translation => self.create_translation_task(),
@@ -203,38 +219,26 @@ impl PipelineWorkflow {
             PipelineStage::Formatting => self.create_formatting_task(input),
         };
         
-        let task_group = TaskGroup::new(vec![task]);
-        let results = self.engine.execute_task_group(task_group).await?;
-        
-        if let Some(result) = results.first() {
-            if result.status == TaskResultStatus::Success {
-                let output = result.output.clone();
-                self.state.set_metadata(
-                    &format!("{:?}_output_length", stage), 
-                    output.len().to_string()
-                );
-                Ok(output)
-            } else {
-                let error_msg = result.error.clone().unwrap_or_else(|| "Unknown error".to_string());
-                self.state.set_error(format!("Stage {:?} failed: {}", stage, error_msg));
-                Err(anyhow!("Stage {:?} failed: {}", stage, error_msg))
-            }
-        } else {
-            Err(anyhow!("No result returned from stage {:?}", stage))
-        }
+        let output = self.engine.execute_task(task).await?;
+        self.state.set_metadata(
+            &format!("{:?}_output_length", stage), 
+            json!(output.len())
+        );
+        Ok(output)
     }
-    
+}
+
+#[async_trait]
+impl Workflow for PipelineWorkflow {
     async fn run(&mut self) -> Result<WorkflowResult> {
         // Initialize workflow
-        self.state.set_status("starting");
-        info!("Starting pipeline workflow");
+        let mut result = WorkflowResult::new();
+        result.start();
         
         // Check if LLM is available
-        if let Err(e) = self.llm_client.check_availability().await {
-            error!("LLM client is not available: {}", e);
-            self.state.set_status("failed");
-            self.state.set_error(format!("LLM client is not available: {}", e));
-            return Ok(WorkflowResult::failed("LLM client is not available"));
+        if !self.llm_client.is_available().await? {
+            self.state.set_error("LLM service is not available");
+            return Ok(WorkflowResult::failed("LLM service is not available"));
         }
         
         self.state.set_status("processing");
@@ -250,90 +254,172 @@ impl PipelineWorkflow {
         // Start with the input text
         let mut current_output = self.input_text.clone();
         
-        // Process each stage in sequence
-        for stage in stages {
-            info!("Processing stage: {:?}", stage);
+        // Process each stage sequentially
+        for (i, stage) in stages.iter().enumerate() {
+            info!("Pipeline Stage {}/{}: {:?}", i + 1, stages.len(), stage);
+            self.state.set_status(&format!("stage_{:?}", stage).to_lowercase());
             
-            match self.process_stage(stage, current_output).await {
+            match self.process_stage(*stage, current_output.clone()).await {
                 Ok(output) => {
                     current_output = output;
-                    self.current_output = Some(current_output.clone());
                     info!("Stage {:?} completed successfully", stage);
+                    self.state.set_metadata("last_successful_stage", json!(format!("{:?}", stage)));
                 },
                 Err(e) => {
-                    error!("Stage {:?} failed: {}", stage, e);
-                    self.state.set_status("failed");
-                    return Ok(WorkflowResult::failed(&format!("Pipeline failed at stage {:?}: {}", stage, e)));
+                    error!("Pipeline failed at stage {:?}: {}", stage, e);
+                    self.state.set_error(format!("Pipeline failed at stage {:?}: {}", stage, e));
+                    result.value = Some(json!({
+                        "error": format!("Failed at stage {:?}", stage),
+                        "completed_stages": i,
+                        "partial_output": current_output
+                    }));
+                    result.complete();
+                    return Ok(result);
                 }
             }
-            
-            // Update progress
-            self.state.set_metadata("current_length", current_output.len().to_string());
         }
         
-        // Finalize workflow
-        self.state.set_status("completed");
+        // Store the final output
+        self.current_output = Some(current_output.clone());
         
-        // Return the final result
-        Ok(WorkflowResult::success(current_output))
+        // Update workflow state and return result
+        self.state.set_status("completed");
+        result.value = Some(json!({
+            "target_language": self.target_language,
+            "output": current_output,
+            "stages_completed": stages.len()
+        }));
+        
+        result.complete();
+        Ok(result)
+    }
+    
+    fn state(&self) -> &WorkflowState {
+        &self.state
+    }
+    
+    fn state_mut(&mut self) -> &mut WorkflowState {
+        &mut self.state
+    }
+}
+
+/// A mock LLM client for testing
+struct MockLlmClient {
+    config: LlmConfig,
+}
+
+impl MockLlmClient {
+    fn new() -> Self {
+        Self {
+            config: LlmConfig {
+                model: "mock-llama2".to_string(),
+                api_url: "http://localhost:11434".to_string(),
+                api_key: None,
+                max_tokens: Some(500),
+                temperature: Some(0.7),
+                top_p: Some(0.9),
+                parameters: HashMap::new(),
+            },
+        }
+    }
+}
+
+#[async_trait]
+impl LlmClient for MockLlmClient {
+    async fn complete(&self, request: CompletionRequest) -> Result<Completion> {
+        // Simulate processing time
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        
+        // Extract the prompt to generate appropriate mock responses
+        let prompt = if let Some(user_message) = request.messages.iter().find(|m| matches!(m.role, MessageRole::User)) {
+            &user_message.content
+        } else {
+            "Unknown prompt"
+        };
+        
+        // Generate appropriate mock responses based on the pipeline stage
+        let response = if prompt.contains("Translate") {
+            if prompt.contains("Spanish") {
+                "Este es un texto traducido al español. Contiene información importante sobre el Protocolo de Contexto de Modelo, que es una interfaz para la comunicación entre modelos de lenguaje y sus entornos.".to_string()
+            } else if prompt.contains("French") {
+                "Voici un texte traduit en français. Il contient des informations importantes sur le Protocole de Contexte de Modèle, qui est une interface pour la communication entre les modèles de langage et leurs environnements.".to_string()
+            } else {
+                "This is a translated text in the target language. It contains important information about the Model Context Protocol, which is an interface for communication between language models and their environments.".to_string()
+            }
+        } else if prompt.contains("Summarize") {
+            "The Model Context Protocol (MCP) provides a standardized interface for interaction between language models and their contexts, enabling efficient communication, state management, and tool usage. It supports streaming token handling and defines clear boundaries for security and data isolation.".to_string()
+        } else if prompt.contains("Extract") && prompt.contains("points") {
+            "1. The Model Context Protocol (MCP) standardizes the interaction between language models and applications.\n2. MCP includes mechanisms for context management, token streaming, and tool usage.\n3. The protocol improves efficiency through streamlined communication channels.\n4. Implementation is available through a Rust-based library with async support.".to_string()
+        } else if prompt.contains("Format") {
+            "# Model Context Protocol\n\n## Key Features\n\n* **Standardized Interface**: Provides consistent APIs for model-context interaction\n* **Efficient Communication**: Optimized for low-latency token streaming\n* **Tool Support**: Built-in mechanisms for tool definition and usage\n\n## Implementation\n\nThe protocol is implemented in Rust with async support, allowing for efficient concurrency handling.\n\n> The MCP is designed to simplify the integration of language models into various applications.".to_string()
+        } else {
+            "This is a generic response for the pipeline workflow example. The specific stage couldn't be determined from the prompt.".to_string()
+        };
+        
+        let prompt_len = prompt.len();
+        let response_len = response.len();
+        
+        Ok(Completion {
+            content: response,
+            model: Some(self.config.model.clone()),
+            prompt_tokens: Some(prompt_len as u32),
+            completion_tokens: Some(response_len as u32),
+            total_tokens: Some((prompt_len + response_len) as u32),
+            metadata: None,
+        })
+    }
+    
+    async fn is_available(&self) -> Result<bool> {
+        // Always available for the mock
+        Ok(true)
+    }
+    
+    fn config(&self) -> &LlmConfig {
+        &self.config
     }
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     // Initialize telemetry
-    let telemetry_config = TelemetryConfig::default();
-    init_telemetry(telemetry_config);
+    let _guard = init_telemetry(TelemetryConfig {
+        service_name: "pipeline_workflow".to_string(),
+        enable_console: true,
+        ..TelemetryConfig::default()
+    }).map_err(|e| anyhow!("Failed to initialize telemetry: {}", e))?;
     
-    // Create Ollama client
-    let ollama_config = OllamaConfig {
-        base_url: "http://localhost:11434".to_string(),
-        timeout: Duration::from_secs(60),
-    };
-    let ollama_client = OllamaClient::new(ollama_config);
+    // Create LLM client
+    let llm_client = Arc::new(MockLlmClient::new());
     
-    // Check if Ollama is available before proceeding
-    match ollama_client.check_availability().await {
-        Ok(_) => info!("Ollama service is available"),
-        Err(e) => {
-            error!("Ollama service is not available: {}. Using fallback mode.", e);
-            // In a real app, you might want to use a fallback or exit
-        }
-    }
+    // Create signal handler and workflow engine
+    let signal_handler = AsyncSignalHandler::new_with_signals(vec![
+        WorkflowSignal::Interrupt,
+        WorkflowSignal::Terminate,
+    ]);
     
-    // Create workflow engine with signal handling
-    let signal_handler = SignalHandler::new(vec![WorkflowSignal::Interrupt, WorkflowSignal::Terminate]);
-    let workflow_engine = WorkflowEngine::new(signal_handler);
+    let engine = WorkflowEngine::new(signal_handler);
     
-    // Sample input text
-    let sample_text = r#"
-    The Model Context Protocol (MCP) is an innovative standard for AI model interactions that addresses several critical challenges in modern AI systems. It focuses on efficient context management, reducing token usage, and enhancing privacy. The protocol standardizes how applications interact with AI models, allowing for more sophisticated conversation handling and context compression. This enables applications to maintain longer conversation histories without exceeding token limits while reducing operational costs.
-
-    MCP includes mechanisms for semantic routing between specialized models, allowing complex AI systems to delegate subtasks to the most appropriate model. This creates more efficient AI ecosystems where models collaborate to solve problems. Implementations have demonstrated up to 70% reduction in token usage while maintaining or improving output quality. Additionally, the protocol's privacy-preserving features ensure sensitive information is properly handled, making it suitable for enterprise applications.
-    "#;
+    // Sample text about MCP
+    let input_text = "The Model Context Protocol (MCP) defines a standardized interface for \
+    interaction between language models and their context. It specifies methods for managing \
+    context, streaming tokens, and utilizing tools. The implementation provides efficient \
+    communication channels and supports state persistence.";
     
-    // Create and run pipeline workflow
-    let mut workflow = PipelineWorkflow::new(
-        workflow_engine,
-        ollama_client,
-        sample_text.to_string(),
-        "Spanish".to_string()
+    // Create and run the pipeline workflow
+    let workflow = PipelineWorkflow::new(
+        engine,
+        llm_client,
+        input_text.to_string(),
+        "Spanish".to_string(),
     );
     
     info!("Starting pipeline workflow...");
-    let result = workflow.run().await?;
+    let result = execute_workflow(workflow).await?;
     
     if result.is_success() {
-        info!("Pipeline workflow completed successfully!");
-        println!("\nWorkflow Result:\n{}", result.output);
-        
-        // Print workflow metadata
-        println!("\nPipeline Workflow Metadata:");
-        for (key, value) in workflow.state.metadata() {
-            println!("- {}: {}", key, value);
-        }
+        println!("\nWorkflow Result:\n{}", result.output());
     } else {
-        error!("Pipeline workflow failed: {}", result.error.unwrap_or_default());
+        error!("Pipeline workflow failed: {}", result.error().unwrap_or_default());
     }
     
     Ok(())

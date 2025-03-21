@@ -11,7 +11,8 @@ use mcp_agent::workflow::{
     WorkflowEngine, WorkflowState, WorkflowResult, Workflow,
     task, AsyncSignalHandler, WorkflowSignal, execute_workflow,
 };
-use mcp_agent::llm::types::{Message, MessageRole, CompletionRequest, Completion, LlmClient, LlmConfig};
+use mcp_agent::{LlmMessage as Message, MessageRole, CompletionRequest, Completion, LlmConfig};
+use mcp_agent::llm::types::LlmClient;
 
 // Content classification types for branching
 #[derive(Debug, Clone, PartialEq)]
@@ -422,12 +423,12 @@ impl Workflow for ConditionalWorkflow {
         // Parse the classification result
         let category = self.parse_classification(&classification_result);
         self.category = Some(category.clone());
-        self.state.set_metadata("content_category", json!(format!("{:?}", category)));
+        self.state.set_metadata("content_category", format!("{:?}", category));
         
         // Step 2: Determine processing path based on classification
         let processing_path = self.determine_processing_path(&category);
         self.processing_path = Some(processing_path.clone());
-        self.state.set_metadata("processing_path", json!(format!("{:?}", processing_path)));
+        self.state.set_metadata("processing_path", format!("{:?}", processing_path));
         
         info!("Content classified as {:?}, using processing path {:?}", category, processing_path);
         

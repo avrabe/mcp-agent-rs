@@ -3,7 +3,7 @@
 //! # Model Context Protocol (MCP)
 //!
 //! The Model Context Protocol (MCP) is a standardized protocol for communication between
-//! AI models and their environments. It enables structured, efficient, and transparent interactions 
+//! AI models and their environments. It enables structured, efficient, and transparent interactions
 //! with AI systems, allowing for better debugging, monitoring, and control.
 //!
 //! This module provides a complete Rust implementation of the MCP, with the following features:
@@ -25,6 +25,7 @@
 //! - `agent`: Higher-level agent abstraction for MCP interactions
 //! - `executor`: Task execution engine for MCP operations
 //! - `jsonrpc`: JSON-RPC 2.0 implementation for the MCP protocol
+//! - `transport`: Transport layer implementations (WebSocket, HTTP)
 //!
 //! ## Usage Example
 //!
@@ -33,22 +34,22 @@
 //! use mcp_agent::mcp::types::Message;
 //! use mcp_agent::config::AgentConfig;
 //! use std::sync::Arc;
-//! 
+//!
 //! async fn example() {
 //!     // Create an agent configuration
 //!     let config = AgentConfig::default();
-//!     
-//!     // Create a new agent
+//!
+//!     // Create a new agen
 //!     let agent = Agent::new(config);
-//!     
-//!     // Start the agent
+//!
+//!     // Start the agen
 //!     agent.start().await.expect("Failed to start agent");
-//!     
+//!
 //!     // Send a message
 //!     let message = Message::new_request(Vec::new());
 //!     agent.send_message(message).await.expect("Failed to send message");
-//!     
-//!     // Shutdown the agent
+//!
+//!     // Shutdown the agen
 //!     agent.shutdown().await.expect("Failed to shutdown agent");
 //! }
 //! ```
@@ -70,3 +71,6 @@ pub mod agent;
 
 /// JSON-RPC implementation for the MCP protocol
 pub mod jsonrpc;
+
+/// Transport layer implementations for WebSocket and HTTP
+pub mod transport;

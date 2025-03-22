@@ -1,71 +1,101 @@
-//! WebSocket transport implementation for the MCP protocol.
+//! WebSocket transport implementation for MCP
 //!
-//! This module provides a WebSocket-based transport for the MCP protocol using
-//! the tokio-tungstenite library for WebSocket support.
+//! This module provides a WebSocket-based transport for the MCP protocol.
 
 #[cfg(feature = "transport-ws")]
-use futures_util::{SinkExt, StreamExt};
+use crate::error::{Error, Result};
 #[cfg(feature = "transport-ws")]
-use tracing::{debug, error, info, warn};
+use crate::mcp::transport::{AsyncTransport, TransportConfig};
+#[cfg(feature = "transport-ws")]
+use crate::mcp::types::{
+    JsonRpcBatchRequest as BatchRequest, JsonRpcBatchResponse as BatchResponse,
+    JsonRpcRequest as Request, JsonRpcResponse as Response, Message, MessageType, Priority,
+};
+#[cfg(feature = "transport-ws")]
+use async_trait::async_trait;
+#[cfg(feature = "transport-ws")]
+use futures::{stream::StreamExt, SinkExt};
+#[cfg(feature = "transport-ws")]
+use log::{debug, error, info, warn};
 #[cfg(feature = "transport-ws")]
 use std::collections::HashMap;
 #[cfg(feature = "transport-ws")]
-use std::sync::Arc;
-#[cfg(not(feature = "transport-ws"))]
+use std::fmt;
+#[cfg(feature = "transport-ws")]
 use std::sync::Arc;
 #[cfg(feature = "transport-ws")]
 use std::time::Duration;
 #[cfg(feature = "transport-ws")]
-use tokio::net::TcpStream;
-#[cfg(feature = "transport-ws")]
-use tokio::sync::{mpsc, Mutex, RwLock};
+use tokio::sync::{mpsc, oneshot, RwLock};
 #[cfg(feature = "transport-ws")]
 use tokio::time;
 #[cfg(feature = "transport-ws")]
 use tokio_tungstenite::{
-    connect_async, tungstenite::protocol::Message as WsMessage, MaybeTlsStream, WebSocketStream,
+    connect_async, tungstenite::Message as WsMessage, MaybeTlsStream, WebSocketStream,
 };
 #[cfg(feature = "transport-ws")]
 use url::Url;
 #[cfg(feature = "transport-ws")]
 use uuid::Uuid;
 
-use super::{Transport, TransportConfig, TransportFactory};
-use crate::error::{Error, Result};
-
-#[cfg(feature = "transport-ws")]
-type WebSocketClientType = WebSocketStream<MaybeTlsStream<TcpStream>>;
-
-/// WebSocket transport for MCP protocol
+/// WebSocket-based transport for the MCP protocol
+///
+/// This transport uses WebSockets to send and receive MCP messages
 #[cfg(feature = "transport-ws")]
 pub struct WebSocketTransport {
-    /// Channel for sending messages to the outgoing WebSocket stream
+    /// Channel for sending messages to the WebSocket
     tx: mpsc::Sender<Message>,
-    /// Connection ID
+    /// Unique ID for this transport connection
     connection_id: String,
-    /// Pending requests map
-    pending_requests: Arc<RwLock<HashMap<String, mpsc::Sender<Response>>>>,
-    /// Connection status flag
+    /// Map of pending requests waiting for responses
+    pending_requests: Arc<RwLock<HashMap<String, oneshot::Sender<Response>>>>,
+    /// Flag indicating if the transport is connected
     connected: Arc<std::sync::atomic::AtomicBool>,
-    /// Configuration
+    /// Configuration for this transport
     config: TransportConfig,
+}
+
+// Implement Debug manually since some fields don't implement Debug
+#[cfg(feature = "transport-ws")]
+impl fmt::Debug for WebSocketTransport {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("WebSocketTransport")
+            .field("connection_id", &self.connection_id)
+            .field("connected", &self.connected)
+            .field("config", &self.config)
+            .finish_non_exhaustive()
+    }
 }
 
 #[cfg(feature = "transport-ws")]
 impl WebSocketTransport {
     /// Create a new WebSocket transport
     pub async fn new(config: TransportConfig) -> Result<Self> {
+        // Create a channel for outgoing messages
         let (tx, mut rx) = mpsc::channel::<Message>(100);
         let pending_requests = Arc::new(RwLock::new(HashMap::new()));
         let connected = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let connection_id = Uuid::new_v4().to_string();
+
+        // Create a broadcast channel for distributing messages to all connections
+        let (broadcast_tx, _) = tokio::sync::broadcast::channel::<Message>(100);
 
         let ws_url = Url::parse(&config.url)
             .map_err(|_| Error::Internal(format!("Invalid WebSocket URL: {}", config.url)))?;
 
         let pending_requests_clone = pending_requests.clone();
         let connected_clone = connected.clone();
-        let config_clone = config.clone();
+        let broadcast_tx_clone = broadcast_tx.clone();
+
+        // Forward messages from tx's rx to broadcast channel
+        tokio::spawn(async move {
+            while let Some(msg) = rx.recv().await {
+                if broadcast_tx_clone.send(msg).is_err() {
+                    // If broadcast fails, likely all receivers are gone
+                    break;
+                }
+            }
+        });
 
         // Spawn background task for managing the WebSocket connection
         tokio::spawn(async move {
@@ -83,10 +113,13 @@ impl WebSocketTransport {
                         connected_clone.store(true, std::sync::atomic::Ordering::SeqCst);
                         reconnect_attempts = 0;
 
+                        // Subscribe to the broadcast channel for this connection
+                        let broadcast_rx = broadcast_tx.subscribe();
+
                         // Handle the WebSocket connection
-                        if let Err(e) = WebSocketTransport::handle_connection(
+                        if let Err(e) = Self::handle_connection(
                             ws_stream,
-                            &mut rx,
+                            broadcast_rx,
                             pending_requests_clone.clone(),
                             connected_clone.clone(),
                         )
@@ -128,103 +161,70 @@ impl WebSocketTransport {
         })
     }
 
-    /// Handle the WebSocket connection
+    /// Handle a WebSocket connection
     async fn handle_connection(
-        ws_stream: WebSocketClientType,
-        rx: &mut mpsc::Receiver<Message>,
-        pending_requests: Arc<RwLock<HashMap<String, mpsc::Sender<Response>>>>,
+        ws_stream: WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>,
+        mut broadcast_rx: tokio::sync::broadcast::Receiver<Message>,
+        pending_requests: Arc<RwLock<HashMap<String, oneshot::Sender<Response>>>>,
         connected: Arc<std::sync::atomic::AtomicBool>,
-    ) -> Result<(), Error> {
+    ) -> Result<()> {
+        // Split the WebSocket into a sender and receiver
         let (mut ws_sender, mut ws_receiver) = ws_stream.split();
 
-        // Task for sending messages to the WebSocket
+        // Clone the connected flag for use in tasks
+        let connected_send = connected.clone();
+
+        // Task for sending messages to WebSocket
         let send_task = tokio::spawn(async move {
-            while let Some(message) = rx.recv().await {
-                let msg_json = serde_json::to_string(&message)
-                    .map_err(|e| Error::Internal(format!("Failed to serialize message: {}", e)))?;
+            while let Ok(msg) = broadcast_rx.recv().await {
+                let msg_json = serde_json::to_string(&msg)
+                    .map_err(|e| Error::Internal(format!("Failed to serialize message: {}", e)))
+                    .unwrap();
 
-                debug!("Sending message: {}", msg_json);
-
-                if let Err(e) = ws_sender.send(WsMessage::Text(msg_json)).await {
-                    error!("Error sending WebSocket message: {}", e);
-                    connected.store(false, std::sync::atomic::Ordering::SeqCst);
-                    return Err(Error::Internal(format!("WebSocket send error: {}", e)));
+                let ws_msg = WsMessage::Text(msg_json);
+                if ws_sender.send(ws_msg).await.is_err() {
+                    connected_send.store(false, std::sync::atomic::Ordering::SeqCst);
+                    break;
                 }
             }
-
-            Ok::<_, Error>(())
         });
 
-        // Task for receiving messages from the WebSocket
-        let receive_task = tokio::spawn(async move {
+        // Task for receiving messages from WebSocket
+        let recv_task = tokio::spawn(async move {
             while let Some(msg_result) = ws_receiver.next().await {
                 match msg_result {
-                    Ok(msg) => {
-                        if let WsMessage::Text(text) = msg {
-                            debug!("Received message: {}", text);
-
-                            match serde_json::from_str::<Message>(&text) {
-                                Ok(message) => {
-                                    // Process the message based on type
-                                    // For now, we'll just handle responses
-                                    if let Some(correlation_id) = &message.correlation_id {
-                                        let id = correlation_id.to_string();
-
-                                        // Check if we have a pending request for this response
-                                        let mut pending = pending_requests.write().await;
-                                        if let Some(tx) = pending.remove(&id) {
-                                            // Convert Message to Response and send it
-                                            if let Ok(response) = Response::from_message(&message) {
-                                                if let Err(e) = tx.send(response).await {
-                                                    error!(
-                                                        "Failed to send response to waiting request: {}",
-                                                        e
-                                                    );
-                                                }
-                                            } else {
-                                                error!("Failed to convert message to response");
-                                            }
-                                        } else {
-                                            warn!("Received response for unknown request: {}", id);
-                                        }
-                                    } else {
-                                        debug!("Received non-response message");
-                                        // Handle other message types if needed
-                                    }
+                    Ok(WsMessage::Text(text)) => {
+                        match serde_json::from_str::<Response>(&text) {
+                            Ok(response) => {
+                                debug!("Received response: {:?}", response);
+                                // Look up the pending request and fulfill it with the response
+                                if let Some(sender) = {
+                                    let mut requests = pending_requests.write().await;
+                                    requests.remove(&response.id.to_string())
+                                } {
+                                    let _ = sender.send(response);
+                                } else {
+                                    warn!(
+                                        "Received response for unknown request: {:?}",
+                                        response.id
+                                    );
                                 }
-                                Err(e) => {
-                                    error!("Failed to deserialize message: {}", e);
-                                }
+                            }
+                            Err(e) => {
+                                error!("Failed to parse WebSocket message: {}", e);
                             }
                         }
                     }
-                    Err(e) => {
-                        error!("Error receiving WebSocket message: {}", e);
-                        connected.store(false, std::sync::atomic::Ordering::SeqCst);
-                        return Err(Error::Internal(format!("WebSocket receive error: {}", e)));
-                    }
+                    _ => {}
                 }
             }
-
-            Ok::<_, Error>(())
+            connected.store(false, std::sync::atomic::Ordering::SeqCst);
         });
 
-        // Wait for either task to complete
+        // Wait for either task to complete, then exit
         tokio::select! {
-            res = send_task => {
-                if let Err(e) = res {
-                    error!("WebSocket send task panicked: {}", e);
-                } else if let Ok(Err(e)) = res {
-                    error!("WebSocket send task error: {}", e);
-                }
-            },
-            res = receive_task => {
-                if let Err(e) = res {
-                    error!("WebSocket receive task panicked: {}", e);
-                } else if let Ok(Err(e)) = res {
-                    error!("WebSocket receive task error: {}", e);
-                }
-            }
+            _ = send_task => {},
+            _ = recv_task => {},
         }
 
         Ok(())
@@ -239,12 +239,9 @@ impl AsyncTransport for WebSocketTransport {
             return Err(Error::Internal("WebSocket is not connected".to_string()));
         }
 
-        // Send message through the channel to the WebSocket handler
-        self.tx
-            .send(message)
-            .await
-            .map_err(|_| Error::Internal("Failed to send message to WebSocket handler".to_string()))?;
-
+        self.tx.send(message).await.map_err(|_| {
+            Error::Internal("Failed to send message to WebSocket channel".to_string())
+        })?;
         Ok(())
     }
 
@@ -253,51 +250,46 @@ impl AsyncTransport for WebSocketTransport {
             return Err(Error::Internal("WebSocket is not connected".to_string()));
         }
 
-        // Convert Request to Message
-        let message = request.clone().into_message();
+        // Create a channel for receiving the response
+        let (resp_tx, resp_rx) = oneshot::channel::<Response>();
 
-        // Create oneshot channel for the response
-        let (resp_tx, resp_rx) = mpsc::channel::<Response>(1);
-
-        // Register the request in the pending requests map
-        let req_id = request.id().to_string();
+        // Add the request ID to the pending requests map
+        let request_id = request.id.to_string();
         {
             let mut pending = self.pending_requests.write().await;
-            pending.insert(req_id.clone(), resp_tx);
+            pending.insert(request_id.clone(), resp_tx);
         }
 
-        // Send the request message
-        self.tx
-            .send(message)
-            .await
-            .map_err(|_| Error::Internal("Failed to send request to WebSocket handler".to_string()))?;
+        // Convert the request to a Message and send it
+        let request_bytes = serde_json::to_vec(&request)
+            .map_err(|e| Error::Internal(format!("Failed to serialize request: {}", e)))?;
 
-        // Wait for the response with timeout
-        let timeout = Duration::from_secs(self.config.timeout_seconds);
-        match tokio::time::timeout(timeout, resp_rx.recv()).await {
-            Ok(Some(response)) => {
-                // Response received
-                Ok(response)
-            }
-            Ok(None) => {
-                // Channel closed without response
-                Err(Error::Internal("Response channel closed unexpectedly".to_string()))
-            }
+        let message = Message::new(
+            MessageType::Request,
+            Priority::Normal,
+            request_bytes,
+            None,
+            None,
+        );
+
+        self.tx.send(message).await.map_err(|_| {
+            Error::Internal("Failed to send request to WebSocket channel".to_string())
+        })?;
+
+        // Wait for the response or timeout
+        let timeout_duration = Duration::from_secs(self.config.timeout_seconds);
+        match time::timeout(timeout_duration, resp_rx).await {
+            Ok(result) => match result {
+                Ok(response) => Ok(response),
+                Err(_) => Err(Error::Internal("Response channel closed".to_string())),
+            },
             Err(_) => {
-                // Timeout
-                // Remove the pending request
+                // Remove the pending request if we timed out
                 let mut pending = self.pending_requests.write().await;
-                pending.remove(&req_id);
-
+                pending.remove(&request_id);
                 Err(Error::Timeout)
             }
         }
-    }
-
-    async fn close(&self) -> Result<()> {
-        // There's no need to explicitly close, the WebSocket will be closed
-        // when the struct is dropped and the tx channel is closed
-        Ok(())
     }
 
     async fn send_batch_request(&self, batch_request: BatchRequest) -> Result<BatchResponse> {
@@ -305,148 +297,64 @@ impl AsyncTransport for WebSocketTransport {
             return Err(Error::Internal("WebSocket is not connected".to_string()));
         }
 
-        // For each request in the batch, create a oneshot channel
-        let mut response_channels = HashMap::new();
-        let mut batch_ids = Vec::new();
+        let mut response_channels = Vec::with_capacity(batch_request.0.len());
+        let mut responses = Vec::with_capacity(batch_request.0.len());
 
-        // Register all the requests in the pending requests map
-        {
-            let mut pending = self.pending_requests.write().await;
-            for request in batch_request.requests() {
-                let req_id = request.id().to_string();
-                batch_ids.push(req_id.clone());
-
-                let (resp_tx, resp_rx) = mpsc::channel::<Response>(1);
-                pending.insert(req_id.clone(), resp_tx);
-                response_channels.insert(req_id, resp_rx);
+        // Create response channels for each request
+        for request in &batch_request.0 {
+            let (resp_tx, resp_rx) = oneshot::channel::<Response>();
+            let request_id = request.id.to_string();
+            {
+                let mut pending = self.pending_requests.write().await;
+                pending.insert(request_id, resp_tx);
             }
+            response_channels.push(resp_rx);
         }
 
-        // Serialize the batch request
-        let message_payload = serde_json::to_vec(&batch_request)
+        // Convert the batch request to a Message and send it
+        let batch_bytes = serde_json::to_vec(&batch_request)
             .map_err(|e| Error::Internal(format!("Failed to serialize batch request: {}", e)))?;
 
-        // Create and send a message with the batch payload
         let message = Message::new(
-            MessageType::BatchRequest,
+            MessageType::Request,
             Priority::Normal,
-            message_payload,
+            batch_bytes,
             None,
             None,
         );
 
-        self.tx
-            .send(message)
-            .await
-            .map_err(|_| Error::Internal("Failed to send batch request".to_string()))?;
+        self.tx.send(message).await.map_err(|_| {
+            Error::Internal("Failed to send batch request to WebSocket channel".to_string())
+        })?;
 
-        // Wait for all responses with timeout
-        let timeout = Duration::from_secs(self.config.timeout_seconds);
-        let mut responses = Vec::new();
-
-        for req_id in batch_ids {
-            if let Some(rx) = response_channels.get(&req_id) {
-                match tokio::time::timeout(timeout, rx.recv()).await {
-                    Ok(Some(response)) => {
-                        responses.push(response);
-                    }
-                    Ok(None) | Err(_) => {
-                        // Channel closed or timeout
-                        let mut pending = self.pending_requests.write().await;
-                        pending.remove(&req_id);
-                    }
-                }
+        // Wait for all responses or timeout
+        let timeout_duration = Duration::from_secs(self.config.timeout_seconds);
+        for rx in response_channels {
+            match time::timeout(timeout_duration, rx).await {
+                Ok(result) => match result {
+                    Ok(response) => responses.push(response),
+                    Err(_) => return Err(Error::Internal("Response channel closed".to_string())),
+                },
+                Err(_) => return Err(Error::Timeout),
             }
         }
 
-        // Create batch response from the responses
-        Ok(BatchResponse::new(responses))
+        Ok(BatchResponse(responses))
+    }
+
+    async fn close(&self) -> Result<()> {
+        // No explicit close needed for the channel-based implementation
+        Ok(())
     }
 }
 
-#[cfg(feature = "transport-ws")]
-impl Transport for WebSocketTransport {
-    fn send_message_boxed(
-        &self,
-        message: Message,
-    ) -> Box<dyn std::future::Future<Output = Result<()>> + Send + Unpin + '_> {
-        Box::pin(self.send_message(message))
-    }
-
-    fn send_request_boxed(
-        &self,
-        request: Request,
-    ) -> Box<dyn std::future::Future<Output = Result<Response>> + Send + Unpin + '_> {
-        Box::pin(self.send_request(request))
-    }
-
-    fn send_batch_request_boxed(
-        &self,
-        batch_request: BatchRequest,
-    ) -> Box<dyn std::future::Future<Output = Result<BatchResponse>> + Send + Unpin + '_> {
-        Box::pin(self.send_batch_request(batch_request))
-    }
-
-    fn close_boxed(&self) -> Box<dyn std::future::Future<Output = Result<()>> + Send + Unpin + '_> {
-        Box::pin(self.close())
-    }
-}
-
-/// Factory for creating WebSocket transport instances
-#[cfg(feature = "transport-ws")]
-#[derive(Debug)]
-pub struct WebSocketTransportFactory {
-    config: TransportConfig,
-}
-
-#[cfg(feature = "transport-ws")]
-impl WebSocketTransportFactory {
-    /// Create a new WebSocket transport factory
-    ///
-    /// # Arguments
-    /// * `config` - The transport configuration to use for created clients.
-    pub fn new(config: TransportConfig) -> Self {
-        Self { config }
-    }
-}
-
-#[cfg(feature = "transport-ws")]
-impl TransportFactory for WebSocketTransportFactory {
-    fn create(&self) -> Result<Arc<dyn Transport>> {
-        let rt = tokio::runtime::Runtime::new()
-            .map_err(|e| Error::Internal(format!("Failed to create Tokio runtime: {}", e)))?;
-        
-        let transport = rt.block_on(async {
-            WebSocketTransport::new(self.config.clone()).await
-        })?;
-        
-        Ok(Arc::new(transport))
-    }
-}
-
-/// Empty implementation when the transport-ws feature is not enabled
+// Add a placeholder when the feature isn't enabled
+/// WebSocket transport implementation placeholder
+///
+/// This is a placeholder struct that exists when the `transport-ws` feature
+/// is not enabled. For actual functionality, enable the `transport-ws` feature.
 #[cfg(not(feature = "transport-ws"))]
 #[derive(Debug)]
-pub struct WebSocketTransportFactory {
-    _config: TransportConfig,
-}
-
-#[cfg(not(feature = "transport-ws"))]
-impl WebSocketTransportFactory {
-    /// Creates a placeholder WebSocket transport factory when the feature is disabled
-    ///
-    /// # Arguments
-    /// * `config` - The transport configuration (not used when feature is disabled)
-    pub fn new(config: TransportConfig) -> Self {
-        Self { _config: config }
-    }
-}
-
-#[cfg(not(feature = "transport-ws"))]
-impl TransportFactory for WebSocketTransportFactory {
-    fn create(&self) -> Result<Arc<dyn Transport>> {
-        Err(Error::Internal(
-            "WebSocket transport is not enabled. Enable the 'transport-ws' feature.".to_string(),
-        ))
-    }
+pub struct WebSocketTransport {
+    _private: (),
 }

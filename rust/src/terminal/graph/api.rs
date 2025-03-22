@@ -116,7 +116,7 @@ async fn handle_graph_socket(socket: WebSocket, graph_manager: Arc<GraphManager>
     tokio::spawn(async move {
         let mut updates = update_listener;
 
-        while let Ok(update) = updates.recv().await {
+        while let Some(update) = updates.recv().await {
             debug!("Received graph update: {:?}", update.update_type);
             let use_sprotty_val = *use_sprotty.read().await;
 

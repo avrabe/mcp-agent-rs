@@ -1,31 +1,22 @@
 use anyhow::Result;
-use colored::Colorize;
 use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::Duration;
-use tracing::{info, Level};
 
 use mcp_agent::telemetry::{init_telemetry, TelemetryConfig};
-use mcp_agent::workflow::{execute_workflow, WorkflowEngine};
 
 // Import orchestrator code with public visibility
 mod orchestrator {
     // Re-export the MockLlmClient and OrchestratorWorkflow with public visibility
-    use anyhow::{anyhow, Result};
+    use anyhow::Result;
     use async_trait::async_trait;
     use serde_json::json;
     use std::collections::HashMap;
     use std::sync::Arc;
     use std::time::Duration;
-    use tracing::{error, info, warn};
 
     use mcp_agent::llm::types::LlmClient;
-    use mcp_agent::telemetry::{init_telemetry, TelemetryConfig};
-    use mcp_agent::workflow::{
-        execute_workflow, task, AsyncSignalHandler, Workflow, WorkflowEngine, WorkflowResult,
-        WorkflowSignal, WorkflowState,
-    };
-    use mcp_agent::{Completion, CompletionRequest, LlmConfig, LlmMessage as Message, MessageRole};
+
+    use mcp_agent::workflow::{WorkflowEngine, WorkflowState};
+    use mcp_agent::{Completion, CompletionRequest, LlmConfig};
 
     #[derive(Debug, Clone, PartialEq, Eq, Hash)]
     pub enum SubWorkflowType {

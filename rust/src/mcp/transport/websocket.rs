@@ -33,7 +33,10 @@ use uuid::Uuid;
 use super::{Transport, TransportConfig, TransportFactory};
 use crate::error::{Error, Result};
 #[cfg(feature = "transport-ws")]
-use crate::mcp::types::{JsonRpcRequest as Request, JsonRpcResponse as Response, Message};
+use crate::mcp::types::{
+    JsonRpcBatchRequest as BatchRequest, JsonRpcBatchResponse as BatchResponse,
+    JsonRpcRequest as Request, JsonRpcResponse as Response, Message,
+};
 
 #[cfg(feature = "transport-ws")]
 type WebSocketClientType = WebSocketStream<MaybeTlsStream<TcpStream>>;
@@ -301,6 +304,109 @@ impl Transport for WebSocketTransport {
 
     fn is_connected(&self) -> bool {
         self.connected.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    async fn send_batch_request(
+        &self,
+        batch_request: BatchRequest,
+    ) -> Result<BatchResponse, Error> {
+        debug!(
+            "Sending batch request with {} items over WebSocket",
+            batch_request.len()
+        );
+
+        // Ensure connected
+        if !self.is_connected() {
+            return Err(Error::Internal("WebSocket is not connected".to_string()));
+        }
+
+        // Track response channels for each request
+        let mut response_channels = Vec::with_capacity(batch_request.len());
+        let mut pending = self.pending_requests.write().await;
+
+        // For each request in the batch, register a response channel
+        for request in &batch_request.0 {
+            // Skip notifications (no ID)
+            if let serde_json::Value::Null = request.id {
+                // No response expected for notifications
+                response_channels.push(None);
+                continue;
+            }
+
+            // Get the request ID as string
+            let request_id = match &request.id {
+                serde_json::Value::String(id) => id.clone(),
+                other => other.to_string(),
+            };
+
+            // Create channel for response
+            let (tx, rx) = mpsc::channel(1);
+            response_channels.push(Some((request_id.clone(), rx)));
+            pending.insert(request_id, tx);
+        }
+
+        // Send the batch over the WebSocket
+        if let Err(e) = self
+            .tx
+            .send(Message::new(
+                batch_request.to_bytes()?,
+                self.config.timeout_seconds,
+            ))
+            .await
+        {
+            // Clean up pending requests on error
+            for (req_id, _) in response_channels.iter().flatten() {
+                pending.remove(req_id);
+            }
+            return Err(Error::Internal(format!(
+                "Failed to send batch request: {}",
+                e
+            )));
+        }
+
+        drop(pending); // Release the lock
+
+        // Prepare timeout
+        let timeout = Duration::from_secs(self.config.timeout_seconds);
+
+        // Wait for all responses
+        let mut responses = Vec::new();
+        for channel_info in response_channels {
+            // If this was a notification (no channel), continue
+            let (req_id, mut rx) = match channel_info {
+                Some(info) => info,
+                None => continue, // Skip notifications
+            };
+
+            // Wait for response with timeout
+            match time::timeout(timeout, rx.recv()).await {
+                Ok(Some(response)) => {
+                    // Got a response, add it to results
+                    responses.push(response);
+                }
+                Ok(None) => {
+                    // Channel closed without response
+                    let mut pending = self.pending_requests.write().await;
+                    pending.remove(&req_id);
+                    return Err(Error::Internal(format!(
+                        "Response channel for request {} closed unexpectedly",
+                        req_id
+                    )));
+                }
+                Err(_) => {
+                    // Timeout
+                    let mut pending = self.pending_requests.write().await;
+                    pending.remove(&req_id);
+                    return Err(Error::Internal(format!(
+                        "Batch request timed out after {} seconds",
+                        self.config.timeout_seconds
+                    )));
+                }
+            }
+        }
+
+        debug!("Batch request completed with {} responses", responses.len());
+        Ok(BatchResponse::from_responses(responses))
     }
 }
 

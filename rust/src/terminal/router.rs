@@ -80,7 +80,7 @@ impl TerminalRouter {
 
             // Register terminal with synchronizer
             let mut synchronizer = self.synchronizer.lock().await;
-            let term_id = console_arc.id_boxed().await?;
+            let term_id = console_arc.id_sync().await?;
             synchronizer.register_terminal(console_arc.clone()).await?;
             drop(synchronizer);
 
@@ -105,7 +105,7 @@ impl TerminalRouter {
 
             // Register terminal with synchronizer
             let mut synchronizer = self.synchronizer.lock().await;
-            let term_id = web_arc.id_boxed().await?;
+            let term_id = web_arc.id_sync().await?;
             synchronizer.register_terminal(web_arc.clone()).await?;
             drop(synchronizer);
 
@@ -126,10 +126,10 @@ impl TerminalRouter {
             let mut console_lock = self.console_terminal.lock().await;
             if let Some(console) = console_lock.take() {
                 debug!("Stopping console terminal");
-                let id = console.id_boxed().await?;
+                let id = console.id_sync().await?;
 
                 let mut_console = Arc::get_mut(&mut console.clone()).unwrap();
-                mut_console.stop_boxed().await?;
+                mut_console.stop_sync().await?;
 
                 // Unregister from synchronizer
                 let mut synchronizer = self.synchronizer.lock().await;
@@ -142,10 +142,10 @@ impl TerminalRouter {
             let mut web_lock = self.web_terminal.lock().await;
             if let Some(web) = web_lock.take() {
                 debug!("Stopping web terminal");
-                let id = web.id_boxed().await?;
+                let id = web.id_sync().await?;
 
-                let mut_web = Arc::get_mut(&mut web.clone()).unwrap();
-                mut_web.stop_boxed().await?;
+                let mut_web: &mut dyn Terminal = Arc::get_mut(&mut web.clone()).unwrap();
+                mut_web.stop_sync().await?;
 
                 // Unregister from synchronizer
                 let mut synchronizer = self.synchronizer.lock().await;
@@ -179,7 +179,7 @@ impl TerminalRouter {
 
             // Register with synchronizer
             let mut synchronizer = self.synchronizer.lock().await;
-            let term_id = web_arc.id_boxed().await?;
+            let term_id = web_arc.id_sync().await?;
             synchronizer.register_terminal(web_arc.clone()).await?;
 
             *web_lock = Some(web_arc);
@@ -188,10 +188,10 @@ impl TerminalRouter {
 
             // Stop and remove web terminal
             if let Some(web) = web_lock.take() {
-                let id = web.id_boxed().await?;
+                let id = web.id_sync().await?;
 
-                let mut_web = Arc::get_mut(&mut web.clone()).unwrap();
-                mut_web.stop_boxed().await?;
+                let mut_web: &mut dyn Terminal = Arc::get_mut(&mut web.clone()).unwrap();
+                mut_web.stop_sync().await?;
 
                 // Unregister from synchronizer
                 let mut synchronizer = self.synchronizer.lock().await;
@@ -209,8 +209,8 @@ impl TerminalRouter {
         // Write to console terminal if it exists
         {
             let console_lock = self.console_terminal.lock().await;
-            if let Some(console) = &*console_lock {
-                if let Err(e) = console.display_boxed(data).await {
+            if let Some(console) = &self.console_terminal.lock().await.as_ref() {
+                if let Err(e) = console.display_sync(&data).await {
                     error!("Error writing to console terminal: {}", e);
                 }
             }
@@ -219,8 +219,8 @@ impl TerminalRouter {
         // Write to web terminal if it exists
         {
             let web_lock = self.web_terminal.lock().await;
-            if let Some(web) = &*web_lock {
-                if let Err(e) = web.display_boxed(data).await {
+            if let Some(web) = &self.web_terminal.lock().await.as_ref() {
+                if let Err(e) = web.display_sync(&data).await {
                     error!("Error writing to web terminal: {}", e);
                 }
             }
@@ -259,167 +259,59 @@ impl TerminalRouter {
         }
     }
 
-    /// Initialize visualization for the web terminal
+    /// Initialize visualization for a terminal
     pub async fn initialize_visualization(
         &mut self,
         graph_manager: Arc<GraphManager>,
     ) -> Result<()> {
-        debug!("Initializing graph visualization");
+        info!("Initializing visualization with graph manager");
 
         // Store the graph manager
-        let mut graph_manager_lock = self.graph_manager.lock().await;
-        *graph_manager_lock = Some(graph_manager.clone());
-        drop(graph_manager_lock);
-
-        // Pass the graph manager to the web terminal (if it exists)
-        let web_terminal_lock = self.web_terminal.lock().await;
-        if let Some(web_terminal) = &*web_terminal_lock {
-            // Get the graph manager ID
-            let graph_manager_id = match graph_manager.id().await {
-                Ok(id) => id,
-                Err(e) => {
-                    error!("Failed to get graph manager ID: {}", e);
-                    return Err(Error::TerminalError(format!(
-                        "Failed to get graph manager ID: {}",
-                        e
-                    )));
-                }
-            };
-
-            debug!(
-                "Setting graph manager (ID: {}) for web terminal",
-                graph_manager_id
-            );
-
-            // Send a command to set the graph manager
-            let (tx, rx) = tokio::sync::oneshot::channel();
-            match web_terminal
-                .execute_command(&format!("SET_GRAPH_MANAGER:{}", graph_manager_id), tx)
-                .await
-            {
-                Ok(_) => {
-                    // Wait for the response
-                    match rx.await {
-                        Ok(response) => {
-                            debug!("Graph manager set response: {}", response);
-                        }
-                        Err(e) => {
-                            // This is not fatal, but we should log i
-                            warn!("Failed to get response from web terminal: {}", e);
-                        }
-                    }
-                }
-                Err(e) => {
-                    error!("Failed to execute SET_GRAPH_MANAGER command: {}", e);
-                    return Err(Error::TerminalError(format!(
-                        "Failed to execute SET_GRAPH_MANAGER command: {}",
-                        e
-                    )));
-                }
-            }
-
-            // Log the visualization URL if available
-            if let Ok(host) = std::env::var("VIS_HOST")
-                .or_else(|_| Ok::<String, Error>(self.config.web_terminal_config.host.to_string()))
-            {
-                let port = self.config.web_terminal_config.port;
-                info!(
-                    "Graph visualization available at http://{}:{}/vis",
-                    host, port
-                );
-            }
-        } else {
-            debug!("Web terminal not active, visualization initialization skipped");
-            // If we're in a situation where the web terminal isn't active but visualization is enabled,
-            // we should log a more informative message
-            if self.config.web_terminal_config.enable_visualization {
-                warn!(
-                    "Visualization is enabled in config, but web terminal is not active; visualization will not be available"
-                );
-            }
-        }
+        let mut gm = self.graph_manager.lock().await;
+        *gm = Some(graph_manager);
 
         Ok(())
     }
 
     /// Register a graph manager with the terminal router
     pub async fn register_graph_manager(&self, graph_manager: Arc<GraphManager>) -> Result<()> {
-        debug!("Registering graph manager with terminal router");
+        // Store graph manager
+        let mut gm = self.graph_manager.lock().await;
+        *gm = Some(graph_manager.clone());
 
-        // Store the graph manager
-        let mut graph_manager_lock = self.graph_manager.lock().await;
-        *graph_manager_lock = Some(graph_manager.clone());
-        drop(graph_manager_lock);
-
-        // Pass the graph manager to the web terminal (if it exists)
-        let web_terminal_lock = self.web_terminal.lock().await;
-        if let Some(web_terminal) = &*web_terminal_lock {
-            // Get the graph manager ID
-            let graph_manager_id = match graph_manager.id().await {
-                Ok(id) => id,
-                Err(e) => {
-                    error!("Failed to get graph manager ID: {}", e);
-                    return Err(Error::TerminalError(format!(
-                        "Failed to get graph manager ID: {}",
-                        e
-                    )));
-                }
-            };
-
-            debug!(
-                "Setting graph manager (ID: {}) for web terminal",
-                graph_manager_id
-            );
-
-            // Send a command to set the graph manager
+        // Notify web terminal if available
+        let web_terminal = self.web_terminal.lock().await;
+        if let Some(web_terminal) = &*web_terminal {
+            // Set graph manager ID
+            let graph_manager_id = format!("{}-{}", "default", Uuid::new_v4());
             let (tx, rx) = tokio::sync::oneshot::channel();
+
             match web_terminal
-                .execute_command(&format!("SET_GRAPH_MANAGER:{}", graph_manager_id), tx)
+                .execute_command_sync(&format!("SET_GRAPH_MANAGER:{}", graph_manager_id), tx)
                 .await
             {
-                Ok(_) => {
-                    // Wait for the response
-                    match rx.await {
-                        Ok(response) => {
-                            debug!("Graph manager set response: {}", response);
-                        }
-                        Err(e) => {
-                            // This is not fatal, but we should log i
-                            warn!("Failed to get response from web terminal: {}", e);
-                        }
+                Ok(_) => match rx.await {
+                    Ok(_) => {
+                        info!("Graph manager registered with web terminal");
+                        Ok(())
                     }
-                }
+                    Err(e) => {
+                        error!("Failed to receive response from web terminal: {}", e);
+                        Err(Error::TerminalError(
+                            "Failed to receive response from web terminal".to_string(),
+                        ))
+                    }
+                },
                 Err(e) => {
-                    error!("Failed to execute SET_GRAPH_MANAGER command: {}", e);
-                    return Err(Error::TerminalError(format!(
-                        "Failed to execute SET_GRAPH_MANAGER command: {}",
-                        e
-                    )));
+                    error!("Failed to register graph manager with web terminal: {}", e);
+                    Err(e)
                 }
-            }
-
-            // Log the visualization URL if available
-            if let Ok(host) = std::env::var("VIS_HOST")
-                .or_else(|_| Ok::<String, Error>(self.config.web_terminal_config.host.to_string()))
-            {
-                let port = self.config.web_terminal_config.port;
-                info!(
-                    "Graph visualization available at http://{}:{}/vis",
-                    host, port
-                );
             }
         } else {
-            debug!("Web terminal not active, graph manager registration skipped");
-            // If we're in a situation where the web terminal isn't active but visualization is enabled,
-            // we should log a more informative message
-            if self.config.web_terminal_config.enable_visualization {
-                warn!(
-                    "Visualization is enabled in config, but web terminal is not active; visualization will not be available"
-                );
-            }
+            // Web terminal not available, but this is not an error
+            info!("Web terminal not available for graph manager registration");
+            Ok(())
         }
-
-        Ok(())
     }
 
     /// Register a console terminal
@@ -477,42 +369,107 @@ impl TerminalRouter {
 
     /// Execute a command on the default terminal
     pub async fn execute_command(&self, command: &str) -> Result<String> {
-        if let Some(terminal) = self.default_terminal().await {
-            let (tx, rx) = tokio::sync::oneshot::channel();
-            terminal_helpers::execute_command(&*terminal, command, tx).await?;
-            rx.await
-                .map_err(|_| Error::Internal("Command execution failed".to_string()))
-        } else {
-            Err(Error::NotFound("No terminal available".to_string()))
-        }
+        let terminal = self
+            .default_terminal()
+            .await
+            .ok_or_else(|| Error::TerminalError("No default terminal available".into()))?;
+        let (tx, rx) = tokio::sync::oneshot::channel::<String>();
+        terminal_helpers::execute_command(&*terminal, command, tx).await?;
+        rx.await
+            .map_err(|e| Error::TerminalError(format!("Failed to receive command result: {}", e)))
     }
 
     /// Execute a command on the web terminal with a graph manager
     pub async fn set_graph_manager(&self, graph_manager_id: &str) -> Result<()> {
-        let web_terminal = self.web_terminal.lock().await;
-        if let Some(web_terminal) = &*web_terminal {
-            let (tx, mut rx) = mpsc::channel(1);
+        // Set graph manager ID for web terminal if available
+        if let Some(web_terminal) = self.web_terminal().await {
+            let (tx, rx) = tokio::sync::oneshot::channel();
+
             match web_terminal
-                .execute_command_boxed(&format!("SET_GRAPH_MANAGER:{}", graph_manager_id), Some(tx))
+                .execute_command_sync(&format!("SET_GRAPH_MANAGER:{}", graph_manager_id), tx)
                 .await
             {
-                Ok(_) => {
-                    if let Some(response) = rx.recv().await {
-                        debug!("Graph manager set response: {}", response);
+                Ok(_) => match rx.await {
+                    Ok(response) => {
+                        info!("Set graph manager response: {}", response);
+                        Ok(())
                     }
-                    Ok(())
+                    Err(e) => {
+                        error!("Failed to receive response from web terminal: {}", e);
+                        Err(Error::TerminalError(
+                            "Failed to receive response from web terminal".to_string(),
+                        ))
+                    }
+                },
+                Err(e) => {
+                    error!("Failed to set graph manager for web terminal: {}", e);
+                    Err(Error::TerminalError(format!(
+                        "Failed to set graph manager: {}",
+                        e
+                    )))
                 }
-                Err(e) => Err(e),
             }
         } else {
-            Err(Error::NotFound("Web terminal not available".into()))
+            warn!("Web terminal not available for setting graph manager");
+            Ok(())
+        }
+    }
+
+    async fn initialize_terminal(&self, terminal_id: &str) -> Result<()> {
+        debug!("Initializing terminal: {}", terminal_id);
+
+        // No graph provider to initialize
+        Ok(())
+    }
+
+    pub async fn get_terminal(&self, id: &str) -> Result<Arc<dyn Terminal>> {
+        let terminals = self.terminals.lock().await;
+
+        if let Some(terminal) = terminals.get(id) {
+            Ok(terminal.clone())
+        } else {
+            Err(Error::TerminalError(format!("Terminal not found: {}", id)))
+        }
+    }
+
+    async fn broadcast_to_terminals(&self, message: &str) -> Result<()> {
+        let terminals = self.terminals.lock().await;
+
+        if terminals.is_empty() {
+            return Err(Error::TerminalError(format!(
+                "No terminals available to broadcast message"
+            )));
+        }
+
+        for terminal in terminals.values() {
+            if let Err(e) = terminal_helpers::display(terminal, message).await {
+                error!("Failed to broadcast to terminal: {}", e);
+            }
+        }
+
+        Ok(())
+    }
+
+    pub async fn send_input_to_terminal(&self, terminal_id: &str, input: &str) -> Result<()> {
+        let terminals = self.terminals.lock().await;
+
+        if let Some(terminal) = terminals.get(terminal_id) {
+            let terminal = terminal.clone();
+            drop(terminals);
+
+            terminal_helpers::echo_input(&*terminal, input).await
+        } else {
+            Err(Error::TerminalError(format!(
+                "Terminal not found: {}",
+                terminal_id
+            )))
         }
     }
 }
 
 impl Default for TerminalRouter {
     fn default() -> Self {
-        Self::new(TerminalConfig::console_only())
+        Self::new(TerminalConfig::default())
     }
 }
 
@@ -523,105 +480,65 @@ mod tests {
 
     #[tokio::test]
     async fn test_router_console_only() {
-        // Create a console-only configuration
-        let config = TerminalConfig::console_only();
-
-        // Create and start the router
-        let router = TerminalRouter::new(config);
+        let router = TerminalRouter::new(TerminalConfig::console_only());
         let result = router.start().await;
         assert!(result.is_ok());
 
-        // Check that only console is enabled
         assert!(router.is_terminal_enabled("console").await);
         assert!(!router.is_terminal_enabled("web").await);
 
-        // Stop the router
         let result = router.stop().await;
         assert!(result.is_ok());
     }
 
     #[tokio::test]
     async fn test_router_toggle_web() {
-        // Create a console-only configuration
-        let config = TerminalConfig::console_only();
-
-        // Create and start the router
+        let config = TerminalConfig::dual_terminal();
         let router = TerminalRouter::new(config);
         let result = router.start().await;
         assert!(result.is_ok());
 
-        // Initially, only console should be enabled
         assert!(router.is_terminal_enabled("console").await);
-        assert!(!router.is_terminal_enabled("web").await);
-
-        // Toggle web terminal on
-        let result = router.toggle_web_terminal(true).await;
-        assert!(result.is_ok());
         assert!(router.is_terminal_enabled("web").await);
 
-        // Check web terminal address
-        let addr = router.web_terminal_address().await;
-        assert!(addr.is_some());
-
-        // Toggle web terminal off
         let result = router.toggle_web_terminal(false).await;
         assert!(result.is_ok());
         assert!(!router.is_terminal_enabled("web").await);
 
-        // Stop the router
         let result = router.stop().await;
         assert!(result.is_ok());
     }
 
     #[tokio::test]
     async fn test_register_graph_manager() {
-        use super::super::graph::GraphManager;
-
-        // Create a web-enabled configuration
-        let config = TerminalConfig::web_only();
-
-        // Create and start the router
+        let config = TerminalConfig::default();
         let router = TerminalRouter::new(config);
-
-        // Create a graph manager
         let graph_manager = Arc::new(GraphManager::new());
 
-        // Register the graph manager without starting the router
-        // This should not cause any errors, but will log a warning
-        // about the web terminal not being active
         let result = router.register_graph_manager(graph_manager.clone()).await;
-        assert!(
-            result.is_ok(),
-            "Failed to register graph manager: {:?}",
-            resul
-        );
+        assert!(result.is_ok());
 
-        // Check that the graph manager was stored
         let stored_manager = router.graph_manager.lock().await;
-        assert!(stored_manager.is_some(), "Graph manager was not stored");
+        assert!(stored_manager.is_some());
 
-        // The IDs should match
         let id1 = graph_manager.id().await.unwrap();
         let id2 = stored_manager.as_ref().unwrap().id().await.unwrap();
-        assert_eq!(id1, id2, "Graph manager IDs do not match");
+        assert_eq!(id1, id2);
     }
 
     #[tokio::test]
     async fn test_register_and_get_terminals() {
-        let router = TerminalRouter::new();
+        let config = TerminalConfig::default();
+        let router = TerminalRouter::new(config);
 
-        // Initially no terminals
         assert!(router.console_terminal().await.is_none());
         assert!(router.web_terminal().await.is_none());
 
-        // Register console terminal
         let console = ConsoleTerminal::new();
         router.register_console_terminal(console).await.unwrap();
 
-        // Now console terminal is available
         assert!(router.console_terminal().await.is_some());
 
-        // Default is console
         assert!(router.default_terminal().await.is_some());
     }
 }

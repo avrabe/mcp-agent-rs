@@ -22,7 +22,7 @@ pub mod web;
 
 use crate::error::{Error, Result};
 use crate::mcp::agent::Agent;
-use crate::terminal::graph::providers::GraphDataProvider;
+use crate::terminal::graph::providers::{AsyncGraphDataProvider, GraphDataProvider};
 use crate::workflow::engine::WorkflowEngine;
 use async_trait::async_trait;
 use std::sync::Arc;
@@ -83,7 +83,8 @@ pub trait Terminal: Send + Sync + fmt::Debug {
     ) -> Box<dyn std::future::Future<Output = Result<()>> + Send + Unpin>;
 }
 
-/// Trait with async methods for terminal operations
+/// Async terminal trait with full async methods
+#[async_trait]
 pub trait AsyncTerminal: Send + Sync + fmt::Debug {
     /// Return the terminal's unique identifier
     async fn id(&self) -> Result<String>;
@@ -111,16 +112,16 @@ pub trait TerminalExt: AsyncTerminal {
 
 impl<T: AsyncTerminal + 'static> Terminal for T {
     fn id_sync(&self) -> Box<dyn std::future::Future<Output = Result<String>> + Send + Unpin> {
-        Box::new(async move { self.id().await })
+        Box::new(Box::pin(async move { self.id().await }))
     }
 
     fn start_sync(&mut self) -> Box<dyn std::future::Future<Output = Result<()>> + Send + Unpin> {
         let fut = self.start();
-        Box::new(fut)
+        Box::new(Box::pin(fut))
     }
 
     fn stop_sync(&self) -> Box<dyn std::future::Future<Output = Result<()>> + Send + Unpin> {
-        Box::new(async move { self.stop().await })
+        Box::new(Box::pin(async move { self.stop().await }))
     }
 
     fn display_sync(
@@ -128,7 +129,7 @@ impl<T: AsyncTerminal + 'static> Terminal for T {
         output: &str,
     ) -> Box<dyn std::future::Future<Output = Result<()>> + Send + Unpin> {
         let output = output.to_string();
-        Box::new(async move { self.display(&output).await })
+        Box::new(Box::pin(async move { self.display(&output).await }))
     }
 
     fn echo_input_sync(
@@ -136,7 +137,7 @@ impl<T: AsyncTerminal + 'static> Terminal for T {
         input: &str,
     ) -> Box<dyn std::future::Future<Output = Result<()>> + Send + Unpin> {
         let input = input.to_string();
-        Box::new(async move { self.echo_input(&input).await })
+        Box::new(Box::pin(async move { self.echo_input(&input).await }))
     }
 
     fn execute_command_sync(
@@ -145,7 +146,9 @@ impl<T: AsyncTerminal + 'static> Terminal for T {
         tx: oneshot::Sender<String>,
     ) -> Box<dyn std::future::Future<Output = Result<()>> + Send + Unpin> {
         let command = command.to_string();
-        Box::new(async move { self.execute_command(&command, tx).await })
+        Box::new(Box::pin(
+            async move { self.execute_command(&command, tx).await },
+        ))
     }
 }
 
@@ -279,7 +282,7 @@ pub async fn initialize_visualization(
 
         // Call setup_tracking on the Arc-wrapped provider
         match workflow_provider
-            .setup_tracking(graph_manager.clone())
+            .setup_tracking_boxed(graph_manager.clone())
             .await
         {
             Ok(_) => debug!("Workflow provider setup tracking successfully"),
@@ -296,7 +299,10 @@ pub async fn initialize_visualization(
         }
 
         // Call setup_tracking on the Arc-wrapped provider
-        match agent_provider.setup_tracking(graph_manager.clone()).await {
+        match agent_provider
+            .setup_tracking_boxed(graph_manager.clone())
+            .await
+        {
             Ok(_) => debug!("Agent provider setup tracking successfully"),
             Err(e) => error!("Failed to setup tracking for agent provider: {}", e),
         }

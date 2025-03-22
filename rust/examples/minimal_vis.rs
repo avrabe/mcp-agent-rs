@@ -14,7 +14,7 @@ fn main() {
     println!("2. Create a graph manager to track workflow visualizations");
     println!("3. Set up a sample workflow with tasks and dependencies");
     println!("4. Simulate task execution with status updates");
-    println!("");
+    println!();
     println!(
         "For now, this is a placeholder until the WebTerminal implementation issues are resolved."
     );

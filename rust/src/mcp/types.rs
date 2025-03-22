@@ -427,6 +427,117 @@ impl JsonRpcNotification {
     }
 }
 
+/// JSON-RPC 2.0 batch request for MCP protocol
+///
+/// According to the JSON-RPC 2.0 specification, a batch request is an array of
+/// request objects. Each request in the batch will be processed independently.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JsonRpcBatchRequest(pub Vec<JsonRpcRequest>);
+
+impl Default for JsonRpcBatchRequest {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl JsonRpcBatchRequest {
+    /// Create a new empty batch request
+    pub fn new() -> Self {
+        Self(Vec::new())
+    }
+
+    /// Create a batch request from a vector of requests
+    pub fn from_requests(requests: Vec<JsonRpcRequest>) -> Self {
+        Self(requests)
+    }
+
+    /// Add a request to the batch
+    pub fn add_request(&mut self, request: JsonRpcRequest) {
+        self.0.push(request);
+    }
+
+    /// Get the number of requests in the batch
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    /// Check if the batch is empty
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// Serialize the batch request to JSON bytes
+    pub fn to_bytes(&self) -> McpResult<Vec<u8>> {
+        serde_json::to_vec(&self.0).map_err(|e| {
+            McpError::Serialization(format!("Failed to serialize batch request: {}", e))
+        })
+    }
+
+    /// Deserialize from JSON bytes
+    pub fn from_bytes(bytes: &[u8]) -> McpResult<Self> {
+        let requests = serde_json::from_slice::<Vec<JsonRpcRequest>>(bytes).map_err(|e| {
+            McpError::Deserialization(format!("Failed to deserialize batch request: {}", e))
+        })?;
+        Ok(Self(requests))
+    }
+}
+
+/// JSON-RPC 2.0 batch response for MCP protocol
+///
+/// According to the JSON-RPC 2.0 specification, a batch response is an array of
+/// response objects that correspond to the batch request, in the same order.
+/// The batch response may be empty if all requests in the batch were notifications.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JsonRpcBatchResponse(pub Vec<JsonRpcResponse>);
+
+impl Default for JsonRpcBatchResponse {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl JsonRpcBatchResponse {
+    /// Create a new empty batch response
+    pub fn new() -> Self {
+        Self(Vec::new())
+    }
+
+    /// Create a batch response from a vector of responses
+    pub fn from_responses(responses: Vec<JsonRpcResponse>) -> Self {
+        Self(responses)
+    }
+
+    /// Add a response to the batch
+    pub fn add_response(&mut self, response: JsonRpcResponse) {
+        self.0.push(response);
+    }
+
+    /// Get the number of responses in the batch
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    /// Check if the batch is empty
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// Serialize the batch response to JSON bytes
+    pub fn to_bytes(&self) -> McpResult<Vec<u8>> {
+        serde_json::to_vec(&self.0).map_err(|e| {
+            McpError::Serialization(format!("Failed to serialize batch response: {}", e))
+        })
+    }
+
+    /// Deserialize from JSON bytes
+    pub fn from_bytes(bytes: &[u8]) -> McpResult<Self> {
+        let responses = serde_json::from_slice::<Vec<JsonRpcResponse>>(bytes).map_err(|e| {
+            McpError::Deserialization(format!("Failed to deserialize batch response: {}", e))
+        })?;
+        Ok(Self(responses))
+    }
+}
+
 /// JSON-RPC 2.0 error object for MCP protocol
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JsonRpcError {
@@ -477,7 +588,7 @@ impl JsonRpcError {
     /// Server error (-32000 to -32099)
     pub fn server_error(code: i32, message: &str, data: Option<serde_json::Value>) -> Self {
         assert!(
-            -32099 <= code && code <= -32000,
+            (-32099..=-32000).contains(&code),
             "Server error code must be between -32099 and -32000"
         );
         Self::new(code, message, data)

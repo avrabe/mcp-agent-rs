@@ -15,6 +15,7 @@ use super::models::{
 use super::workflow::WorkflowGraphProvider;
 use crate::error::Error;
 use crate::workflow::engine::WorkflowEngine;
+use crate::workflow::signal::NullSignalHandler;
 
 /// Sprotty action types for frontend communication
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -181,8 +182,9 @@ pub async fn process_sprotty_action(
             // Check if this is a workflow graph
             if graph_id.starts_with("workflow-") {
                 // Get the workflow provider and let it handle this action
-                let workflow_provider =
-                    Arc::new(WorkflowGraphProvider::new(Arc::new(WorkflowEngine::new())));
+                let workflow_provider = Arc::new(WorkflowGraphProvider::new(Arc::new(
+                    WorkflowEngine::new(NullSignalHandler::default()),
+                )));
 
                 if let Some(response) = workflow_provider
                     .handle_sprotty_action(&action, graph_id, graph_manager.clone())
@@ -236,8 +238,9 @@ pub async fn process_sprotty_action(
                 // Check if this is a workflow graph
                 if graph_id.starts_with("workflow-") {
                     // Get the workflow provider and let it handle this action
-                    let workflow_provider =
-                        Arc::new(WorkflowGraphProvider::new(Arc::new(WorkflowEngine::new())));
+                    let workflow_provider = Arc::new(WorkflowGraphProvider::new(Arc::new(
+                        WorkflowEngine::new(NullSignalHandler::default()),
+                    )));
 
                     if let Some(response) = workflow_provider
                         .handle_sprotty_action(&action, graph_id, graph_manager.clone())
@@ -263,8 +266,9 @@ pub async fn process_sprotty_action(
                     // Check if this is a workflow graph
                     if graph_id.starts_with("workflow-") {
                         // Get the workflow provider and let it handle this action
-                        let workflow_provider =
-                            Arc::new(WorkflowGraphProvider::new(Arc::new(WorkflowEngine::new())));
+                        let workflow_provider = Arc::new(WorkflowGraphProvider::new(Arc::new(
+                            WorkflowEngine::new(NullSignalHandler::default()),
+                        )));
 
                         if let Some(response) = workflow_provider
                             .handle_sprotty_action(&action, graph_id, graph_manager.clone())
@@ -297,8 +301,9 @@ pub async fn process_sprotty_action(
                     // Check if this is a workflow graph
                     if graph_id.starts_with("workflow-") {
                         // Get the workflow provider and let it handle this action
-                        let workflow_provider =
-                            Arc::new(WorkflowGraphProvider::new(Arc::new(WorkflowEngine::new())));
+                        let workflow_provider = Arc::new(WorkflowGraphProvider::new(Arc::new(
+                            WorkflowEngine::new(NullSignalHandler::default()),
+                        )));
 
                         if let Some(response) = workflow_provider
                             .handle_sprotty_action(&action, graph_id, graph_manager.clone())

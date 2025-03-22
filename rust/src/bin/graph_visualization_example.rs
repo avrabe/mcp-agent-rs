@@ -17,23 +17,26 @@ use {
     serde::{Deserialize, Serialize},
     std::collections::HashMap,
     std::fmt,
-    std::sync::Arc,
+    std::sync::{Arc, RwLock},
     std::time::Duration,
-    tokio::sync::{mpsc, RwLock},
+    tokio::sync::mpsc,
     tokio::time::sleep,
     tracing::{debug, error, info},
     uuid::Uuid,
 };
 
 // Custom error type for the example
+#[cfg(feature = "terminal-web")]
 #[derive(Debug)]
 pub enum Error {
     TerminalError(String),
     WebSocketError(String),
 }
 
+#[cfg(feature = "terminal-web")]
 impl std::error::Error for Error {}
 
+#[cfg(feature = "terminal-web")]
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -43,8 +46,10 @@ impl fmt::Display for Error {
     }
 }
 
+#[cfg(feature = "terminal-web")]
 pub type Result<T> = std::result::Result<T, Error>;
 
+#[cfg(feature = "terminal-web")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Graph {
     pub id: String,
@@ -55,6 +60,7 @@ pub struct Graph {
     pub properties: HashMap<String, String>,
 }
 
+#[cfg(feature = "terminal-web")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GraphNode {
     pub id: String,
@@ -64,6 +70,7 @@ pub struct GraphNode {
     pub properties: HashMap<String, String>,
 }
 
+#[cfg(feature = "terminal-web")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GraphEdge {
     pub id: String,
@@ -73,6 +80,7 @@ pub struct GraphEdge {
     pub properties: HashMap<String, String>,
 }
 
+#[cfg(feature = "terminal-web")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GraphUpdate {
     pub graph_id: String,
@@ -82,6 +90,7 @@ pub struct GraphUpdate {
     pub edge: Option<GraphEdge>,
 }
 
+#[cfg(feature = "terminal-web")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub enum GraphUpdateType {
@@ -91,11 +100,13 @@ pub enum GraphUpdateType {
     EdgeAdded,
 }
 
+#[cfg(feature = "terminal-web")]
 pub struct GraphManager {
     graphs: RwLock<HashMap<String, Graph>>,
     update_channels: RwLock<Vec<mpsc::Sender<GraphUpdate>>>,
 }
 
+#[cfg(feature = "terminal-web")]
 impl GraphManager {
     pub fn new() -> Self {
         Self {

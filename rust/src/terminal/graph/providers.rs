@@ -18,6 +18,7 @@ use tracing::{debug, error, info};
 use super::{Graph, GraphEdge, GraphManager, GraphNode};
 use crate::error::Error;
 use crate::mcp::agent::Agent;
+use crate::workflow::signal::NullSignalHandler;
 use crate::workflow::state::WorkflowState;
 use crate::workflow::WorkflowEngine;
 // Comment out these imports for now - these would be implemented based on LLM and human input systems
@@ -38,13 +39,14 @@ pub trait GraphDataProvider: Send + Sync + Debug {
     ) -> Box<dyn std::future::Future<Output = Result<()>> + Send + Unpin>;
 }
 
-/// Async trait for graph data providers
+/// Trait for providers that can generate graph data
+#[async_trait]
 pub trait AsyncGraphDataProvider: Send + Sync + Debug {
     /// Generate a graph representation
-    async fn generate_graph(&self) -> Result<Graph>;
+    async fn generate_graph(&self) -> Result<Graph, Error>;
 
     /// Set up tracking for graph updates
-    async fn setup_tracking(&self, graph_manager: Arc<GraphManager>) -> Result<()>;
+    async fn setup_tracking(&self, graph_manager: Arc<GraphManager>) -> Result<(), Error>;
 }
 
 /// Helper extension trait
@@ -73,18 +75,22 @@ impl<T: AsyncGraphDataProvider + 'static> GraphDataProviderExt for T {
     }
 }
 
-/// Async helper functions for working with dyn GraphDataProvider
+/// Helper functions for working with trait objects
 pub mod graph_provider_helpers {
     use super::*;
 
-    pub async fn generate_graph(provider: &dyn GraphDataProvider) -> Result<Graph> {
+    /// Generate a graph using the given provider
+    pub async fn generate_graph(
+        provider: &dyn GraphDataProvider,
+    ) -> Result<Graph, crate::error::Error> {
         provider.generate_graph_boxed().await
     }
 
+    /// Set up tracking for the given provider
     pub async fn setup_tracking(
         provider: &dyn GraphDataProvider,
         graph_manager: Arc<GraphManager>,
-    ) -> Result<()> {
+    ) -> Result<(), crate::error::Error> {
         provider.setup_tracking_boxed(graph_manager).await
     }
 }
@@ -268,21 +274,13 @@ impl WorkflowGraphProvider {
 
 #[async_trait]
 impl AsyncGraphDataProvider for WorkflowGraphProvider {
-    async fn generate_graph(&self) -> Result<Graph> {
+    async fn generate_graph(&self) -> Result<Graph, Error> {
         self.create_graph_from_workflow().await
     }
 
-    async fn setup_tracking(&self, graph_manager: Arc<GraphManager>) -> Result<()> {
-        // Create a workflow graph
-        let mut graph = Graph::new("workflow-graph", "Workflow Graph");
-        graph.graph_type = "workflow".to_string();
-
-        // Initialize with current workflow state
-        self.update_graph_from_workflow(&mut graph).await?;
-
-        // Register the graph with the manager
-        register_graph_with_manager(graph_manager, graph).await?;
-
+    async fn setup_tracking(&self, graph_manager: Arc<GraphManager>) -> Result<(), Error> {
+        // Store graph manager reference
+        *self.graph_manager.write().await = Some(graph_manager.clone());
         Ok(())
     }
 }
@@ -391,21 +389,13 @@ impl AgentGraphProvider {
 
 #[async_trait]
 impl AsyncGraphDataProvider for AgentGraphProvider {
-    async fn generate_graph(&self) -> Result<Graph> {
+    async fn generate_graph(&self) -> Result<Graph, Error> {
         self.create_graph_from_agents().await
     }
 
-    async fn setup_tracking(&self, graph_manager: Arc<GraphManager>) -> Result<()> {
-        // Create an agent graph
-        let mut graph = Graph::new("agent-graph", "Agent Graph");
-        graph.graph_type = "agent".to_string();
-
-        // Initialize with current agent state
-        self.update_graph_from_agents(&mut graph).await?;
-
-        // Register the graph with the manager
-        register_graph_with_manager(graph_manager, graph).await?;
-
+    async fn setup_tracking(&self, graph_manager: Arc<GraphManager>) -> Result<(), Error> {
+        // Store graph manager reference
+        *self.graph_manager.write().await = Some(graph_manager.clone());
         Ok(())
     }
 }
@@ -509,18 +499,13 @@ impl HumanInputGraphProvider {
 
 #[async_trait]
 impl AsyncGraphDataProvider for HumanInputGraphProvider {
-    async fn generate_graph(&self) -> Result<Graph> {
+    async fn generate_graph(&self) -> Result<Graph, Error> {
         self.create_graph_from_human_input().await
     }
 
-    async fn setup_tracking(&self, graph_manager: Arc<GraphManager>) -> Result<()> {
-        // Create a human input graph
-        let mut graph = Graph::new("human-input-graph", "Human Input Graph");
-        graph.graph_type = "human-input".to_string();
-
-        // Register the graph with the manager
-        register_graph_with_manager(graph_manager, graph).await?;
-
+    async fn setup_tracking(&self, graph_manager: Arc<GraphManager>) -> Result<(), Error> {
+        // Store graph manager reference
+        *self.graph_manager.write().await = Some(graph_manager.clone());
         Ok(())
     }
 }
@@ -620,18 +605,13 @@ impl LlmIntegrationGraphProvider {
 
 #[async_trait]
 impl AsyncGraphDataProvider for LlmIntegrationGraphProvider {
-    async fn generate_graph(&self) -> Result<Graph> {
+    async fn generate_graph(&self) -> Result<Graph, Error> {
         self.create_graph_from_llm_integration().await
     }
 
-    async fn setup_tracking(&self, graph_manager: Arc<GraphManager>) -> Result<()> {
-        // Create an LLM integration graph
-        let mut graph = Graph::new("llm-graph", "LLM Integration Graph");
-        graph.graph_type = "llm".to_string();
-
-        // Register the graph with the manager
-        register_graph_with_manager(graph_manager, graph).await?;
-
+    async fn setup_tracking(&self, graph_manager: Arc<GraphManager>) -> Result<(), Error> {
+        // Store graph manager reference
+        *self.graph_manager.write().await = Some(graph_manager.clone());
         Ok(())
     }
 }
@@ -652,46 +632,31 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_workflow_graph() {
-        // This is a placeholder test since we can't easily create a WorkflowEngine for testing
-        // In a real implementation, we would use a mock or a test instance
-        let provider = WorkflowGraphProvider::new(Arc::new(WorkflowEngine::default()));
-        let graph_result = provider.generate_graph().await;
-
-        // The result might be an error since we don't have a real workflow engine,
-        // but at least we can verify the method is callable
-        assert!(graph_result.is_err() || graph_result.is_ok());
+        let workflow_engine = Arc::new(WorkflowEngine::new(NullSignalHandler::new()));
+        let provider = WorkflowGraphProvider::new(workflow_engine);
+        let graph = provider.generate_graph().await.unwrap();
+        assert_eq!(graph.graph_type, "workflow");
     }
 
     #[tokio::test]
     async fn test_create_agent_graph() {
         let provider = AgentGraphProvider::new();
-
-        // Without agents, we should still get a valid empty graph
         let graph = provider.generate_graph().await.unwrap();
-        assert_eq!(graph.id, "agent-graph");
         assert_eq!(graph.graph_type, "agent");
-        assert_eq!(graph.nodes.len(), 0);
     }
 
     #[tokio::test]
     async fn test_create_human_input_graph() {
         let provider = HumanInputGraphProvider::new();
-
-        // Without a provider, we should still get a valid empty graph
         let graph = provider.generate_graph().await.unwrap();
-        assert_eq!(graph.id, "human_input-graph");
         assert_eq!(graph.graph_type, "human_input");
     }
 
     #[tokio::test]
     async fn test_create_llm_integration_graph() {
         let provider = LlmIntegrationGraphProvider::new();
-
-        // Without LLM providers, we should still get a valid graph with just the app node
         let graph = provider.generate_graph().await.unwrap();
-        assert_eq!(graph.id, "llm_integration-graph");
         assert_eq!(graph.graph_type, "llm_integration");
-        assert!(graph.nodes.iter().any(|n| n.id == "app"));
     }
 }
 

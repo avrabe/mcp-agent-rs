@@ -8,9 +8,9 @@ use tracing::{error, info, warn};
 
 use mcp_agent::llm::types::LlmClient;
 use mcp_agent::telemetry::{init_telemetry, TelemetryConfig};
+use mcp_agent::workflow::signal::DefaultSignalHandler;
 use mcp_agent::workflow::{
-    execute_workflow, task, AsyncSignalHandler, DefaultSignalHandler, Workflow, WorkflowEngine,
-    WorkflowResult, WorkflowSignal, WorkflowState,
+    execute_workflow, task, Workflow, WorkflowEngine, WorkflowResult, WorkflowSignal, WorkflowState,
 };
 use mcp_agent::{Completion, CompletionRequest, LlmConfig, LlmMessage as Message, MessageRole};
 
@@ -400,6 +400,12 @@ impl OrchestratorWorkflow {
 pub struct MockLlmClient {
     config: LlmConfig,
     responses: HashMap<String, String>,
+}
+
+impl Default for MockLlmClient {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl MockLlmClient {

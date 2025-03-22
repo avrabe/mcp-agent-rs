@@ -5,7 +5,7 @@ This document outlines the requirements that still need to be implemented, based
 ## Protocol Implementation
 
 1. **REQ-023: WebSocket/HTTP Transport** - ✅ Implemented WebSocket and HTTP transport layers for message exchange with connection management and error handling.
-2. **REQ-024: JSON-RPC Batch Processing** - Add support for batch requests and responses per JSON-RPC 2.0 specification to improve throughput and reduce latency.
+2. **REQ-024: JSON-RPC Batch Processing** - ✅ Implemented support for batch requests and responses per JSON-RPC 2.0 specification to improve throughput and reduce latency.
 3. **REQ-025: Authentication and Security** - Implement authentication mechanisms (API keys, OAuth, JWT) and transport-level encryption.
 
 ## Quality Assurance
@@ -34,16 +34,58 @@ This document outlines the requirements that still need to be implemented, based
 
 ## Implementation Plan
 
-### Next Priority: JSON-RPC Batch Processing (REQ-024)
+### Next Priority: Authentication and Security (REQ-025)
 
-The JSON-RPC 2.0 specification includes support for batch processing, which allows multiple requests to be sent in a single message. This is important for improving throughput and reducing latency for applications that need to make multiple API calls.
+Authentication and security are critical for production use of the MCP protocol. We need to implement:
+
+- Authentication mechanisms (API keys, OAuth, JWT)
+- Transport-level encryption (TLS)
+- Authorization and access control
 
 #### Tasks:
 
-- [ ] Review the JSON-RPC 2.0 specification for batch processing requirements
-- [ ] Design the batch processing interface
-- [ ] Implement batch request handling
-- [ ] Implement batch response handling
-- [ ] Add error handling for batch requests
-- [ ] Write tests for batch processing
-- [ ] Document the batch processing API
+- [ ] Design the authentication and security architecture
+- [ ] Implement API key authentication for HTTP transport
+- [ ] Implement JWT authentication for WebSocket transport
+- [ ] Add TLS support for both HTTP and WebSocket transports
+- [ ] Implement authorization and access control mechanisms
+- [ ] Write tests for security features
+- [ ] Document the security features and configuration options
+
+## Completed Implementations
+
+### JSON-RPC Batch Processing (REQ-024)
+
+The JSON-RPC 2.0 specification includes support for batch processing, which allows multiple requests to be sent in a single message. This implementation improves throughput and reduces latency for applications that need to make multiple API calls.
+
+#### Features Implemented:
+
+1. **Batch Request/Response Types**
+
+   - Added `JsonRpcBatchRequest` and `JsonRpcBatchResponse` types
+   - Implemented serialization/deserialization for batch messages
+   - Added utility methods for batch operations
+
+2. **JSON-RPC Handler Support**
+
+   - Added `handle_batch_request` method to process multiple requests concurrently
+   - Enhanced `process_json_message` to detect and handle batch requests
+   - Implemented proper error handling for batch operations
+
+3. **Transport Layer Support**
+
+   - Extended the `AsyncTransport` trait with batch operation methods
+   - Updated WebSocket and HTTP transports to support batch operations
+   - Added dedicated batch request endpoints
+
+4. **Performance Testing**
+   - Created benchmarks to compare individual vs. batch request throughput
+   - Tested with varying batch sizes (1, 5, 10, 25, 50, 100 requests)
+   - Added mixed workload testing with different request types
+
+#### Performance Benefits:
+
+- **Reduced Network Overhead**: Batch requests significantly reduce TCP connection overhead
+- **Improved Concurrency**: Multiple requests are processed in parallel
+- **Lower Latency**: Overall response time for multiple operations is reduced
+- **Better Throughput**: More requests can be processed per second

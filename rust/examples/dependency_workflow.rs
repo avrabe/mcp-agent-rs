@@ -119,7 +119,7 @@ impl DependencyWorkflow {
 
         // Create execution status map
         let mut execution_status = HashMap::new();
-        for (id, _) in &tasks {
+        for id in tasks.keys() {
             execution_status.insert(id.clone(), TaskStatus::Pending);
         }
 

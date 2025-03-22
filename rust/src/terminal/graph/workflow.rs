@@ -397,7 +397,7 @@ fn create_workflow_graph(
         serde_json::json!(workflow_id.to_string()),
     );
     properties.insert(
-        "layout",
+        "layout".to_string(),
         serde_json::json!({
             "algorithm": "layered",
             "direction": "DOWN"
@@ -424,7 +424,6 @@ impl Clone for WorkflowGraphProvider {
     }
 }
 
-#[async_trait]
 impl GraphDataProvider for WorkflowGraphProvider {
     fn name(&self) -> &str {
         &self.name
@@ -434,7 +433,26 @@ impl GraphDataProvider for WorkflowGraphProvider {
         "workflow"
     }
 
-    async fn generate_graph(&self) -> Result<Graph, Error> {
+    fn generate_graph_boxed(
+        &self,
+    ) -> Box<dyn std::future::Future<Output = std::result::Result<Graph, Error>> + Send + Unpin>
+    {
+        Box::new(Box::pin(async move { self.generate_graph().await }))
+    }
+
+    fn setup_tracking_boxed(
+        &self,
+        graph_manager: Arc<GraphManager>,
+    ) -> Box<dyn std::future::Future<Output = std::result::Result<(), Error>> + Send + Unpin> {
+        Box::new(Box::pin(
+            async move { self.setup_tracking(graph_manager).await },
+        ))
+    }
+}
+
+#[async_trait]
+impl AsyncGraphDataProvider for WorkflowGraphProvider {
+    async fn generate_graph(&self) -> std::result::Result<Graph, Error> {
         // Create a basic graph with current workflow state
         let states = self.workflow_states.read().await;
 
@@ -467,7 +485,10 @@ impl GraphDataProvider for WorkflowGraphProvider {
         ))
     }
 
-    async fn setup_tracking(&self, graph_manager: Arc<GraphManager>) -> Result<(), Error> {
+    async fn setup_tracking(
+        &self,
+        graph_manager: Arc<GraphManager>,
+    ) -> std::result::Result<(), Error> {
         info!("Setting up workflow graph tracking");
 
         // Subscribe to workflow events and update the graph accordingly

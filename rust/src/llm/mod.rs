@@ -2,7 +2,7 @@
 //!
 //! This module provides integrations with various LLM providers, starting with Ollama.
 
-#[cfg(feature = "ollama")]
+/// Integration with Ollama API for local LLM inference
 pub mod ollama;
 /// Common types for LLM integrations
 pub mod types;

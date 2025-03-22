@@ -74,6 +74,10 @@ pub struct AuthConfig {
     /// Allow anonymous access (no authentication)
     #[serde(default)]
     pub allow_anonymous: bool,
+
+    /// Require authentication for all requests
+    #[serde(default = "default_require_auth")]
+    pub require_authentication: bool,
 }
 
 /// Authentication methods
@@ -90,7 +94,7 @@ pub enum AuthMethod {
 
 impl Default for AuthMethod {
     fn default() -> Self {
-        AuthMethod::Jw
+        AuthMethod::Jwt
     }
 }
 
@@ -126,6 +130,7 @@ impl Default for AuthConfig {
             username: default_username(),
             password: default_password(),
             allow_anonymous: false,
+            require_authentication: default_require_auth(),
         }
     }
 }

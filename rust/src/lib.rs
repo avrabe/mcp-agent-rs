@@ -57,15 +57,11 @@ pub use error::Error;
 pub use utils::error::{McpError, McpResult};
 
 /// Re-export telemetry types and functions for easier access
-pub use telemetry::{alerting, init_telemetry, shutdown_telemetry, span_duration, TelemetryConfig};
-
-/// Re-export alerting system types for easier access
-pub use telemetry::alerts::{
-    Alert, AlertDefinition, AlertOperator, AlertSeverity, AlertingConfig, AlertingSystem,
-    TerminalAlertOptions,
+pub use telemetry::{
+    add_metric, add_metrics, init_telemetry, shutdown_telemetry, span_duration, TelemetryConfig,
 };
 
-// Re-export LLM types for easier access
+/// Re-export LLM types for easier access
 pub use llm::{Completion, CompletionRequest, LlmConfig, Message as LlmMessage, MessageRole};
 
 /// Re-export human input types for easier access

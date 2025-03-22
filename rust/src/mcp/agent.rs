@@ -78,7 +78,7 @@ pub struct Agent {
     /// Active connections manager
     connection_manager: Arc<Mutex<ConnectionManager>>,
     /// Agent configuration
-    config: AgentConfig,
+    _config: AgentConfig,
     /// Message statistics
     stats: Arc<Mutex<AgentStats>>,
 }
@@ -113,7 +113,7 @@ impl Agent {
 
         let agent = Self {
             connection_manager: Arc::new(Mutex::new(ConnectionManager::new())),
-            config,
+            _config: config,
             stats: Arc::new(Mutex::new(AgentStats::default())),
         };
 

@@ -3,10 +3,6 @@
 //! This example demonstrates how to use the graph visualization features.
 //! Run with: cargo run --example visualize_workflow --features terminal-web
 
-use std::net::IpAddr;
-use std::thread::sleep;
-use std::time::Duration;
-
 #[cfg(feature = "terminal-web")]
 use mcp_agent::error::Result;
 #[cfg(feature = "terminal-web")]

@@ -15,7 +15,10 @@ use url::Url;
 use super::{Transport, TransportConfig, TransportFactory};
 use crate::error::{Error, Result};
 #[cfg(feature = "transport-http")]
-use crate::mcp::types::{JsonRpcRequest as Request, JsonRpcResponse as Response, Message};
+use crate::mcp::types::{
+    JsonRpcBatchRequest as BatchRequest, JsonRpcBatchResponse as BatchResponse,
+    JsonRpcRequest as Request, JsonRpcResponse as Response, Message,
+};
 use std::sync::Arc;
 
 /// HTTP transport for MCP protocol
@@ -136,6 +139,59 @@ impl Transport for HttpTransport {
 
         debug!("Request completed successfully");
         Ok(mcp_response)
+    }
+
+    async fn send_batch_request(
+        &self,
+        batch_request: BatchRequest,
+    ) -> Result<BatchResponse, Error> {
+        // Build URL for batch request endpoint
+        let url = self
+            .url
+            .join("/batch")
+            .map_err(|e| Error::Internal(format!("Failed to build batch request URL: {}", e)))?;
+
+        debug!(
+            "Sending batch request with {} items to {}",
+            batch_request.len(),
+            url
+        );
+
+        // Send the batch request
+        let response = self
+            .client
+            .post(url)
+            .json(&batch_request.0) // Send as array (unwrapped) per JSON-RPC spec
+            .send()
+            .await
+            .map_err(|e| Error::Internal(format!("HTTP batch request failed: {}", e)))?;
+
+        // Check response status
+        let status = response.status();
+        if !status.is_success() {
+            let error_text = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "Unknown error".to_string());
+            return Err(Error::Internal(format!(
+                "HTTP batch request failed with status {}: {}",
+                status, error_text
+            )));
+        }
+
+        // Parse response
+        let responses = response
+            .json::<Vec<Response>>()
+            .await
+            .map_err(|e| Error::Internal(format!("Failed to parse batch response JSON: {}", e)))?;
+
+        debug!(
+            "Batch request completed successfully with {} responses",
+            responses.len()
+        );
+
+        // Create batch response from the responses
+        Ok(BatchResponse::from_responses(responses))
     }
 
     async fn close(&self) -> Result<(), Error> {

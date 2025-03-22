@@ -7,7 +7,7 @@ use tracing::info;
 use mcp_agent::telemetry::{init_telemetry, TelemetryConfig};
 use mcp_agent::workflow::signal::DefaultSignalHandler;
 use mcp_agent::workflow::{
-    execute_workflow, task, Workflow, WorkflowEngine, WorkflowResult, WorkflowState,
+    execute_workflow, Workflow, WorkflowEngine, WorkflowResult, WorkflowState,
 };
 
 // Simple workflow definition

@@ -66,9 +66,8 @@ pub struct McpProtocol {
     /// Channel sender for outgoing messages
     /// Used to broadcast messages to all subscribers
     message_tx: Option<broadcast::Sender<Message>>,
-    /// Channel receiver for incoming messages
-    /// Receives messages from the broadcast channel
-    message_rx: Option<broadcast::Receiver<Message>>,
+    /// Channel for receiving Message updates
+    _message_rx: Option<broadcast::Receiver<Message>>,
     /// Map of pending requests awaiting responses
     /// The key is the message ID, and the value is a oneshot channel to deliver the response
     pending_requests: Arc<Mutex<HashMap<String, mpsc::Sender<Message>>>>,
@@ -88,7 +87,7 @@ impl Clone for McpProtocol {
             read_buffer: BytesMut::with_capacity(self.read_buffer.capacity()),
             id_buffer: BytesMut::with_capacity(self.id_buffer.capacity()),
             message_tx: self.message_tx.clone(),
-            message_rx: self.message_tx.as_ref().map(|tx| tx.subscribe()),
+            _message_rx: self.message_tx.as_ref().map(|tx| tx.subscribe()),
             pending_requests: self.pending_requests.clone(),
             request_timeout: self.request_timeout,
         }
@@ -117,7 +116,7 @@ impl McpProtocol {
             read_buffer: BytesMut::with_capacity(1024),
             id_buffer: BytesMut::with_capacity(16),
             message_tx: None,
-            message_rx: None,
+            _message_rx: None,
             pending_requests: Arc::new(Mutex::new(HashMap::new())),
             request_timeout: Duration::from_secs(30),
         };

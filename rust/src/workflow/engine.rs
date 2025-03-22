@@ -77,7 +77,16 @@ impl WorkflowEngine {
 
     /// Get the signal handler
     pub fn signal_handler(&self) -> Arc<dyn SignalHandler> {
-        Arc::clone(&self.signal_handler)
+        self.signal_handler.clone()
+    }
+
+    /// Get current workflow state
+    pub async fn state(&self) -> Result<WorkflowState> {
+        // For visualization purposes, we return a minimal workflow state
+        Ok(WorkflowState::new(
+            Some(format!("Workflow-{}", self.id())),
+            None,
+        ))
     }
 
     /// Execute a task
@@ -96,12 +105,11 @@ impl WorkflowEngine {
         let result = task.execute().await;
 
         // Record metrics
-        let duration = start.elapsed();
         add_metric(
             "workflow_task_duration_ms",
-            duration.as_millis() as f64,
+            start.elapsed().as_millis() as f64,
             &[
-                ("task_name", task_name),
+                ("task_name", task_name.to_string()),
                 ("success", result.is_ok().to_string()),
             ],
         );
@@ -132,7 +140,7 @@ impl WorkflowEngine {
         add_metric("workflow_tasks_success", success_count as f64, &[]);
         add_metric("workflow_tasks_failure", failure_count as f64, &[]);
         add_metric(
-            "workflow_tasks_batch_duration_ms",
+            "workflow_task_group_duration_ms",
             duration.as_millis() as f64,
             &[],
         );
@@ -348,6 +356,15 @@ pub async fn execute_workflow<W: Workflow>(mut workflow: W) -> Result<WorkflowRe
     add_metric(
         "workflow_duration_ms",
         duration.as_millis() as f64,
+        &[
+            ("workflow_type", std::any::type_name::<W>().to_string()),
+            ("status", workflow.state().status.clone()),
+        ],
+    );
+
+    add_metric(
+        "workflow_execution_complete",
+        1.0,
         &[
             ("workflow_type", std::any::type_name::<W>().to_string()),
             ("status", workflow.state().status.clone()),

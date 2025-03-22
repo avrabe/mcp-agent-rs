@@ -39,8 +39,8 @@ use crate::terminal::graph::models::{SprottyGraph, SprottyStatus};
 /// Client ID type for tracking WebSocket connections
 type ClientId = String;
 
-/// Input callback type
-type InputCallback = Box<dyn Fn(String, ClientId) -> Result<()> + Send + Sync>;
+/// Input callback function for web terminal
+type InputCallback = Arc<dyn Fn(String, ClientId) -> Result<()> + Send + Sync>;
 
 /// JWT Claims
 #[derive(Debug, Serialize, Deserialize)]
@@ -51,7 +51,7 @@ struct Claims {
     exp: usize,
 }
 
-/// Server state shared across all connections
+/// Web server state used by the web terminal handlers
 struct WebServerState {
     /// Active client connections
     clients: RwLock<HashMap<ClientId, mpsc::Sender<Message>>>,
@@ -165,7 +165,8 @@ impl WebTerminal {
     where
         F: Fn(String, ClientId) -> Result<()> + Send + Sync + 'static,
     {
-        self.input_callback = Some(Box::new(callback));
+        debug!("Setting input callback for web terminal");
+        self.input_callback = Some(Arc::new(callback));
     }
 
     /// Set the graph manager for visualization
@@ -173,8 +174,9 @@ impl WebTerminal {
         debug!("Setting graph manager for visualization");
         // Store it in the state for websocket handlers if the server is running
         if let Some(state) = &self.state {
-            let input_callback = self.input_callback.clone();
-            *state.input_callback.blocking_lock() = input_callback;
+            if let Some(input_callback) = self.input_callback.clone() {
+                *state.input_callback.blocking_lock() = Some(input_callback);
+            }
 
             // Update the graph manager
             state.graph_manager = Some(graph_manager.clone());
@@ -453,6 +455,7 @@ impl Default for WebTerminal {
     }
 }
 
+#[async_trait::async_trait]
 impl AsyncTerminal for WebTerminal {
     async fn id(&self) -> Result<String> {
         Ok(self.id.clone())
@@ -528,10 +531,12 @@ impl AsyncTerminal for WebTerminal {
 
 /// Generate the terminal HTML with visualization suppor
 fn get_terminal_html(enable_visualization: bool) -> String {
-    r#"<!DOCTYPE html>
-    <html>
+    let mut html = r#"<!DOCTYPE html>
+<html>
     <head>
         <title>MCP Agent Web Terminal</title>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
         <style>
             body { font-family: monospace; background: #222; color: #0f0; margin: 0; padding: 1em; }
             .container { display: flex; flex-direction: column; height: 98vh; }
@@ -712,260 +717,19 @@ fn get_terminal_html(enable_visualization: bool) -> String {
             .graph-info-panel th {
                 color: #afa;
             }
-        </style>"#.to_string() +
-        // Add Sprotty scripts if visualization is enabled
-        (if enable_visualization {
-            r#"
-        <!-- D3.js for visualization basics -->
-        <script src="https://d3js.org/d3.v7.min.js"></script>
-        <!-- Include a simplified Sprotty implementation for visualization -->
-        <script>
-            // Simple Sprotty-like graph visualization library
-            const Sprotty = {
-                // Initialize the visualization
-                init: function(containerId) {
-                    this.container = document.getElementById(containerId);
-                    this.svg = d3.select(this.container)
-                        .append('svg')
-                        .attr('width', '100%')
-                        .attr('height', '100%');
+        </style>"#.to_string();
 
-                    // Add arrow marker for edges
-                    this.svg.append('defs')
-                        .append('marker')
-                        .attr('id', 'arrow')
-                        .attr('viewBox', '0 0 10 10')
-                        .attr('refX', 9)
-                        .attr('refY', 5)
-                        .attr('markerWidth', 6)
-                        .attr('markerHeight', 6)
-                        .attr('orient', 'auto')
-                        .append('path')
-                        .attr('d', 'M 0 0 L 10 5 L 0 10 z')
-                        .attr('fill', '#0f0');
-
-                    // Set up zoom and pan behavior
-                    this.zoom = d3.zoom()
-                        .scaleExtent([0.1, 4])
-                        .on('zoom', (event) => {
-                            this.svg.select('g.diagram')
-                                .attr('transform', event.transform);
-                        });
-
-                    this.svg.call(this.zoom);
-
-                    // Create the main group for all diagram elements
-                    this.diagram = this.svg.append('g')
-                        .attr('class', 'diagram');
-
-                    // Create groups for edges and nodes (edges should be rendered first)
-                    this.edgesGroup = this.diagram.append('g').attr('class', 'edges');
-                    this.nodesGroup = this.diagram.append('g').attr('class', 'nodes');
-
-                    // Initialize empty collections
-                    this.nodes = [];
-                    this.edges = [];
-
-                    // Force simulation for layou
-                    this.simulation = d3.forceSimulation()
-                        .force('link', d3.forceLink().id(d => d.id).distance(100))
-                        .force('charge', d3.forceManyBody().strength(-200))
-                        .force('center', d3.forceCenter(this.container.clientWidth / 2, this.container.clientHeight / 2))
-                        .force('collision', d3.forceCollide(50))
-                        .on('tick', () => this.updatePositions());
-
-                    // Info panel
-                    this.infoPanel = d3.select(this.container)
-                        .append('div')
-                        .attr('class', 'graph-info-panel')
-                        .style('display', 'none');
-
-                    return this;
-                },
-
-                // Set the model
-                setModel: function(model) {
-                    if (!model) return;
-
-                    this.model = model;
-                    this.nodes = [];
-                    this.edges = [];
-
-                    // Process all children
-                    model.children.forEach(child => {
-                        if (child.type === 'node') {
-                            this.nodes.push({
-                                id: child.id,
-                                label: child.label || child.id,
-                                status: child.status || 'default',
-                                nodeType: (child.cssClasses || []).find(c => c.startsWith('type-')),
-                                properties: child.properties || {},
-                                children: child.children || []
-                            });
-                        } else if (child.type === 'edge') {
-                            this.edges.push({
-                                id: child.id,
-                                source: child.source,
-                                target: child.target,
-                                edgeType: (child.cssClasses || []).find(c => c.startsWith('type-')),
-                                properties: child.properties || {}
-                            });
-                        }
-                    });
-
-                    this.render();
-                    this.runSimulation();
-
-                    return this;
-                },
-
-                // Render the model
-                render: function() {
-                    // Render edges
-                    const edgeElements = this.edgesGroup
-                        .selectAll('line.sprotty-edge')
-                        .data(this.edges, d => d.id);
-
-                    edgeElements.exit().remove();
-
-                    const edgeEnter = edgeElements.enter()
-                        .append('line')
-                        .attr('class', d => `sprotty-edge ${d.edgeType || ''}`)
-                        .attr('id', d => d.id)
-                        .on('click', (event, d) => this.showInfo(d));
-
-                    // Render nodes
-                    const nodeElements = this.nodesGroup
-                        .selectAll('g.sprotty-node')
-                        .data(this.nodes, d => d.id);
-
-                    nodeElements.exit().remove();
-
-                    const nodeEnter = nodeElements.enter()
-                        .append('g')
-                        .attr('class', 'sprotty-node-group')
-                        .attr('id', d => `group-${d.id}`);
-
-                    nodeEnter.append('rect')
-                        .attr('class', d => `sprotty-node ${d.nodeType || ''} status-${d.status}`)
-                        .attr('width', 120)
-                        .attr('height', 50)
-                        .attr('x', -60)
-                        .attr('y', -25)
-                        .attr('rx', 5)
-                        .attr('ry', 5)
-                        .on('click', (event, d) => this.showInfo(d));
-
-                    nodeEnter.append('text')
-                        .attr('class', 'sprotty-label')
-                        .attr('text-anchor', 'middle')
-                        .attr('dominant-baseline', 'middle')
-                        .text(d => d.label)
-                        .on('click', (event, d) => this.showInfo(d));
-
-                    return this;
-                },
-
-                // Update positions of elements during simulation
-                updatePositions: function() {
-                    // Update edge positions
-                    this.edgesGroup
-                        .selectAll('line.sprotty-edge')
-                        .attr('x1', d => d.source.x)
-                        .attr('y1', d => d.source.y)
-                        .attr('x2', d => d.target.x)
-                        .attr('y2', d => d.target.y);
-
-                    // Update node positions
-                    this.nodesGroup
-                        .selectAll('g.sprotty-node-group')
-                        .attr('transform', d => `translate(${d.x}, ${d.y})`);
-                },
-
-                // Run the force simulation
-                runSimulation: function() {
-                    this.simulation
-                        .nodes(this.nodes)
-                        .force('link').links(this.edges);
-
-                    this.simulation.alpha(1).restart();
-                },
-
-                // Show information about a node or edge
-                showInfo: function(element) {
-                    // Deselect all elements
-                    this.svg.selectAll('.selected').classed('selected', false);
-
-                    // Select this elemen
-                    if (element.source) { // Edge
-                        this.svg.select(`#${element.id}`).classed('selected', true);
-                    } else { // Node
-                        this.svg.select(`#group-${element.id} rect`).classed('selected', true);
-                    }
-
-                    // Show info panel
-                    let html = '';
-
-                    if (element.source) { // Edge
-                        html = `
-                            <h3>Edge: ${element.id}</h3>
-                            <table>
-                                <tr><th>Source</th><td>${element.source.id || element.source}</td></tr>
-                                <tr><th>Target</th><td>${element.target.id || element.target}</td></tr>
-                                <tr><th>Type</th><td>${element.edgeType?.replace('type-', '') || 'default'}</td></tr>
-                            </table>
-                            <h3>Properties</h3>
-                        `;
-                    } else { // Node
-                        html = `
-                            <h3>Node: ${element.label}</h3>
-                            <table>
-                                <tr><th>ID</th><td>${element.id}</td></tr>
-                                <tr><th>Type</th><td>${element.nodeType?.replace('type-', '') || 'default'}</td></tr>
-                                <tr><th>Status</th><td>${element.status}</td></tr>
-                            </table>
-                            <h3>Properties</h3>
-                        `;
-                    }
-
-                    // Add properties table
-                    html += '<table>';
-                    const props = element.properties || {};
-                    for (const key in props) {
-                        if (props.hasOwnProperty(key)) {
-                            let value = props[key];
-                            // Convert objects to string
-                            if (typeof value === 'object') {
-                                value = JSON.stringify(value);
-                            }
-                            html += `<tr><th>${key}</th><td>${value}</td></tr>`;
-                        }
-                    }
-                    html += '</table>';
-
-                    this.infoPanel.html(html).style('display', 'block');
-                },
-
-                // Hide the info panel
-                hideInfo: function() {
-                    this.infoPanel.style('display', 'none');
-                    this.svg.selectAll('.selected').classed('selected', false);
-                }
-            };
-        </script>"#
-        } else {
-            ""
-        }) +
-        r#"
+    html += r#"
     </head>
     <body>
         <h1>MCP Agent Web Terminal</h1>
         <div class="controls">
-            <button id="clear-btn">Clear</button>"#.to_string() +
+            <button id="clear-btn">Clear</button>"#
+        .to_string();
 
-            // Add visualization controls if enabled
-            (if enable_visualization {
-                r#"
+    // Add visualization controls if enabled
+    if enable_visualization {
+        html += r#"
             <button id="toggle-viz">Show Visualization</button>
             <select id="graph-type">
                 <option value="workflow">Workflow</option>
@@ -974,16 +738,16 @@ fn get_terminal_html(enable_visualization: bool) -> String {
                 <option value="llm_integration">LLM Integration</option>
             </select>
             <button id="reset-zoom">Reset View</button>"#
-            } else {
-                ""
-            }) +
+            .to_string();
+    }
 
-            r#"
-        </div>"# +
+    html += r#"
+        </div>"#
+        .to_string();
 
-        // Add visualization container if enabled
-        (if enable_visualization {
-            r#"
+    // Add visualization container if enabled
+    if enable_visualization {
+        html += r#"
         <div id="visualization" class="visualization">
             <div id="sprotty-container" class="sprotty"></div>
             <div class="visualization-controls" aria-label="Visualization Controls">
@@ -993,11 +757,10 @@ fn get_terminal_html(enable_visualization: bool) -> String {
                 <button id="toggle-help" aria-label="Show Keyboard Shortcuts">?</button>
             </div>
         </div>"#
-        } else {
-            ""
-        }) +
+            .to_string();
+    }
 
-        r#"
+    html += r#"
         <div class="container">
             <div id="terminal"></div>
             <input type="text" id="input" placeholder="Type command here..." />
@@ -1059,11 +822,12 @@ fn get_terminal_html(enable_visualization: bool) -> String {
                         input.value = '';
                     }
                 }
-            });"# +
+            });"#
+        .to_string();
 
-            // Add visualization code if enabled
-            (if enable_visualization {
-                r#"
+    // Add visualization code if enabled
+    if enable_visualization {
+        html += r#"
 
             // Visualization code
             const toggleVizBtn = document.getElementById('toggle-viz');
@@ -1382,18 +1146,15 @@ fn get_terminal_html(enable_visualization: bool) -> String {
                 // Toggle visibility
                 helpPanel.style.display = helpPanel.style.display === 'none' ? 'block' : 'none';
             }
-            "#
-            } else {
-                ""
-            }) +
+            "#.to_string();
+    }
 
-            r#"
-
-            // Connect on page load
-            connect();
+    html += r#"
         </script>
     </body>
-    </html>"#.to_string()
+</html>"#;
+
+    html
 }
 
 /// WebSocket connection handler with state

@@ -313,6 +313,7 @@ impl TransportServer {
         let app = Router::new()
             .route("/message", post(Self::message_handler))
             .route("/request", post(Self::request_handler))
+            .route("/batch", post(Self::batch_handler))
             .route("/health", get(Self::health_handler))
             .with_state(state);
 
@@ -426,6 +427,139 @@ impl TransportServer {
         use axum::http::StatusCode;
 
         (StatusCode::OK, Json(serde_json::json!({"status": "ok"})))
+    }
+
+    /// Batch handler for HTTP requests
+    #[cfg(feature = "transport-http")]
+    async fn batch_handler(
+        axum::extract::State(state): axum::extract::State<Arc<TransportServerState>>,
+        Json(batch_requests): Json<Vec<serde_json::Value>>,
+    ) -> impl IntoResponse {
+        debug!("Received batch request with {} items", batch_requests.len());
+
+        // Process each request in the batch
+        let mut batch_responses = Vec::new();
+        let mut all_notifications = true;
+
+        for request_value in batch_requests {
+            // Parse the request
+            match serde_json::from_value::<JsonRpcRequest>(request_value.clone()) {
+                Ok(request) => {
+                    // Check if it's a notification (no ID)
+                    let is_notification = match &request.id {
+                        serde_json::Value::Null => true,
+                        _ => {
+                            all_notifications = false;
+                            false
+                        }
+                    };
+
+                    if is_notification {
+                        // For notifications, we don't return a response
+                        // Convert request to message and send it for processing
+                        match request.to_message() {
+                            Ok(message) => {
+                                // Process message without waiting for response
+                                let _ = state.message_handler.process_message(message);
+                            }
+                            Err(e) => {
+                                error!("Failed to convert notification to message: {}", e);
+                            }
+                        }
+                    } else {
+                        // For regular requests, process and add response to batch
+                        match request.to_message() {
+                            Ok(message) => {
+                                // Process message and wait for response
+                                let handle = state.message_handler.process_message(message);
+                                match handle.await {
+                                    Ok(Ok(Some(response_message))) => {
+                                        // Convert response message to JSON-RPC response
+                                        match JsonRpcResponse::from_message(&response_message) {
+                                            Ok(response) => {
+                                                batch_responses.push(response);
+                                            }
+                                            Err(e) => {
+                                                error!("Failed to convert message to response: {}", e);
+                                                // Create error response
+                                                let error = JsonRpcError::internal_error(&format!(
+                                                    "Failed to convert message to response: {}",
+                                                    e
+                                                ));
+                                                batch_responses.push(JsonRpcResponse::error(
+                                                    error,
+                                                    request.id.clone(),
+                                                ));
+                                            }
+                                        }
+                                    }
+                                    Ok(Ok(None)) => {
+                                        // No response from handler (should not happen for requests)
+                                        error!("No response from handler for request");
+                                        let error = JsonRpcError::internal_error(
+                                            "No response from handler for request",
+                                        );
+                                        batch_responses.push(JsonRpcResponse::error(
+                                            error,
+                                            request.id.clone(),
+                                        ));
+                                    }
+                                    Ok(Err(e)) => {
+                                        // Error from handler
+                                        error!("Error from handler: {}", e);
+                                        let error = JsonRpcError::internal_error(&format!(
+                                            "Error from handler: {}",
+                                            e
+                                        ));
+                                        batch_responses.push(JsonRpcResponse::error(
+                                            error,
+                                            request.id.clone(),
+                                        ));
+                                    }
+                                    Err(e) => {
+                                        // Error joining task
+                                        error!("Error joining task: {}", e);
+                                        let error = JsonRpcError::internal_error(&format!(
+                                            "Error joining task: {}",
+                                            e
+                                        ));
+                                        batch_responses.push(JsonRpcResponse::error(
+                                            error,
+                                            request.id.clone(),
+                                        ));
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                error!("Failed to convert request to message: {}", e);
+                                let error = JsonRpcError::internal_error(&format!(
+                                    "Failed to convert request to message: {}",
+                                    e
+                                ));
+                                batch_responses.push(JsonRpcResponse::error(
+                                    error,
+                                    request.id.clone(),
+                                ));
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    // Invalid request
+                    error!("Invalid JSON-RPC request: {}", e);
+                    // We can't add a response because we don't have an ID
+                    // Per spec, invalid requests in batch should be ignored
+                }
+            }
+        }
+
+        // If all requests were notifications, return 204 No Content
+        if all_notifications {
+            return (StatusCode::NO_CONTENT, Json(serde_json::Value::Null));
+        }
+
+        // Return batch response
+        (StatusCode::OK, Json(batch_responses))
     }
 
     /// Provide a stub implementation when transport-http is not enabled

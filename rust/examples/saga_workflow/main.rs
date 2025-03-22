@@ -5,10 +5,7 @@ use tracing::{error, info};
 use mcp_agent::workflow::signal::DefaultSignalHandler;
 use mcp_agent::{
     telemetry::{init_telemetry, TelemetryConfig},
-    workflow::{
-        execute_workflow, task, Workflow, WorkflowEngine, WorkflowResult, WorkflowSignal,
-        WorkflowState,
-    },
+    workflow::{task, Workflow, WorkflowEngine, WorkflowResult, WorkflowState},
 };
 
 /// Represents a step in a saga transaction

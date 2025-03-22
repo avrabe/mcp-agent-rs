@@ -3,11 +3,11 @@
 //! This module provides abstractions for different transport mechanisms
 //! that can be used to send and receive MCP protocol messages.
 
-use crate::mcp::types::{JsonRpcRequest as Request, JsonRpcResponse as Response};
-use crate::{
-    error::{Error, Result},
-    mcp::types::Message,
+use crate::mcp::types::{
+    JsonRpcBatchRequest as BatchRequest, JsonRpcBatchResponse as BatchResponse,
+    JsonRpcRequest as Request, JsonRpcResponse as Response,
 };
+use crate::{error::Result, mcp::types::Message};
 use async_trait::async_trait;
 use serde_json;
 use std::sync::Arc;
@@ -19,6 +19,8 @@ pub struct TransportConfig {
     pub url: String,
     /// Additional configuration options
     pub options: serde_json::Value,
+    /// Timeout in seconds for transport operations
+    pub timeout_seconds: u64,
 }
 
 impl TransportConfig {
@@ -27,6 +29,7 @@ impl TransportConfig {
         Self {
             url: url.into(),
             options: serde_json::Value::Object(serde_json::Map::new()),
+            timeout_seconds: 30, // Default 30 seconds timeout
         }
     }
 
@@ -35,6 +38,16 @@ impl TransportConfig {
         Self {
             url: url.into(),
             options,
+            timeout_seconds: 30, // Default 30 seconds timeout
+        }
+    }
+
+    /// Create a new transport config with custom timeout
+    pub fn new_with_timeout(url: impl Into<String>, timeout_seconds: u64) -> Self {
+        Self {
+            url: url.into(),
+            options: serde_json::Value::Object(serde_json::Map::new()),
+            timeout_seconds,
         }
     }
 }
@@ -59,6 +72,12 @@ pub trait Transport: Send + Sync + 'static {
         request: Request,
     ) -> Box<dyn std::future::Future<Output = Result<Response>> + Send + Unpin + '_>;
 
+    /// Send a batch request and wait for batch response (non-async wrapper)
+    fn send_batch_request_boxed(
+        &self,
+        batch_request: BatchRequest,
+    ) -> Box<dyn std::future::Future<Output = Result<BatchResponse>> + Send + Unpin + '_>;
+
     /// Close the transport (non-async wrapper)
     fn close_boxed(&self) -> Box<dyn std::future::Future<Output = Result<()>> + Send + Unpin + '_>;
 }
@@ -71,6 +90,9 @@ pub trait AsyncTransport: Send + Sync + 'static {
 
     /// Send a request and wait for a response
     async fn send_request(&self, request: Request) -> Result<Response>;
+
+    /// Send a batch request and wait for batch response
+    async fn send_batch_request(&self, batch_request: BatchRequest) -> Result<BatchResponse>;
 
     /// Close the transport
     async fn close(&self) -> Result<()>;
@@ -97,6 +119,15 @@ impl<T: AsyncTransport + 'static> Transport for T {
         Box::new(Box::pin(async move { self.send_request(request).await }))
     }
 
+    fn send_batch_request_boxed(
+        &self,
+        batch_request: BatchRequest,
+    ) -> Box<dyn std::future::Future<Output = Result<BatchResponse>> + Send + Unpin + '_> {
+        Box::new(Box::pin(async move {
+            self.send_batch_request(batch_request).await
+        }))
+    }
+
     fn close_boxed(&self) -> Box<dyn std::future::Future<Output = Result<()>> + Send + Unpin + '_> {
         Box::new(Box::pin(async move { self.close().await }))
     }
@@ -120,6 +151,14 @@ pub mod transport_helpers {
     /// Send a request and wait for a response
     pub async fn send_request(transport: &dyn Transport, request: Request) -> Result<Response> {
         transport.send_request_boxed(request).await
+    }
+
+    /// Send a batch request and wait for batch response
+    pub async fn send_batch_request(
+        transport: &dyn Transport,
+        batch_request: BatchRequest,
+    ) -> Result<BatchResponse> {
+        transport.send_batch_request_boxed(batch_request).await
     }
 
     /// Close the transport

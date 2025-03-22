@@ -10,9 +10,9 @@ use mcp_agent::llm::types::{
     Completion, CompletionRequest, LlmClient, LlmConfig, Message, MessageRole,
 };
 use mcp_agent::telemetry::{init_telemetry, TelemetryConfig};
+use mcp_agent::workflow::signal::DefaultSignalHandler;
 use mcp_agent::workflow::{
-    execute_workflow, task, AsyncSignalHandler, DefaultSignalHandler, Workflow, WorkflowEngine,
-    WorkflowResult, WorkflowSignal, WorkflowState,
+    execute_workflow, task, Workflow, WorkflowEngine, WorkflowResult, WorkflowSignal, WorkflowState,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

@@ -8,6 +8,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use log::{debug, error, info};
+use tokio::io::AsyncWriteExt;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::oneshot;
 use tokio::sync::RwLock;
@@ -42,6 +43,7 @@ impl Default for ConsoleTerminal {
     }
 }
 
+#[async_trait::async_trait]
 impl AsyncTerminal for ConsoleTerminal {
     async fn id(&self) -> Result<String> {
         Ok(self.id.clone())

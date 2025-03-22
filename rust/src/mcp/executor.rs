@@ -256,10 +256,10 @@ pub struct AsyncioExecutor {
     pub config: ExecutorConfig,
     /// Tasks
     tasks: Arc<Mutex<HashMap<String, tokio::task::JoinHandle<()>>>>,
-    /// Signals
-    signals: Arc<Mutex<HashMap<String, Signal>>>,
+    /// Signal storage
+    _signals: Arc<Mutex<HashMap<String, Signal>>>,
     /// Signal receivers
-    signal_receivers: Arc<Mutex<HashMap<String, HashSet<String>>>>,
+    _signal_receivers: Arc<Mutex<HashMap<String, HashSet<String>>>>,
 }
 
 impl AsyncioExecutor {
@@ -271,13 +271,13 @@ impl AsyncioExecutor {
         Self {
             config,
             tasks: Arc::new(Mutex::new(HashMap::new())),
-            signals: Arc::new(Mutex::new(HashMap::new())),
-            signal_receivers: Arc::new(Mutex::new(HashMap::new())),
+            _signals: Arc::new(Mutex::new(HashMap::new())),
+            _signal_receivers: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
-    /// Calculate the retry delay using exponential backoff
-    fn calculate_retry_delay(&self, attempt: u32) -> Duration {
+    /// Calculate retry delay based on attempt number
+    fn _calculate_retry_delay(&self, attempt: u32) -> Duration {
         let base_delay = self.config.retry_base_delay_ms;
         let max_delay = self.config.retry_max_delay_ms;
 
@@ -504,7 +504,7 @@ impl Executor for AsyncioExecutor {
 
                             // Add retry metrics
                             for (key, value) in retry_metrics.iter() {
-                                metrics.insert(key.clone(), *value);
+                                metrics.insert(*key, *value);
                             }
 
                             telemetry::add_metrics(metrics);
@@ -524,14 +524,10 @@ impl Executor for AsyncioExecutor {
                         }
 
                         // Calculate retry delay with exponential backoff
-                        let retry_delay = calculate_retry_delay(
-                            attempt,
-                            this.config.retry_base_delay_ms,
-                            this.config.retry_max_delay_ms,
-                        );
+                        let retry_delay = this._calculate_retry_delay(attempt as u32);
 
-                        debug!("Task {} will retry in {}ms", task_id_clone, retry_delay);
-                        time::sleep(Duration::from_millis(retry_delay)).await;
+                        debug!("Task {} will retry in {:?}", task_id_clone, retry_delay);
+                        time::sleep(retry_delay).await;
                     }
                     Err(_) => {
                         // Timeou
@@ -562,7 +558,7 @@ impl Executor for AsyncioExecutor {
 
                             // Add retry metrics
                             for (key, value) in retry_metrics.iter() {
-                                metrics.insert(key.clone(), *value);
+                                metrics.insert(*key, *value);
                             }
 
                             telemetry::add_metrics(metrics);
@@ -582,14 +578,10 @@ impl Executor for AsyncioExecutor {
                         }
 
                         // Calculate retry delay with exponential backoff
-                        let retry_delay = calculate_retry_delay(
-                            attempt,
-                            this.config.retry_base_delay_ms,
-                            this.config.retry_max_delay_ms,
-                        );
+                        let retry_delay = this._calculate_retry_delay(attempt as u32);
 
-                        debug!("Task {} will retry in {}ms", task_id_clone, retry_delay);
-                        time::sleep(Duration::from_millis(retry_delay)).await;
+                        debug!("Task {} will retry in {:?}", task_id_clone, retry_delay);
+                        time::sleep(retry_delay).await;
                     }
                 }
             }
@@ -751,14 +743,6 @@ impl Executor for AsyncioExecutor {
         // Not implemented for this simplified version
         Err(McpError::NotImplemented)
     }
-}
-
-/// Calculate retry delay with exponential backoff
-#[instrument]
-fn calculate_retry_delay(attempt: usize, base_delay: u64, max_delay: u64) -> u64 {
-    let backoff = 2u64.saturating_pow(attempt as u32 - 1);
-    let delay = base_delay.saturating_mul(backoff);
-    delay.min(max_delay)
 }
 
 #[cfg(test)]

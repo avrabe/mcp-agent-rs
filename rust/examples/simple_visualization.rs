@@ -1,10 +1,4 @@
-use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::Duration;
-
 use anyhow::Result;
-use serde_json::json;
-use tokio::time;
 
 // Empty test that can run without the terminal-web feature
 #[cfg(test)]

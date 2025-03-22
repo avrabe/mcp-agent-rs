@@ -30,24 +30,18 @@ impl Error for RequestError {}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    // Configure telemetry for Jaeger
+    // Configure telemetry
     let mut config = TelemetryConfig::default();
     config.service_name = "telemetry-example".to_string();
-    config.jaeger_endpoint = Some("127.0.0.1:6831".to_string());
-
-    // Add custom attributes for this process
-    let mut attributes = HashMap::new();
-    attributes.insert("environment".to_string(), "development".to_string());
-    attributes.insert("version".to_string(), env!("CARGO_PKG_VERSION").to_string());
-    config.attributes = attributes;
+    config.enable_console = true;
+    config.log_level = "debug".to_string();
+    config.enable_opentelemetry = true;
+    config.opentelemetry_endpoint = Some("http://localhost:4317".to_string());
 
     // Initialize telemetry
-    println!("Initializing telemetry with Jaeger...");
-    println!("NOTE: This example requires Jaeger to be running locally.");
-    println!("You can start Jaeger with Docker using:");
-    println!(
-        "  docker run -d --name jaeger -p 6831:6831/udp -p 16686:16686 jaegertracing/all-in-one:latest"
-    );
+    println!("Initializing telemetry...");
+    println!("This example will log information to the console.");
+    println!("If OpenTelemetry is enabled via feature flags, it will send data to the endpoint.");
 
     init_telemetry(config)?;
 

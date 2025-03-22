@@ -323,6 +323,27 @@ impl Default for DefaultSignalHandler {
     }
 }
 
+/// A null signal handler that does nothing
+#[derive(Debug, Default)]
+pub struct NullSignalHandler;
+
+#[async_trait]
+impl AsyncSignalHandler for NullSignalHandler {
+    async fn signal(&self, _signal: WorkflowSignal) -> Result<()> {
+        // Do nothing
+        Ok(())
+    }
+
+    async fn wait_for_signal(
+        &self,
+        signal_type: &str,
+        _timeout_seconds: Option<u64>,
+    ) -> Result<WorkflowSignal> {
+        // Just return a dummy signal
+        Ok(WorkflowSignal::new(signal_type, None))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

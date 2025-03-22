@@ -44,16 +44,10 @@ impl TerminalSynchronizer {
     }
 
     /// Register a terminal with the synchronizer
-    pub async fn register_terminal<T>(&self, terminal: Arc<T>) -> Result<()>
-    where
-        T: Terminal + 'static + ?Sized,
-    {
-        let term_id = terminal.id().await?;
-        info!("Registering terminal: {}", term_id);
-
+    pub async fn register_terminal(&self, terminal: Arc<dyn Terminal>) -> Result<()> {
+        let id = terminal.id_sync().await?;
         let mut terminals = self.terminals.lock().await;
-        terminals.insert(term_id, terminal);
-
+        terminals.insert(id, terminal);
         Ok(())
     }
 
@@ -86,7 +80,7 @@ impl TerminalSynchronizer {
         for (id, terminal) in terminal_refs {
             let output_clone = output.to_string();
 
-            let result = terminal.display(&output_clone).await;
+            let result = terminal.display_sync(&output_clone).await;
             if let Err(e) = result {
                 error!("Failed to send output to terminal {}: {}", id, e);
             }
@@ -123,7 +117,7 @@ impl TerminalSynchronizer {
         for (id, terminal) in terminal_refs {
             let input_clone = input.to_string();
 
-            let result = terminal.echo_input(&input_clone).await;
+            let result = terminal.echo_input_sync(&input_clone).await;
             if let Err(e) = result {
                 error!("Failed to echo input to terminal {}: {}", id, e);
             }
@@ -155,7 +149,7 @@ impl TerminalSynchronizer {
 
             let (tx, rx) = oneshot::channel();
 
-            terminal_clone.execute_command(command, tx).await?;
+            terminal_helpers::execute_command(&*terminal_clone, command, tx).await?;
 
             rx.await.map_err(|e| {
                 Error::TerminalError(format!("Failed to receive command result: {}", e))
@@ -165,6 +159,57 @@ impl TerminalSynchronizer {
                 "Terminal not found: {}",
                 terminal_id
             )))
+        }
+    }
+
+    pub async fn broadcast(&self, output: &str) -> Result<()> {
+        let terminals = self.terminals.lock().await;
+
+        for (_, terminal) in terminals.iter() {
+            let output_clone = output.to_string();
+            let terminal_clone = terminal.clone();
+
+            tokio::spawn(async move {
+                let result = terminal_helpers::display(&*terminal_clone, &output_clone).await;
+                if let Err(e) = result {
+                    error!("Failed to broadcast to terminal: {}", e);
+                }
+            });
+        }
+
+        Ok(())
+    }
+
+    pub async fn echo_input(&self, input: &str) -> Result<()> {
+        let terminals = self.terminals.lock().await;
+
+        for (_, terminal) in terminals.iter() {
+            let input_clone = input.to_string();
+            let terminal_clone = terminal.clone();
+
+            tokio::spawn(async move {
+                let result = terminal_helpers::echo_input(&*terminal_clone, &input_clone).await;
+                if let Err(e) = result {
+                    error!("Failed to echo input to terminal: {}", e);
+                }
+            });
+        }
+
+        Ok(())
+    }
+
+    pub async fn execute_command(&self, command: &str, tx: oneshot::Sender<String>) -> Result<()> {
+        let terminals = self.terminals.lock().await;
+
+        if let Some(terminal) = terminals.values().next() {
+            let terminal_clone = terminal.clone();
+            drop(terminals);
+
+            terminal_helpers::execute_command(&*terminal_clone, command, tx).await
+        } else {
+            Err(Error::TerminalError(
+                "No terminals available to execute command".into(),
+            ))
         }
     }
 }

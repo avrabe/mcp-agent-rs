@@ -162,15 +162,10 @@ async fn main() -> Result<()> {
     // Initialize telemetry with correct config
     let telemetry_config = TelemetryConfig {
         service_name: "workflow-visualizer".to_string(),
-        otlp_endpoint: None,
-        jaeger_endpoint: None,
         enable_console: true,
-        enable_json: false,
-        enable_tracing: true,
-        enable_metrics: true,
-        sampling_ratio: 1.0,
-        attributes: HashMap::new(),
-        alerting_config: None,
+        log_level: "debug".to_string(),
+        enable_opentelemetry: false,
+        opentelemetry_endpoint: None,
     };
     if let Err(e) = init_telemetry(telemetry_config) {
         eprintln!("Failed to initialize telemetry: {}", e);

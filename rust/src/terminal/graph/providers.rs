@@ -6,37 +6,35 @@
 //! - Human Input Points
 //! - LLM Integration
 
-use std::collections::HashMap;
-use std::fmt::Debug;
-use std::sync::Arc;
+use crate::error::{Error, Result};
+use crate::terminal::graph::{Graph, GraphManager};
+use crate::workflow::engine::WorkflowEngine;
+use crate::workflow::signal::NullSignalHandler;
 
 use async_trait::async_trait;
-use futures::StreamExt;
+use std::fmt::Debug;
+use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, error, info};
 
-use super::{Graph, GraphEdge, GraphManager, GraphNode};
-use crate::error::Error;
+use super::{GraphEdge, GraphNode};
 use crate::mcp::agent::Agent;
-use crate::workflow::signal::NullSignalHandler;
-use crate::workflow::state::WorkflowState;
-use crate::workflow::WorkflowEngine;
 // Comment out these imports for now - these would be implemented based on LLM and human input systems
 // use crate::llm::LlmProvider;
 // use crate::human_input::HumanInputProvider;
 
-/// Object-safe trait for graph data providers
+/// Trait for providers that can generate graph data in a trait object-safe way
 pub trait GraphDataProvider: Send + Sync + Debug {
     /// Generate a graph representation (non-async wrapper)
     fn generate_graph_boxed(
         &self,
-    ) -> Box<dyn std::future::Future<Output = Result<Graph>> + Send + Unpin>;
+    ) -> Box<dyn std::future::Future<Output = Result<Graph, Error>> + Send + Unpin>;
 
     /// Set up tracking for graph updates (non-async wrapper)
     fn setup_tracking_boxed(
         &self,
         graph_manager: Arc<GraphManager>,
-    ) -> Box<dyn std::future::Future<Output = Result<()>> + Send + Unpin>;
+    ) -> Box<dyn std::future::Future<Output = Result<(), Error>> + Send + Unpin>;
 }
 
 /// Trait for providers that can generate graph data
@@ -57,15 +55,15 @@ pub trait GraphDataProviderExt: AsyncGraphDataProvider {
 impl<T: AsyncGraphDataProvider + 'static> GraphDataProvider for T {
     fn generate_graph_boxed(
         &self,
-    ) -> Box<dyn std::future::Future<Output = Result<Graph>> + Send + Unpin> {
-        Box::new(async move { self.generate_graph().await })
+    ) -> Box<dyn std::future::Future<Output = Result<Graph, Error>> + Send + Unpin> {
+        Box::pin(self.generate_graph())
     }
 
     fn setup_tracking_boxed(
         &self,
         graph_manager: Arc<GraphManager>,
-    ) -> Box<dyn std::future::Future<Output = Result<()>> + Send + Unpin> {
-        Box::new(async move { self.setup_tracking(graph_manager).await })
+    ) -> Box<dyn std::future::Future<Output = Result<(), Error>> + Send + Unpin> {
+        Box::pin(self.setup_tracking(graph_manager))
     }
 }
 

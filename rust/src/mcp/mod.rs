@@ -31,26 +31,25 @@
 //!
 //! ```rust,no_run
 //! use mcp_agent::mcp::agent::Agent;
-//! use mcp_agent::mcp::types::Message;
-//! use mcp_agent::config::AgentConfig;
-//! use std::sync::Arc;
+//! use mcp_agent::mcp::types::{Message, Priority};
+//! use mcp_agent::mcp::agent::AgentConfig;
 //!
 //! async fn example() {
 //!     // Create an agent configuration
 //!     let config = AgentConfig::default();
 //!
-//!     // Create a new agen
+//!     // Create a new agent
 //!     let agent = Agent::new(config);
 //!
-//!     // Start the agen
-//!     agent.start().await.expect("Failed to start agent");
+//!     // Initialize the agent
+//!     agent.initialize().await.expect("Failed to initialize agent");
 //!
 //!     // Send a message
-//!     let message = Message::new_request(Vec::new());
-//!     agent.send_message(message).await.expect("Failed to send message");
+//!     let message = Message::request(Vec::new(), Priority::Normal);
+//!     agent.send_message("server-id", message).await.expect("Failed to send message");
 //!
-//!     // Shutdown the agen
-//!     agent.shutdown().await.expect("Failed to shutdown agent");
+//!     // Disconnect the agent
+//!     agent.disconnect().await.expect("Failed to disconnect agent");
 //! }
 //! ```
 

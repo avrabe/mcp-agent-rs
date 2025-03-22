@@ -6,7 +6,7 @@
 #[cfg(feature = "transport-ws")]
 use futures_util::{SinkExt, StreamExt};
 #[cfg(feature = "transport-ws")]
-use log::{debug, error, info, warn};
+use tracing::{debug, error, info, warn};
 #[cfg(feature = "transport-ws")]
 use std::collections::HashMap;
 #[cfg(feature = "transport-ws")]
@@ -32,11 +32,6 @@ use uuid::Uuid;
 
 use super::{Transport, TransportConfig, TransportFactory};
 use crate::error::{Error, Result};
-#[cfg(feature = "transport-ws")]
-use crate::mcp::types::{
-    JsonRpcBatchRequest as BatchRequest, JsonRpcBatchResponse as BatchResponse,
-    JsonRpcRequest as Request, JsonRpcResponse as Response, Message,
-};
 
 #[cfg(feature = "transport-ws")]
 type WebSocketClientType = WebSocketStream<MaybeTlsStream<TcpStream>>;
@@ -59,7 +54,7 @@ pub struct WebSocketTransport {
 #[cfg(feature = "transport-ws")]
 impl WebSocketTransport {
     /// Create a new WebSocket transport
-    pub async fn new(config: TransportConfig) -> Result<Self, Error> {
+    pub async fn new(config: TransportConfig) -> Result<Self> {
         let (tx, mut rx) = mpsc::channel::<Message>(100);
         let pending_requests = Arc::new(RwLock::new(HashMap::new()));
         let connected = Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -75,6 +70,9 @@ impl WebSocketTransport {
         // Spawn background task for managing the WebSocket connection
         tokio::spawn(async move {
             let mut reconnect_attempts = 0;
+            // Default reconnection parameters if not in config
+            let max_reconnect_attempts = 5;
+            let reconnect_delay_ms = 1000;
 
             'connection_loop: loop {
                 info!("Connecting to WebSocket at {}", ws_url);
@@ -107,15 +105,15 @@ impl WebSocketTransport {
 
                 // Attempt to reconnect with backoff
                 reconnect_attempts += 1;
-                if reconnect_attempts > config_clone.max_reconnect_attempts {
+                if reconnect_attempts > max_reconnect_attempts {
                     error!("Maximum reconnection attempts reached, giving up.");
                     break 'connection_loop;
                 }
 
-                let delay = config_clone.reconnect_delay_ms * reconnect_attempts as u64;
+                let delay = reconnect_delay_ms * reconnect_attempts as u64;
                 warn!(
                     "Reconnecting in {} ms (attempt {}/{})",
-                    delay, reconnect_attempts, config_clone.max_reconnect_attempts
+                    delay, reconnect_attempts, max_reconnect_attempts
                 );
                 time::sleep(Duration::from_millis(delay)).await;
             }
@@ -235,178 +233,162 @@ impl WebSocketTransport {
 
 #[cfg(feature = "transport-ws")]
 #[async_trait]
-impl Transport for WebSocketTransport {
-    async fn send_message(&self, message: Message) -> Result<(), Error> {
-        if !self.is_connected() {
+impl AsyncTransport for WebSocketTransport {
+    async fn send_message(&self, message: Message) -> Result<()> {
+        if !self.connected.load(std::sync::atomic::Ordering::SeqCst) {
             return Err(Error::Internal("WebSocket is not connected".to_string()));
         }
 
-        self.tx.send(message).await.map_err(|e| {
-            Error::Internal(format!(
-                "Failed to send message to WebSocket channel: {}",
-                e
-            ))
-        })
-    }
+        // Send message through the channel to the WebSocket handler
+        self.tx
+            .send(message)
+            .await
+            .map_err(|_| Error::Internal("Failed to send message to WebSocket handler".to_string()))?;
 
-    async fn send_request(&self, request: Request) -> Result<Response, Error> {
-        if !self.is_connected() {
-            return Err(Error::Internal("WebSocket is not connected".to_string()));
-        }
-
-        // Create a channel for receiving the response
-        let (response_tx, mut response_rx) = mpsc::channel::<Response>(1);
-
-        // Convert Request to Message and store the channel in the pending requests map
-        let message = request.to_message()?;
-        let request_id = message.id.to_string();
-
-        {
-            let mut pending = self.pending_requests.write().await;
-            pending.insert(request_id, response_tx);
-        }
-
-        // Send the request
-        self.send_message(message).await?;
-
-        // Wait for the response with timeout
-        let timeout = Duration::from_secs(self.config.timeout_seconds);
-        match time::timeout(timeout, response_rx.recv()).await {
-            Ok(Some(response)) => Ok(response),
-            Ok(None) => {
-                // Response channel was closed without a response
-                let mut pending = self.pending_requests.write().await;
-                pending.remove(&request_id);
-                Err(Error::Internal(
-                    "Response channel closed unexpectedly".to_string(),
-                ))
-            }
-            Err(_) => {
-                // Timeout occurred
-                let mut pending = self.pending_requests.write().await;
-                pending.remove(&request_id);
-                Err(Error::Internal(format!(
-                    "Request timed out after {} seconds",
-                    self.config.timeout_seconds
-                )))
-            }
-        }
-    }
-
-    async fn close(&self) -> Result<(), Error> {
-        // The actual WebSocket connection is managed by a background task,
-        // and will be closed when the WebSocketTransport is dropped.
-        // Here we just set the connected flag to false.
-        self.connected
-            .store(false, std::sync::atomic::Ordering::SeqCst);
         Ok(())
     }
 
-    fn is_connected(&self) -> bool {
-        self.connected.load(std::sync::atomic::Ordering::SeqCst)
-    }
-
-    async fn send_batch_request(
-        &self,
-        batch_request: BatchRequest,
-    ) -> Result<BatchResponse, Error> {
-        debug!(
-            "Sending batch request with {} items over WebSocket",
-            batch_request.len()
-        );
-
-        // Ensure connected
-        if !self.is_connected() {
+    async fn send_request(&self, request: Request) -> Result<Response> {
+        if !self.connected.load(std::sync::atomic::Ordering::SeqCst) {
             return Err(Error::Internal("WebSocket is not connected".to_string()));
         }
 
-        // Track response channels for each request
-        let mut response_channels = Vec::with_capacity(batch_request.len());
-        let mut pending = self.pending_requests.write().await;
+        // Convert Request to Message
+        let message = request.clone().into_message();
 
-        // For each request in the batch, register a response channel
-        for request in &batch_request.0 {
-            // Skip notifications (no ID)
-            if let serde_json::Value::Null = request.id {
-                // No response expected for notifications
-                response_channels.push(None);
-                continue;
-            }
+        // Create oneshot channel for the response
+        let (resp_tx, resp_rx) = mpsc::channel::<Response>(1);
 
-            // Get the request ID as string
-            let request_id = match &request.id {
-                serde_json::Value::String(id) => id.clone(),
-                other => other.to_string(),
-            };
-
-            // Create channel for response
-            let (tx, rx) = mpsc::channel(1);
-            response_channels.push(Some((request_id.clone(), rx)));
-            pending.insert(request_id, tx);
-        }
-
-        // Send the batch over the WebSocket
-        if let Err(e) = self
-            .tx
-            .send(Message::new(
-                batch_request.to_bytes()?,
-                self.config.timeout_seconds,
-            ))
-            .await
+        // Register the request in the pending requests map
+        let req_id = request.id().to_string();
         {
-            // Clean up pending requests on error
-            for (req_id, _) in response_channels.iter().flatten() {
-                pending.remove(req_id);
-            }
-            return Err(Error::Internal(format!(
-                "Failed to send batch request: {}",
-                e
-            )));
+            let mut pending = self.pending_requests.write().await;
+            pending.insert(req_id.clone(), resp_tx);
         }
 
-        drop(pending); // Release the lock
+        // Send the request message
+        self.tx
+            .send(message)
+            .await
+            .map_err(|_| Error::Internal("Failed to send request to WebSocket handler".to_string()))?;
 
-        // Prepare timeout
+        // Wait for the response with timeout
         let timeout = Duration::from_secs(self.config.timeout_seconds);
+        match tokio::time::timeout(timeout, resp_rx.recv()).await {
+            Ok(Some(response)) => {
+                // Response received
+                Ok(response)
+            }
+            Ok(None) => {
+                // Channel closed without response
+                Err(Error::Internal("Response channel closed unexpectedly".to_string()))
+            }
+            Err(_) => {
+                // Timeout
+                // Remove the pending request
+                let mut pending = self.pending_requests.write().await;
+                pending.remove(&req_id);
 
-        // Wait for all responses
+                Err(Error::Timeout)
+            }
+        }
+    }
+
+    async fn close(&self) -> Result<()> {
+        // There's no need to explicitly close, the WebSocket will be closed
+        // when the struct is dropped and the tx channel is closed
+        Ok(())
+    }
+
+    async fn send_batch_request(&self, batch_request: BatchRequest) -> Result<BatchResponse> {
+        if !self.connected.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(Error::Internal("WebSocket is not connected".to_string()));
+        }
+
+        // For each request in the batch, create a oneshot channel
+        let mut response_channels = HashMap::new();
+        let mut batch_ids = Vec::new();
+
+        // Register all the requests in the pending requests map
+        {
+            let mut pending = self.pending_requests.write().await;
+            for request in batch_request.requests() {
+                let req_id = request.id().to_string();
+                batch_ids.push(req_id.clone());
+
+                let (resp_tx, resp_rx) = mpsc::channel::<Response>(1);
+                pending.insert(req_id.clone(), resp_tx);
+                response_channels.insert(req_id, resp_rx);
+            }
+        }
+
+        // Serialize the batch request
+        let message_payload = serde_json::to_vec(&batch_request)
+            .map_err(|e| Error::Internal(format!("Failed to serialize batch request: {}", e)))?;
+
+        // Create and send a message with the batch payload
+        let message = Message::new(
+            MessageType::BatchRequest,
+            Priority::Normal,
+            message_payload,
+            None,
+            None,
+        );
+
+        self.tx
+            .send(message)
+            .await
+            .map_err(|_| Error::Internal("Failed to send batch request".to_string()))?;
+
+        // Wait for all responses with timeout
+        let timeout = Duration::from_secs(self.config.timeout_seconds);
         let mut responses = Vec::new();
-        for channel_info in response_channels {
-            // If this was a notification (no channel), continue
-            let (req_id, mut rx) = match channel_info {
-                Some(info) => info,
-                None => continue, // Skip notifications
-            };
 
-            // Wait for response with timeout
-            match time::timeout(timeout, rx.recv()).await {
-                Ok(Some(response)) => {
-                    // Got a response, add it to results
-                    responses.push(response);
-                }
-                Ok(None) => {
-                    // Channel closed without response
-                    let mut pending = self.pending_requests.write().await;
-                    pending.remove(&req_id);
-                    return Err(Error::Internal(format!(
-                        "Response channel for request {} closed unexpectedly",
-                        req_id
-                    )));
-                }
-                Err(_) => {
-                    // Timeout
-                    let mut pending = self.pending_requests.write().await;
-                    pending.remove(&req_id);
-                    return Err(Error::Internal(format!(
-                        "Batch request timed out after {} seconds",
-                        self.config.timeout_seconds
-                    )));
+        for req_id in batch_ids {
+            if let Some(rx) = response_channels.get(&req_id) {
+                match tokio::time::timeout(timeout, rx.recv()).await {
+                    Ok(Some(response)) => {
+                        responses.push(response);
+                    }
+                    Ok(None) | Err(_) => {
+                        // Channel closed or timeout
+                        let mut pending = self.pending_requests.write().await;
+                        pending.remove(&req_id);
+                    }
                 }
             }
         }
 
-        debug!("Batch request completed with {} responses", responses.len());
-        Ok(BatchResponse::from_responses(responses))
+        // Create batch response from the responses
+        Ok(BatchResponse::new(responses))
+    }
+}
+
+#[cfg(feature = "transport-ws")]
+impl Transport for WebSocketTransport {
+    fn send_message_boxed(
+        &self,
+        message: Message,
+    ) -> Box<dyn std::future::Future<Output = Result<()>> + Send + Unpin + '_> {
+        Box::pin(self.send_message(message))
+    }
+
+    fn send_request_boxed(
+        &self,
+        request: Request,
+    ) -> Box<dyn std::future::Future<Output = Result<Response>> + Send + Unpin + '_> {
+        Box::pin(self.send_request(request))
+    }
+
+    fn send_batch_request_boxed(
+        &self,
+        batch_request: BatchRequest,
+    ) -> Box<dyn std::future::Future<Output = Result<BatchResponse>> + Send + Unpin + '_> {
+        Box::pin(self.send_batch_request(batch_request))
+    }
+
+    fn close_boxed(&self) -> Box<dyn std::future::Future<Output = Result<()>> + Send + Unpin + '_> {
+        Box::pin(self.close())
     }
 }
 
@@ -430,15 +412,15 @@ impl WebSocketTransportFactory {
 
 #[cfg(feature = "transport-ws")]
 impl TransportFactory for WebSocketTransportFactory {
-    fn create(&self) -> Result<Box<dyn Transport>, Error> {
-        // We can't use async in this method because TransportFactory doesn't have an async trait,
-        // so we'll create a new runtime to run the async initialization
-        let config = self.config.clone();
+    fn create(&self) -> Result<Arc<dyn Transport>> {
         let rt = tokio::runtime::Runtime::new()
-            .map_err(|e| Error::Internal(format!("Failed to create runtime: {}", e)))?;
-
-        let transport = rt.block_on(async { WebSocketTransport::new(config).await })?;
-        Ok(Box::new(transport))
+            .map_err(|e| Error::Internal(format!("Failed to create Tokio runtime: {}", e)))?;
+        
+        let transport = rt.block_on(async {
+            WebSocketTransport::new(self.config.clone()).await
+        })?;
+        
+        Ok(Arc::new(transport))
     }
 }
 

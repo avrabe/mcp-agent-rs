@@ -11,6 +11,42 @@
 //! MCP-Agent is a pure Rust implementation of the Model Context Protocol (MCP) agent framework.
 //! It provides a high-performance, type-safe implementation of the MCP protocol with zero-copy
 //! operations and comprehensive error handling.
+//!
+//! ## Basic Usage
+//!
+//! ```rust,no_run
+//! use mcp_agent::mcp::agent::Agent;
+//! use mcp_agent::mcp::types::{Message, Priority};
+//! use serde_json::json;
+//! 
+//! #[tokio::main]
+//! async fn main() -> Result<(), Box<dyn std::error::Error>> {
+//!     // Create a new agent
+//!     let agent = Agent::new(None);
+//!     
+//!     // Connect to a server
+//!     let server_id = "example-server";
+//!     agent.connect_to_test_server(server_id, "127.0.0.1:8080").await?;
+//!     
+//!     // Create and send a request
+//!     let message = Message::request(json!({ "method": "get_status" }).to_string().into_bytes(), Priority::Normal);
+//!     agent.send_message(server_id, message).await?;
+//!     
+//!     // Execute a task with timeout
+//!     let result = agent.execute_task(
+//!         "example.task", 
+//!         json!({ "param": "value" }), 
+//!         Some(std::time::Duration::from_secs(5))
+//!     ).await?;
+//!     
+//!     println!("Task result: {}", result);
+//!     
+//!     // Disconnect from server
+//!     agent.disconnect(server_id).await?;
+//!     
+//!     Ok(())
+//! }
+//! ```
 
 /// Core MCP protocol implementation including message types, serialization, and transport.
 pub mod mcp;
@@ -40,7 +76,15 @@ pub mod error;
 #[cfg(feature = "terminal-web")]
 pub mod terminal;
 
-// Re-export key MCP types
+/// Re-exported MCP types for convenience
+///
+/// This includes the core types needed for working with the MCP protocol:
+/// - `Executor` - For executing tasks with the MCP protocol
+/// - `McpProtocol` - Low-level protocol implementation
+/// - `Message` - Core message type
+/// - `MessageType` - Enum of message types (Request, Response, etc)
+/// - `Priority` - Message priority levels
+#[doc(hidden)]
 pub use mcp::{
     executor::Executor,
     protocol::McpProtocol,

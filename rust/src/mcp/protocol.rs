@@ -10,7 +10,7 @@
 //! - Implementing timeout mechanisms
 //! - Providing metrics for protocol operations
 //!
-//! ## Binary Forma
+//! ## Binary Format
 //!
 //! MCP messages are encoded in a custom binary format:
 //! 1. Message type (1 byte)
@@ -20,26 +20,22 @@
 //! 5. Error flag (1 byte) + Error data (if present)
 //! 6. Payload length (4 bytes) + Payload (variable length)
 //!
-//! ## Example Usage
+//! ## Example
 //!
 //! ```rust,no_run
 //! use mcp_agent::mcp::protocol::McpProtocol;
-//! use mcp_agent::mcp::types::{Message, MessageType, Priority};
-//! use tokio::net::TcpStream;
+//! use mcp_agent::mcp::types::{Message, Priority};
 //!
-//! async fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! async fn example() {
+//!     // Create a new protocol instance
 //!     let protocol = McpProtocol::new();
-//!     let mut stream = TcpStream::connect("127.0.0.1:8080").await?;
 //!
-//!     // Send a message
-//!     let message = Message::new_request(b"Hello, world!".to_vec());
-//!     protocol.write_message_async(&mut stream, &message).await?;
+//!     // Create a message
+//!     let message = Message::request(b"Hello, world!".to_vec(), Priority::Normal);
 //!
-//!     // Read a message
-//!     let response = protocol.read_message_async(&mut stream).await?;
-//!     println!("Received: {:?}", response);
-//!
-//!     Ok(())
+//!     // Send the message through a stream (example)
+//!     // let mut stream = tokio::net::TcpStream::connect("127.0.0.1:8080").await.unwrap();
+//!     // protocol.write_message_async(&mut stream, &message).await.unwrap();
 //! }
 //! ```
 

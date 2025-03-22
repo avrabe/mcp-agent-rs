@@ -20,30 +20,32 @@
 //! - Automatic reconnection handling
 //! - Comprehensive telemetry and performance metrics
 //!
-//! ## Example Usage
+//! ## Example
 //!
 //! ```rust,no_run
 //! use mcp_agent::mcp::agent::Agent;
-//! use mcp_agent::mcp::types::Message;
+//! use mcp_agent::mcp::types::{Message, Priority};
+//! use serde_json::json;
 //!
 //! async fn example() {
-//!     // Create a new agen
+//!     // Create a new agent
 //!     let agent = Agent::new(None);
 //!
-//!     // Connect to a server
-//!     agent.connect_to_test_server("server1", "localhost:8080").await.unwrap();
+//!     // Connect to a test server
+//!     let server_id = "test-server";
+//!     agent.connect_to_test_server(server_id, "127.0.0.1:8080").await.unwrap();
 //!
 //!     // Send a message
-//!     let message = Message::new_request(b"Hello".to_vec());
-//!     agent.send_message("server1", message).await.unwrap();
+//!     let message = Message::request(b"Hello".to_vec(), Priority::Normal);
+//!     agent.send_message(server_id, message).await.unwrap();
 //!
 //!     // Execute a task
-//!     let args = serde_json::json!({ "param": "value" });
+//!     let args = json!({ "param": "value" });
 //!     let result = agent.execute_task("example_task", args, None).await.unwrap();
-//!
-//!     // Check agent metrics
-//!     let metrics = agent.get_stats().await;
-//!     println!("Messages sent: {}", metrics.messages_sent);
+//!     println!("Task result: {:?}", result);
+//!     
+//!     // Disconnect
+//!     agent.disconnect(server_id).await.unwrap();
 //! }
 
 use std::collections::HashMap;

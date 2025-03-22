@@ -2,20 +2,24 @@
 //!
 //! This module provides functionality for visualizing workflows in the terminal system.
 
+use crate::error::{Error, Result};
+use crate::terminal::graph::{Graph, GraphManager};
+use crate::terminal::graph::providers::{AsyncGraphDataProvider, GraphDataProvider};
+use crate::workflow::engine::WorkflowEngine;
+
 use async_trait::async_trait;
 use std::collections::HashMap;
+use std::fmt::Debug;
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, error, info, warn};
 
-use crate::error::{Error, Result};
 use crate::mcp::types::Message;
-use crate::workflow::engine::WorkflowEngine;
 
 use super::models::{convert_to_sprotty_model, SprottyStatus};
 use super::sprotty_adapter::{process_sprotty_action, SprottyAction};
 use super::{
-    Graph, GraphDataProvider, GraphEdge, GraphManager, GraphNode, GraphUpdate, GraphUpdateType,
+    GraphEdge, GraphNode, GraphUpdate, GraphUpdateType,
 };
 
 /// A graph data provider for workflow visualization
@@ -425,119 +429,127 @@ impl Clone for WorkflowGraphProvider {
 }
 
 impl GraphDataProvider for WorkflowGraphProvider {
-    fn name(&self) -> &str {
-        &self.name
-    }
-
-    fn graph_type(&self) -> &str {
-        "workflow"
-    }
-
     fn generate_graph_boxed(
         &self,
-    ) -> Box<dyn std::future::Future<Output = std::result::Result<Graph, Error>> + Send + Unpin>
-    {
-        Box::new(Box::pin(async move { self.generate_graph().await }))
+    ) -> Box<dyn std::future::Future<Output = Result<Graph, Error>> + Send + Unpin> {
+        Box::pin(self.generate_graph())
     }
 
     fn setup_tracking_boxed(
         &self,
         graph_manager: Arc<GraphManager>,
-    ) -> Box<dyn std::future::Future<Output = std::result::Result<(), Error>> + Send + Unpin> {
-        Box::new(Box::pin(
-            async move { self.setup_tracking(graph_manager).await },
-        ))
+    ) -> Box<dyn std::future::Future<Output = Result<(), Error>> + Send + Unpin> {
+        Box::pin(self.setup_tracking(graph_manager))
     }
 }
 
 #[async_trait]
 impl AsyncGraphDataProvider for WorkflowGraphProvider {
-    async fn generate_graph(&self) -> std::result::Result<Graph, Error> {
-        // Create a basic graph with current workflow state
-        let states = self.workflow_states.read().await;
+    async fn generate_graph(&self) -> Result<Graph> {
+        // Get the workflow state
+        let workflow_state = self.workflow_engine.state().await
+            .map_err(|e| Error::Internal(format!("Failed to get workflow state: {}", e)))?;
 
-        if states.is_empty() {
-            // Create an empty workflow graph
-            return Ok(Graph {
-                id: "workflow-empty".to_string(),
-                name: "Empty Workflow".to_string(),
-                graph_type: "workflow".to_string(),
-                nodes: Vec::new(),
-                edges: Vec::new(),
+        // Construct a basic graph with workflow tasks as nodes
+        let workflow_id = workflow_state.id().unwrap_or("workflow").to_string();
+        let workflow_name = workflow_state.name().unwrap_or("Workflow").to_string();
+
+        // Create a map of node states
+        let mut nodes = HashMap::new();
+        
+        // Add the tasks as nodes
+        for task in workflow_state.tasks() {
+            let task_id = task.id().to_string();
+            let task_name = task.name().to_string();
+            let task_type = task.task_type().to_string();
+            let task_status = task.status().to_string();
+            
+            // Create a node for this task
+            let node = WorkflowNodeState {
+                id: task_id.clone(),
+                name: task_name,
+                node_type: task_type,
+                status: task_status,
                 properties: HashMap::new(),
-            });
+            };
+            
+            nodes.insert(task_id, node);
         }
-
-        // For simplicity, just use the first workflow
-        let (workflow_id, state) = states.iter().next().unwrap();
-        let graph_id = format!("workflow-{}", workflow_id);
-
-        // Convert nodes to a vec of GraphEdgeState
-        let edges_vec = state.edges.values().cloned().collect();
-
-        // Create the graph
-        Ok(create_workflow_graph(
-            &graph_id,
-            workflow_id,
-            &state.name,
-            state.nodes.clone(),
-            edges_vec,
-        ))
+        
+        // Create edge states from task dependencies
+        let mut edges = Vec::new();
+        for task in workflow_state.tasks() {
+            let task_id = task.id().to_string();
+            
+            // Add edges for each dependency
+            for dep_id in task.dependencies() {
+                let edge_id = format!("{}-{}", dep_id, task_id);
+                
+                let edge = WorkflowEdgeState {
+                    id: edge_id,
+                    source: dep_id.to_string(),
+                    target: task_id.clone(),
+                    edge_type: "dependency".to_string(),
+                    properties: HashMap::new(),
+                };
+                
+                edges.push(edge);
+            }
+        }
+        
+        // Create the workflow graph
+        let graph = create_workflow_graph(
+            &self.name,
+            &workflow_id,
+            &workflow_name,
+            nodes,
+            edges,
+        );
+        
+        Ok(graph)
     }
 
-    async fn setup_tracking(
-        &self,
-        graph_manager: Arc<GraphManager>,
-    ) -> std::result::Result<(), Error> {
-        info!("Setting up workflow graph tracking");
-
-        // Subscribe to workflow events and update the graph accordingly
-        let provider = self.clone();
-        let manager = graph_manager.clone();
-
+    async fn setup_tracking(&self, graph_manager: Arc<GraphManager>) -> Result<()> {
+        // Setup a periodic task to check for workflow state changes
+        let workflow_engine = self.workflow_engine.clone();
+        let workflow_states = self.workflow_states.clone();
+        let provider_name = self.name.clone();
+        
+        // Create a clone of the graph manager to move into the task
+        let graph_manager_clone = graph_manager.clone();
+        
         tokio::spawn(async move {
-            // This would set up a subscription to workflow engine events
-            // For now, we'll just create a simple demo workflow
-            let mut graph = Graph::new("workflow-demo", "Demo Workflow");
-            graph.graph_type = "workflow".to_string();
-
-            // Add some nodes
-            let node1 = GraphNode {
-                id: "task1".to_string(),
-                name: "Start Task".to_string(),
-                node_type: "task".to_string(),
-                status: "completed".to_string(),
-                properties: HashMap::new(),
-            };
-
-            let node2 = GraphNode {
-                id: "task2".to_string(),
-                name: "Process Data".to_string(),
-                node_type: "task".to_string(),
-                status: "running".to_string(),
-                properties: HashMap::new(),
-            };
-
-            graph.nodes.push(node1);
-            graph.nodes.push(node2);
-
-            // Add an edge
-            let edge = GraphEdge {
-                id: "edge1".to_string(),
-                source: "task1".to_string(),
-                target: "task2".to_string(),
-                edge_type: "dependency".to_string(),
-                properties: HashMap::new(),
-            };
-
-            graph.edges.push(edge);
-
-            // Register the graph
-            if let Err(e) = manager.register_graph(graph).await {
-                error!("Failed to register workflow graph: {}", e);
+            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(2));
+            
+            loop {
+                interval.tick().await;
+                
+                // Get current workflow state
+                if let Ok(state) = workflow_engine.state().await {
+                    let workflow_id = state.id().unwrap_or("workflow").to_string();
+                    
+                    // Check if we need to update the graph
+                    let update_needed = {
+                        let states = workflow_states.read().await;
+                        !states.contains_key(&workflow_id) || states.get(&workflow_id) != Some(&state)
+                    };
+                    
+                    if update_needed {
+                        // Store the new state
+                        {
+                            let mut states = workflow_states.write().await;
+                            states.insert(workflow_id.clone(), state.clone());
+                        }
+                        
+                        // Trigger a graph update
+                        if let Err(e) = graph_manager_clone.trigger_update(&provider_name).await {
+                            error!("Failed to trigger graph update: {}", e);
+                        }
+                    }
+                }
             }
         });
-
+        
         Ok(())
     }
 }

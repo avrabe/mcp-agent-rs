@@ -4,26 +4,25 @@
 //! that can be used to send and receive MCP protocol messages.
 
 pub mod http;
-pub mod websocket;
 pub mod server;
+pub mod websocket;
 
-use async_trait::async_trait;
 use crate::error::Error;
-use crate::mcp::protocol::{Message, Request, Response};
-use std::sync::Arc;
+use crate::mcp::types::{JsonRpcRequest as Request, JsonRpcResponse as Response, Message};
+use async_trait::async_trait;
 
 /// Transport abstraction for MCP protocol
 #[async_trait]
 pub trait Transport: Send + Sync + 'static {
     /// Send a message through the transport
     async fn send_message(&self, message: Message) -> Result<(), Error>;
-    
+
     /// Send a request and wait for a response
     async fn send_request(&self, request: Request) -> Result<Response, Error>;
-    
+
     /// Close the transport connection
     async fn close(&self) -> Result<(), Error>;
-    
+
     /// Check if the transport is connected
     fn is_connected(&self) -> bool;
 }
@@ -56,4 +55,4 @@ impl Default for TransportConfig {
             reconnect_delay_ms: 1000,
         }
     }
-} 
+}

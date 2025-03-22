@@ -188,7 +188,7 @@ impl WorkflowEngine {
             signal.description = Some(desc.to_string());
         }
 
-        self.signal_handler.signal(signal).await
+        self.signal_handler.signal_boxed(signal).await
     }
 
     /// Wait for a signal
@@ -199,16 +199,17 @@ impl WorkflowEngine {
         description: Option<&str>,
         timeout_duration: Option<Duration>,
     ) -> Result<WorkflowSignal> {
-        let workflow_id = Some(self.id.as_str());
-
         info!("Waiting for signal: {}", signal_name);
+
+        let timeout_seconds = timeout_duration.map(|d| d.as_secs());
+
         let result = self
             .signal_handler
-            .wait_for_signal(signal_name, workflow_id, timeout_duration)
+            .wait_for_signal_boxed(signal_name, timeout_seconds)
             .await;
 
         match &result {
-            Ok(signal) => info!("Received signal: {}", signal_name),
+            Ok(_signal) => info!("Received signal: {}", signal_name),
             Err(err) => warn!("Error waiting for signal: {}, error: {}", signal_name, err),
         }
 
@@ -222,8 +223,8 @@ impl WorkflowEngine {
     ) -> Result<crate::human_input::HumanInputResponse> {
         use crate::human_input::HUMAN_INPUT_SIGNAL_NAME;
 
-        // Create a value from the reques
-        let request_value = serde_json::to_value(&request)?;
+        // Create a value from the request
+        let _request_value = serde_json::to_value(&request)?;
 
         // Wait for a signal with the response
         let signal = self

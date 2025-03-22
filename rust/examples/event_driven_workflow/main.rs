@@ -9,7 +9,7 @@ use uuid::Uuid;
 
 use mcp_agent::telemetry::{init_telemetry, TelemetryConfig};
 use mcp_agent::workflow::{
-    signal::AsyncSignalHandler, state::WorkflowState, task::task, WorkflowEngine, WorkflowResult,
+    signal::DefaultSignalHandler, state::WorkflowState, task::task, WorkflowEngine, WorkflowResult,
 };
 
 /// An event that can be processed by the workflow
@@ -289,7 +289,7 @@ async fn run_event_driven_workflow() -> Result<()> {
     let _guard = init_telemetry(telemetry_config);
 
     // Create signal handler and workflow engine
-    let signal_handler = AsyncSignalHandler::new();
+    let signal_handler = DefaultSignalHandler::new();
     let engine = WorkflowEngine::new(signal_handler);
 
     // Create workflow

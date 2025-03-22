@@ -2,11 +2,12 @@ use anyhow::{anyhow, Result};
 use rand::Rng;
 use tracing::{error, info};
 
+use mcp_agent::workflow::signal::DefaultSignalHandler;
 use mcp_agent::{
     telemetry::{init_telemetry, TelemetryConfig},
     workflow::{
-        signal::AsyncSignalHandler, state::WorkflowState, task::task, WorkflowEngine,
-        WorkflowResult,
+        execute_workflow, task, Workflow, WorkflowEngine, WorkflowResult, WorkflowSignal,
+        WorkflowState,
     },
 };
 
@@ -227,7 +228,7 @@ impl SagaWorkflow {
             }
 
             // Create the final report with compensation details
-            let final_report = serde_json::json!({
+            let _final_report = serde_json::json!({
                 "status": "rolled_back",
                 "steps_executed": self.executed_steps.len(),
                 "steps_compensated": self.executed_steps.iter().filter(|&&i| self.steps[i].compensated).count(),
@@ -292,7 +293,7 @@ async fn run_saga_workflow() -> Result<()> {
     let _ = init_telemetry(telemetry_config);
 
     // Create a signal handler for the workflow engine
-    let signal_handler = AsyncSignalHandler::new();
+    let signal_handler = DefaultSignalHandler::new();
 
     // Create the workflow engine
     let engine = WorkflowEngine::new(signal_handler);

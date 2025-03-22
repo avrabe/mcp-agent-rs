@@ -5,7 +5,7 @@ use tracing::info;
 
 use mcp_agent::human_input::{ConsoleInputHandler, HumanInputHandler, HumanInputRequest};
 use mcp_agent::telemetry::{init_telemetry, TelemetryConfig};
-use mcp_agent::workflow::signal::AsyncSignalHandler;
+use mcp_agent::workflow::signal::DefaultSignalHandler;
 use mcp_agent::workflow::{Workflow, WorkflowEngine, WorkflowResult, WorkflowState};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -65,7 +65,7 @@ impl Workflow for HumanInputWorkflow {
         info!("Starting human input workflow");
 
         // Create signal handler for the workflow engine
-        let signal_handler = AsyncSignalHandler::new();
+        let signal_handler = DefaultSignalHandler::new();
         let engine = WorkflowEngine::new(signal_handler);
 
         // Record starting workflow in state

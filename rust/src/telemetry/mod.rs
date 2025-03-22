@@ -9,7 +9,7 @@
 
 use std::collections::HashMap;
 use tracing::{field, span, Level, Span};
-use tracing_subscriber::util::SubscriberInitExt;
+use tracing_subscriber::{layer::SubscriberExt, EnvFilter};
 
 // Re-export alerts module
 pub mod alerts;

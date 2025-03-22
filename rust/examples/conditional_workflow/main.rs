@@ -6,13 +6,13 @@ use std::sync::Arc;
 use std::time::Duration;
 use tracing::{error, info};
 
-use mcp_agent::llm::types::LlmClient;
+use mcp_agent::llm::types::{CompletionRequest, LlmClient, LlmConfig, Message, MessageRole};
 use mcp_agent::telemetry::{init_telemetry, TelemetryConfig};
+use mcp_agent::workflow::signal::DefaultSignalHandler;
 use mcp_agent::workflow::{
-    execute_workflow, task, AsyncSignalHandler, Workflow, WorkflowEngine, WorkflowResult,
-    WorkflowSignal, WorkflowState,
+    execute_workflow, task, Workflow, WorkflowEngine, WorkflowResult, WorkflowSignal, WorkflowState,
 };
-use mcp_agent::{Completion, CompletionRequest, LlmConfig, LlmMessage as Message, MessageRole};
+use mcp_agent::Completion;
 
 // Content classification types for branching
 #[derive(Debug, Clone, PartialEq)]
@@ -311,7 +311,7 @@ impl ConditionalWorkflow {
 
             let system_prompt =
                 "You are a general assistant. Process the following content appropriately.";
-            let user_prompt = format!("Process the following content:\n\n{}", input_content);
+            let _user_prompt = format!("Process the following content:\n\n{}", input_content);
 
             let request = CompletionRequest {
                 model: "llama2".to_string(),
@@ -620,9 +620,9 @@ async fn main() -> Result<()> {
     let client = Arc::new(MockLlmClient::new());
 
     // Create signal handler and workflow engine
-    let signal_handler = AsyncSignalHandler::new_with_signals(vec![
-        WorkflowSignal::Interrupt,
-        WorkflowSignal::Terminate,
+    let signal_handler = DefaultSignalHandler::new_with_signals(vec![
+        WorkflowSignal::INTERRUPT,
+        WorkflowSignal::TERMINATE,
     ]);
 
     let engine = WorkflowEngine::new(signal_handler);

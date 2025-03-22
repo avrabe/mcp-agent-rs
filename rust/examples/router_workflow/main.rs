@@ -11,8 +11,8 @@ use mcp_agent::llm::types::{
 };
 use mcp_agent::telemetry::{init_telemetry, TelemetryConfig};
 use mcp_agent::workflow::{
-    execute_workflow, task, AsyncSignalHandler, Workflow, WorkflowEngine, WorkflowResult,
-    WorkflowSignal, WorkflowState,
+    execute_workflow, task, AsyncSignalHandler, DefaultSignalHandler, Workflow, WorkflowEngine,
+    WorkflowResult, WorkflowSignal, WorkflowState,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -383,9 +383,9 @@ async fn main() -> Result<()> {
     let client = Arc::new(MockLlmClient::new());
 
     // Create signal handler and workflow engine
-    let signal_handler = AsyncSignalHandler::new_with_signals(vec![
-        WorkflowSignal::Interrupt,
-        WorkflowSignal::Terminate,
+    let signal_handler = DefaultSignalHandler::new_with_signals(vec![
+        WorkflowSignal::INTERRUPT,
+        WorkflowSignal::TERMINATE,
     ]);
 
     let engine = WorkflowEngine::new(signal_handler);

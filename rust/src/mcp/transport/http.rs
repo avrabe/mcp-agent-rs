@@ -13,9 +13,10 @@ use std::time::Duration;
 use url::Url;
 
 use super::{Transport, TransportConfig, TransportFactory};
-use crate::error::Error;
+use crate::error::{Error, Result};
 #[cfg(feature = "transport-http")]
 use crate::mcp::types::{JsonRpcRequest as Request, JsonRpcResponse as Response, Message};
+use std::sync::Arc;
 
 /// HTTP transport for MCP protocol
 #[cfg(feature = "transport-http")]
@@ -194,7 +195,7 @@ impl HttpTransportFactory {
 
 #[cfg(not(feature = "transport-http"))]
 impl TransportFactory for HttpTransportFactory {
-    fn create(&self) -> Result<Box<dyn Transport>, Error> {
+    fn create(&self) -> Result<Arc<dyn Transport>> {
         Err(Error::Internal(
             "HTTP transport is not enabled. Enable the 'transport-http' feature.".to_string(),
         ))

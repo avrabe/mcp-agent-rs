@@ -11,10 +11,8 @@ use tracing::{error, info, warn};
 
 use mcp_agent::llm::types::LlmClient;
 use mcp_agent::telemetry::{init_telemetry, TelemetryConfig};
-use mcp_agent::workflow::{
-    task, AsyncSignalHandler, Workflow, WorkflowEngine, WorkflowResult, WorkflowSignal,
-    WorkflowState,
-};
+use mcp_agent::workflow::signal::DefaultSignalHandler;
+use mcp_agent::workflow::{task, WorkflowEngine, WorkflowResult, WorkflowSignal, WorkflowState};
 use mcp_agent::{Completion, CompletionRequest, LlmConfig};
 
 /// Represents a chunk of data to be processed
@@ -125,13 +123,21 @@ enum TaskResultStatus {
 
 /// A fan-out/fan-in workflow for parallel data processing
 struct FanOutFanInWorkflow {
+    /// State of the workflow
     state: WorkflowState,
+    /// Engine to execute workflow tasks
     engine: WorkflowEngine,
-    llm_client: Arc<MockLlmClient>,
+    /// LLM client
+    _llm_client: Arc<MockLlmClient>,
+    /// Data chunks to process
     data_chunks: Vec<DataChunk>,
+    /// Worker configurations
     workers: Vec<WorkerConfig>,
+    /// Aggregation operations
     aggregation_operations: Vec<AggregationOperation>,
+    /// Processing results
     processing_results: Arc<Mutex<Vec<ProcessingResult>>>,
+    /// Maximum number of retries
     max_retries: usize,
 }
 
@@ -151,7 +157,7 @@ impl FanOutFanInWorkflow {
         Self {
             state: WorkflowState::new(Some("FanOutFanInWorkflow".to_string()), Some(metadata)),
             engine,
-            llm_client,
+            _llm_client: llm_client,
             data_chunks,
             workers,
             aggregation_operations,
@@ -632,9 +638,9 @@ async fn main() -> Result<()> {
     let llm_client = Arc::new(MockLlmClient::new(llm_config));
 
     // Create workflow engine with signal handling
-    let signal_handler = AsyncSignalHandler::new_with_signals(vec![
-        WorkflowSignal::Interrupt,
-        WorkflowSignal::Terminate,
+    let signal_handler = DefaultSignalHandler::new_with_signals(vec![
+        WorkflowSignal::INTERRUPT,
+        WorkflowSignal::TERMINATE,
     ]);
     let workflow_engine = WorkflowEngine::new(signal_handler);
 

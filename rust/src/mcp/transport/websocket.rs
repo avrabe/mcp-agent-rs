@@ -11,6 +11,8 @@ use log::{debug, error, info, warn};
 use std::collections::HashMap;
 #[cfg(feature = "transport-ws")]
 use std::sync::Arc;
+#[cfg(not(feature = "transport-ws"))]
+use std::sync::Arc;
 #[cfg(feature = "transport-ws")]
 use std::time::Duration;
 #[cfg(feature = "transport-ws")]
@@ -29,7 +31,7 @@ use url::Url;
 use uuid::Uuid;
 
 use super::{Transport, TransportConfig, TransportFactory};
-use crate::error::Error;
+use crate::error::{Error, Result};
 #[cfg(feature = "transport-ws")]
 use crate::mcp::types::{JsonRpcRequest as Request, JsonRpcResponse as Response, Message};
 
@@ -354,7 +356,7 @@ impl WebSocketTransportFactory {
 
 #[cfg(not(feature = "transport-ws"))]
 impl TransportFactory for WebSocketTransportFactory {
-    fn create(&self) -> Result<Box<dyn Transport>, Error> {
+    fn create(&self) -> Result<Arc<dyn Transport>> {
         Err(Error::Internal(
             "WebSocket transport is not enabled. Enable the 'transport-ws' feature.".to_string(),
         ))

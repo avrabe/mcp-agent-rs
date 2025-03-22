@@ -5,9 +5,10 @@ use std::time::Duration;
 use tracing::info;
 
 use mcp_agent::telemetry::{init_telemetry, TelemetryConfig};
-use mcp_agent::workflow::signal::AsyncSignalHandler;
-use mcp_agent::workflow::state::WorkflowState;
-use mcp_agent::workflow::{execute_workflow, Workflow, WorkflowEngine, WorkflowResult};
+use mcp_agent::workflow::signal::DefaultSignalHandler;
+use mcp_agent::workflow::{
+    execute_workflow, task, Workflow, WorkflowEngine, WorkflowResult, WorkflowState,
+};
 
 // Simple workflow definition
 struct SimpleWorkflow {
@@ -83,7 +84,7 @@ async fn main() -> Result<()> {
     );
 
     // Create the workflow engine with signal handler
-    let engine = WorkflowEngine::new(AsyncSignalHandler::new());
+    let engine = WorkflowEngine::new(DefaultSignalHandler::new());
 
     // Create and initialize the workflow
     let workflow = SimpleWorkflow::new(engine);

@@ -8,13 +8,20 @@ use std::time::{Duration, Instant};
 use tokio::sync::Mutex as TokioMutex;
 use tracing::{debug, error, info, warn};
 
-use mcp_agent::llm::types::LlmClient;
-use mcp_agent::telemetry::{init_telemetry, TelemetryConfig};
-use mcp_agent::workflow::{
-    execute_workflow, task, AsyncSignalHandler, Workflow, WorkflowEngine, WorkflowResult,
-    WorkflowSignal, WorkflowState,
+use mcp_agent::{
+    llm::{
+        types::{LlmClient, LlmConfig},
+        CompletionRequest,
+    },
+    telemetry::{init_telemetry, TelemetryConfig},
+    workflow::{
+        engine::WorkflowEngine,
+        execute_workflow,
+        signal::{DefaultSignalHandler, WorkflowSignal},
+        task, Workflow, WorkflowResult, WorkflowState,
+    },
+    Completion,
 };
-use mcp_agent::{Completion, CompletionRequest, LlmConfig};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum RetryStrategy {
@@ -408,7 +415,7 @@ async fn main() -> Result<()> {
         parameters: HashMap::new(),
     };
 
-    let llm_client = Arc::new(MockLlmClient::new(llm_config));
+    let _llm_client = Arc::new(MockLlmClient::new(llm_config));
 
     // Create a flaky service for testing
     let flaky_service = Arc::new(FlakyService::new(
@@ -418,9 +425,9 @@ async fn main() -> Result<()> {
     ));
 
     // Create workflow engine with signal handling
-    let signal_handler = AsyncSignalHandler::new_with_signals(vec![
-        WorkflowSignal::Interrupt,
-        WorkflowSignal::Terminate,
+    let signal_handler = DefaultSignalHandler::new_with_signals(vec![
+        WorkflowSignal::INTERRUPT,
+        WorkflowSignal::TERMINATE,
     ]);
     let workflow_engine = WorkflowEngine::new(signal_handler);
 

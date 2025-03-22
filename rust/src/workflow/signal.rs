@@ -1,9 +1,9 @@
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use futures::future::BoxFuture;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::future::BoxFuture;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{oneshot, Mutex};
@@ -66,19 +66,19 @@ impl WorkflowSignal {
 
     // Predefined signal constants
     /// Interrupt signal name
-    pub const Interrupt: &'static str = "interrupt";
+    pub const INTERRUPT: &'static str = "interrupt";
 
     /// Terminate signal name
-    pub const Terminate: &'static str = "terminate";
+    pub const TERMINATE: &'static str = "terminate";
 
     /// Pause signal name
-    pub const Pause: &'static str = "pause";
+    pub const PAUSE: &'static str = "pause";
 
     /// Resume signal name
-    pub const Resume: &'static str = "resume";
+    pub const RESUME: &'static str = "resume";
 
     /// Cancel signal name
-    pub const Cancel: &'static str = "cancel";
+    pub const CANCEL: &'static str = "cancel";
 }
 
 /// Registration of a signal handler
@@ -121,14 +121,15 @@ pub trait SignalHandler: Send + Sync + std::fmt::Debug {
     fn signal_boxed(&self, signal: WorkflowSignal) -> BoxFuture<Result<()>>;
 
     /// Wait for a signal of the specified type (non-async wrapper)
-    fn wait_for_signal_boxed(
-        &self,
-        signal_type: &str,
+    fn wait_for_signal_boxed<'a>(
+        &'a self,
+        signal_type: &'a str,
         timeout_seconds: Option<u64>,
-    ) -> BoxFuture<Result<WorkflowSignal>>;
+    ) -> BoxFuture<'a, Result<WorkflowSignal>>;
 }
 
 /// Async signal handler trait
+#[async_trait]
 pub trait AsyncSignalHandler: Send + Sync + std::fmt::Debug {
     /// Send a signal to the workflow
     async fn signal(&self, signal: WorkflowSignal) -> Result<()>;
@@ -143,20 +144,21 @@ pub trait AsyncSignalHandler: Send + Sync + std::fmt::Debug {
 
 /// Helper extension trait
 pub trait SignalHandlerExt: AsyncSignalHandler {
+    /// Convert to a SignalHandler trait object reference
     fn as_signal_handler(&self) -> &dyn SignalHandler;
 }
 
 impl<T: AsyncSignalHandler + 'static> SignalHandler for T {
     fn signal_boxed(&self, signal: WorkflowSignal) -> BoxFuture<Result<()>> {
-        Box::pin(async move { self.signal(signal).await })
+        Box::pin(async move { T::signal(self, signal).await })
     }
 
-    fn wait_for_signal_boxed(
-        &self,
-        signal_type: &str,
+    fn wait_for_signal_boxed<'a>(
+        &'a self,
+        signal_type: &'a str,
         timeout_seconds: Option<u64>,
-    ) -> BoxFuture<Result<WorkflowSignal>> {
-        Box::pin(async move { self.wait_for_signal(signal_type, timeout_seconds).await })
+    ) -> BoxFuture<'a, Result<WorkflowSignal>> {
+        Box::pin(async move { T::wait_for_signal(self, signal_type, timeout_seconds).await })
     }
 }
 
@@ -170,10 +172,12 @@ impl<T: AsyncSignalHandler + 'static> SignalHandlerExt for T {
 pub mod signal_handler_helpers {
     use super::*;
 
+    /// Send a signal using the provided handler
     pub async fn signal(handler: &dyn SignalHandler, signal: WorkflowSignal) -> Result<()> {
         handler.signal_boxed(signal).await
     }
 
+    /// Wait for a signal of a specific type using the provided handler
     pub async fn wait_for_signal(
         handler: &dyn SignalHandler,
         signal_type: &str,
@@ -187,12 +191,12 @@ pub mod signal_handler_helpers {
 
 /// Asynchronous signal handler
 #[derive(Debug)]
-pub struct AsyncSignalHandler {
+pub struct DefaultSignalHandler {
     /// Map of signal name to pending signals
     pending_signals: Arc<Mutex<HashMap<String, Vec<PendingSignal>>>>,
 }
 
-impl AsyncSignalHandler {
+impl DefaultSignalHandler {
     /// Create a new signal handler
     pub fn new() -> Self {
         Self {
@@ -211,7 +215,7 @@ impl AsyncSignalHandler {
 }
 
 #[async_trait]
-impl AsyncSignalHandler for AsyncSignalHandler {
+impl AsyncSignalHandler for DefaultSignalHandler {
     #[instrument(skip(self), fields(signal.name = %signal.name, signal.id = %signal.id))]
     async fn signal(&self, signal: WorkflowSignal) -> Result<()> {
         debug!("Emitting signal: {}", signal.name);
@@ -313,7 +317,7 @@ impl AsyncSignalHandler for AsyncSignalHandler {
     }
 }
 
-impl Default for AsyncSignalHandler {
+impl Default for DefaultSignalHandler {
     fn default() -> Self {
         Self::new()
     }
@@ -326,7 +330,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_basic_signal() {
-        let handler = AsyncSignalHandler::new();
+        let handler = DefaultSignalHandler::new();
 
         // Set up a task to wait for a signal
         let handler_clone = Arc::new(handler);
@@ -356,7 +360,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_signal_timeout() {
-        let handler = AsyncSignalHandler::new();
+        let handler = DefaultSignalHandler::new();
 
         // Wait for a signal with a short timeout
         let result = handler.wait_for_signal("timeout_signal", Some(1)).await;

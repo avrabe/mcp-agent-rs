@@ -30,9 +30,10 @@ use tokio::sync::{oneshot, Mutex};
 // Comment out missing imports for now - these would be implemented based on LLM and human input systems
 // use crate::llm::LlmProvider;
 // use crate::human_input::HumanInputProvider;
+use futures::future::BoxFuture;
 use log::{debug, error, info, warn};
 use std::fmt;
-use std::future::BoxFuture;
+use std::io::Write;
 
 /// Terminal configuration
 pub use config::{AuthConfig, TerminalConfig, WebTerminalConfig};
@@ -55,32 +56,41 @@ pub use graph::{Graph, GraphEdge, GraphManager, GraphNode, GraphUpdate, GraphUpd
 /// Core interface for terminal functionality
 pub trait Terminal: Send + Sync + fmt::Debug {
     /// Return the terminal's unique identifier (non-async wrapper)
-    fn id_sync(&self) -> Box<dyn std::future::Future<Output = Result<String>> + Send + Unpin>;
+    fn id_sync(&self) -> Box<dyn std::future::Future<Output = Result<String>> + Send + Unpin + '_>;
 
     /// Start the terminal (non-async wrapper)
-    fn start_sync(&mut self) -> Box<dyn std::future::Future<Output = Result<()>> + Send + Unpin>;
+    fn start_sync(
+        &mut self,
+    ) -> Box<dyn std::future::Future<Output = Result<()>> + Send + Unpin + '_>;
 
     /// Stop the terminal (non-async wrapper)
-    fn stop_sync(&self) -> Box<dyn std::future::Future<Output = Result<()>> + Send + Unpin>;
+    fn stop_sync(&self) -> Box<dyn std::future::Future<Output = Result<()>> + Send + Unpin + '_>;
 
     /// Display output to the terminal (non-async wrapper)
     fn display_sync(
         &self,
         output: &str,
-    ) -> Box<dyn std::future::Future<Output = Result<()>> + Send + Unpin>;
+    ) -> Box<dyn std::future::Future<Output = Result<()>> + Send + Unpin + '_>;
 
     /// Echo input to the terminal (non-async wrapper)
     fn echo_input_sync(
         &self,
         input: &str,
-    ) -> Box<dyn std::future::Future<Output = Result<()>> + Send + Unpin>;
+    ) -> Box<dyn std::future::Future<Output = Result<()>> + Send + Unpin + '_>;
 
     /// Execute a command on the terminal (non-async wrapper)
     fn execute_command_sync(
         &self,
         command: &str,
         tx: oneshot::Sender<String>,
-    ) -> Box<dyn std::future::Future<Output = Result<()>> + Send + Unpin>;
+    ) -> Box<dyn std::future::Future<Output = Result<()>> + Send + Unpin + '_>;
+
+    fn write(&mut self, s: &str) -> Result<()>;
+    fn write_line(&mut self, s: &str) -> Result<()>;
+    fn read_line(&mut self) -> Result<String>;
+    fn flush(&mut self) -> Result<()>;
+    fn read_password(&mut self, prompt: &str) -> Result<String>;
+    fn read_secret(&mut self, prompt: &str) -> Result<String>;
 }
 
 /// Async terminal trait with full async methods
@@ -111,23 +121,25 @@ pub trait TerminalExt: AsyncTerminal {
 }
 
 impl<T: AsyncTerminal + 'static> Terminal for T {
-    fn id_sync(&self) -> Box<dyn std::future::Future<Output = Result<String>> + Send + Unpin> {
+    fn id_sync(&self) -> Box<dyn std::future::Future<Output = Result<String>> + Send + Unpin + '_> {
         Box::new(Box::pin(async move { self.id().await }))
     }
 
-    fn start_sync(&mut self) -> Box<dyn std::future::Future<Output = Result<()>> + Send + Unpin> {
+    fn start_sync(
+        &mut self,
+    ) -> Box<dyn std::future::Future<Output = Result<()>> + Send + Unpin + '_> {
         let fut = self.start();
         Box::new(Box::pin(fut))
     }
 
-    fn stop_sync(&self) -> Box<dyn std::future::Future<Output = Result<()>> + Send + Unpin> {
+    fn stop_sync(&self) -> Box<dyn std::future::Future<Output = Result<()>> + Send + Unpin + '_> {
         Box::new(Box::pin(async move { self.stop().await }))
     }
 
     fn display_sync(
         &self,
         output: &str,
-    ) -> Box<dyn std::future::Future<Output = Result<()>> + Send + Unpin> {
+    ) -> Box<dyn std::future::Future<Output = Result<()>> + Send + Unpin + '_> {
         let output = output.to_string();
         Box::new(Box::pin(async move { self.display(&output).await }))
     }
@@ -135,7 +147,7 @@ impl<T: AsyncTerminal + 'static> Terminal for T {
     fn echo_input_sync(
         &self,
         input: &str,
-    ) -> Box<dyn std::future::Future<Output = Result<()>> + Send + Unpin> {
+    ) -> Box<dyn std::future::Future<Output = Result<()>> + Send + Unpin + '_> {
         let input = input.to_string();
         Box::new(Box::pin(async move { self.echo_input(&input).await }))
     }
@@ -144,11 +156,49 @@ impl<T: AsyncTerminal + 'static> Terminal for T {
         &self,
         command: &str,
         tx: oneshot::Sender<String>,
-    ) -> Box<dyn std::future::Future<Output = Result<()>> + Send + Unpin> {
+    ) -> Box<dyn std::future::Future<Output = Result<()>> + Send + Unpin + '_> {
         let command = command.to_string();
         Box::new(Box::pin(
             async move { self.execute_command(&command, tx).await },
         ))
+    }
+
+    fn write(&mut self, s: &str) -> Result<()> {
+        // Just print to stdout for now
+        print!("{}", s);
+        std::io::stdout().flush().map_err(|e| Error::from(e))?;
+        Ok(())
+    }
+
+    fn write_line(&mut self, s: &str) -> Result<()> {
+        // Just print to stdout for now
+        println!("{}", s);
+        Ok(())
+    }
+
+    fn read_line(&mut self) -> Result<String> {
+        let mut result = String::new();
+        std::io::stdin().read_line(&mut result)?;
+        Ok(result.trim().to_string())
+    }
+
+    fn flush(&mut self) -> Result<()> {
+        std::io::stdout().flush().map_err(|e| Error::from(e))?;
+        Ok(())
+    }
+
+    fn read_password(&mut self, prompt: &str) -> Result<String> {
+        self.write(prompt)?;
+        self.flush()?;
+
+        let mut password = String::new();
+        std::io::stdin().read_line(&mut password)?;
+
+        Ok(password.trim().to_string())
+    }
+
+    fn read_secret(&mut self, prompt: &str) -> Result<String> {
+        self.read_password(prompt)
     }
 }
 
@@ -368,38 +418,5 @@ mod tests {
         // Stop the system
         let result = system.stop().await;
         assert!(result.is_ok());
-    }
-}
-
-impl<T: AsyncTerminal + 'static> Terminal for T {
-    fn id_boxed(&self) -> BoxFuture<Result<String>> {
-        Box::pin(async move { self.id().await })
-    }
-
-    fn start_boxed(&mut self) -> BoxFuture<Result<()>> {
-        Box::pin(async move { self.start().await })
-    }
-
-    fn stop_boxed(&mut self) -> BoxFuture<Result<()>> {
-        Box::pin(async move { self.stop().await })
-    }
-
-    fn display_boxed(&self, output: &str) -> BoxFuture<Result<()>> {
-        let output = output.to_string();
-        Box::pin(async move { self.display(&output).await })
-    }
-
-    fn echo_input_boxed(&self, input: &str) -> BoxFuture<Result<()>> {
-        let input = input.to_string();
-        Box::pin(async move { self.echo_input(&input).await })
-    }
-
-    fn execute_command_boxed(
-        &self,
-        command: &str,
-        tx: Option<mpsc::Sender<String>>,
-    ) -> BoxFuture<Result<()>> {
-        let command = command.to_string();
-        Box::pin(async move { self.execute_command(&command, tx).await })
     }
 }

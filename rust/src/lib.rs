@@ -18,7 +18,7 @@
 //! use mcp_agent::mcp::agent::Agent;
 //! use mcp_agent::mcp::types::{Message, Priority};
 //! use serde_json::json;
-//! 
+//!
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //!     // Create a new agent
@@ -34,8 +34,8 @@
 //!     
 //!     // Execute a task with timeout
 //!     let result = agent.execute_task(
-//!         "example.task", 
-//!         json!({ "param": "value" }), 
+//!         "example.task",
+//!         json!({ "param": "value" }),
 //!         Some(std::time::Duration::from_secs(5))
 //!     ).await?;
 //!     

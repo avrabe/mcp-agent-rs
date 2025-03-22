@@ -27,10 +27,10 @@ pub struct ConsoleTerminal {
 }
 
 impl ConsoleTerminal {
-    /// Create a new ConsoleTerminal
-    pub fn new() -> Self {
+    /// Create a new console terminal
+    pub fn new(id: String) -> Self {
         Self {
-            id: Uuid::new_v4().to_string(),
+            id,
             stdin: BufReader::new(tokio::io::stdin()),
             stdout: tokio::io::stdout(),
         }
@@ -39,7 +39,7 @@ impl ConsoleTerminal {
 
 impl Default for ConsoleTerminal {
     fn default() -> Self {
-        Self::new()
+        Self::new(Uuid::new_v4().to_string())
     }
 }
 
@@ -93,21 +93,21 @@ mod tests {
 
     #[tokio::test]
     async fn test_console_terminal_id() {
-        let terminal = ConsoleTerminal::new();
+        let terminal = ConsoleTerminal::new(Uuid::new_v4().to_string());
         let id = terminal.id().await.unwrap();
         assert_eq!(id, Uuid::new_v4().to_string());
     }
 
     #[tokio::test]
     async fn test_console_terminal_start_stop() {
-        let mut terminal = ConsoleTerminal::new();
+        let mut terminal = ConsoleTerminal::new(Uuid::new_v4().to_string());
         assert!(terminal.start().await.is_ok());
         assert!(terminal.stop().await.is_ok());
     }
 
     #[tokio::test]
     async fn test_console_terminal_display() {
-        let terminal = ConsoleTerminal::new();
+        let terminal = ConsoleTerminal::new(Uuid::new_v4().to_string());
 
         // Redirect stdout to a buffer for testing
         // Note: This is not a perfect test as we can't easily capture stdout in tests
@@ -118,7 +118,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_console_terminal_execute_command() {
-        let terminal = ConsoleTerminal::new();
+        let terminal = ConsoleTerminal::new(Uuid::new_v4().to_string());
         let (tx, rx) = oneshot::channel();
 
         // Execute a simple echo command

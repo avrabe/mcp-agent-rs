@@ -4,21 +4,42 @@
 //! the reqwest library for HTTP support.
 
 #[cfg(feature = "transport-http")]
-use reqwest::{Client, StatusCode};
+use crate::error::{Error, Result};
 #[cfg(feature = "transport-http")]
-use tracing::{debug, error};
+use crate::mcp::transport::{AsyncTransport, Transport, TransportConfig, TransportFactory};
+#[cfg(feature = "transport-http")]
+use crate::mcp::types::{
+    JsonRpcBatchRequest as BatchRequest, JsonRpcBatchResponse as BatchResponse,
+    JsonRpcRequest as Request, JsonRpcResponse as Response, Message,
+};
+#[cfg(feature = "transport-http")]
+use async_trait::async_trait;
+#[cfg(feature = "transport-http")]
+use reqwest::Client;
+#[cfg(feature = "transport-http")]
+use std::fmt;
+#[cfg(feature = "transport-http")]
+use std::sync::Arc;
 #[cfg(feature = "transport-http")]
 use std::time::Duration;
 #[cfg(feature = "transport-http")]
-use url::Url;
+use tracing::{debug, error};
 #[cfg(feature = "transport-http")]
-use async_trait::async_trait;
+use url::Url;
 
-use super::{Transport, TransportConfig, TransportFactory};
+// for the not(feature) case
+#[cfg(not(feature = "transport-http"))]
 use crate::error::{Error, Result};
+#[cfg(not(feature = "transport-http"))]
+use crate::mcp::transport::{Transport, TransportConfig, TransportFactory};
+#[cfg(not(feature = "transport-http"))]
+use std::fmt;
+#[cfg(not(feature = "transport-http"))]
 use std::sync::Arc;
 
 /// HTTP transport for MCP protocol
+///
+/// This transport uses HTTP to send and receive MCP messages
 #[cfg(feature = "transport-http")]
 pub struct HttpTransport {
     /// The HTTP client
@@ -29,10 +50,21 @@ pub struct HttpTransport {
     config: TransportConfig,
 }
 
+// Implement Debug manually
+#[cfg(feature = "transport-http")]
+impl fmt::Debug for HttpTransport {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("HttpTransport")
+            .field("url", &self.url)
+            .field("config", &self.config)
+            .finish_non_exhaustive()
+    }
+}
+
 #[cfg(feature = "transport-http")]
 impl HttpTransport {
     /// Create a new HTTP transport
-    pub fn new(config: TransportConfig) -> Result<Self, Error> {
+    pub fn new(config: TransportConfig) -> Result<Self> {
         // Parse base URL
         let url = Url::parse(&config.url)
             .map_err(|_| Error::Internal(format!("Invalid HTTP URL: {}", config.url)))?;
@@ -77,16 +109,13 @@ impl AsyncTransport for HttpTransport {
         if !status.is_success() {
             let error_msg = format!("HTTP error: {}", status);
             error!("{}", error_msg);
-            return Err(Error::Protocol(error_msg));
+            return Err(Error::Internal(error_msg));
         }
 
         Ok(())
     }
 
     async fn send_request(&self, request: Request) -> Result<Response> {
-        // Convert request to Message
-        let message = request.clone().into_message();
-
         // Build URL for request endpoint
         let url = self
             .url
@@ -96,10 +125,14 @@ impl AsyncTransport for HttpTransport {
         debug!("Sending request to {}", url);
 
         // Convert to JSON and send
+        let message_bytes = serde_json::to_vec(&request)
+            .map_err(|e| Error::Internal(format!("Failed to serialize request: {}", e)))?;
+
         let response = self
             .client
             .post(url)
-            .json(&message)
+            .body(message_bytes)
+            .header("Content-Type", "application/json")
             .send()
             .await
             .map_err(|e| Error::Internal(format!("HTTP request failed: {}", e)))?;
@@ -109,7 +142,7 @@ impl AsyncTransport for HttpTransport {
         if !status.is_success() {
             let error_msg = format!("HTTP error: {}", status);
             error!("{}", error_msg);
-            return Err(Error::Protocol(error_msg));
+            return Err(Error::Internal(error_msg));
         }
 
         // Parse response
@@ -118,12 +151,8 @@ impl AsyncTransport for HttpTransport {
             .await
             .map_err(|e| Error::Internal(format!("Failed to read response: {}", e)))?;
 
-        let response_message: Message = serde_json::from_slice(&response_bytes)
+        let mcp_response: Response = serde_json::from_slice(&response_bytes)
             .map_err(|e| Error::Internal(format!("Failed to parse response: {}", e)))?;
-
-        let mcp_response = Response::from_bytes(&response_bytes).map_err(|e| {
-            Error::Internal(format!("Failed to convert message to response: {}", e))
-        })?;
 
         Ok(mcp_response)
     }
@@ -151,7 +180,7 @@ impl AsyncTransport for HttpTransport {
         if !status.is_success() {
             let error_msg = format!("HTTP error: {}", status);
             error!("{}", error_msg);
-            return Err(Error::Protocol(error_msg));
+            return Err(Error::Internal(error_msg));
         }
 
         // Parse response
@@ -172,32 +201,14 @@ impl AsyncTransport for HttpTransport {
     }
 }
 
-#[cfg(feature = "transport-http")]
-impl Transport for HttpTransport {
-    fn send_message_boxed(
-        &self,
-        message: Message,
-    ) -> Box<dyn std::future::Future<Output = Result<()>> + Send + Unpin + '_> {
-        Box::pin(self.send_message(message))
-    }
-
-    fn send_request_boxed(
-        &self,
-        request: Request,
-    ) -> Box<dyn std::future::Future<Output = Result<Response>> + Send + Unpin + '_> {
-        Box::pin(self.send_request(request))
-    }
-
-    fn send_batch_request_boxed(
-        &self,
-        batch_request: BatchRequest,
-    ) -> Box<dyn std::future::Future<Output = Result<BatchResponse>> + Send + Unpin + '_> {
-        Box::pin(self.send_batch_request(batch_request))
-    }
-
-    fn close_boxed(&self) -> Box<dyn std::future::Future<Output = Result<()>> + Send + Unpin + '_> {
-        Box::pin(self.close())
-    }
+/// HTTP transport implementation placeholder
+///
+/// This is a placeholder struct that exists when the `transport-http` feature
+/// is not enabled. For actual functionality, enable the `transport-http` feature.
+#[cfg(not(feature = "transport-http"))]
+#[derive(Debug)]
+pub struct HttpTransport {
+    _private: (),
 }
 
 /// Factory for creating HTTP transports
@@ -230,7 +241,7 @@ impl TransportFactory for HttpTransportFactory {
 #[cfg(not(feature = "transport-http"))]
 #[derive(Debug)]
 pub struct HttpTransportFactory {
-    _config: TransportConfig,
+    _private: (),
 }
 
 #[cfg(not(feature = "transport-http"))]
@@ -240,7 +251,7 @@ impl HttpTransportFactory {
     /// # Arguments
     /// * `config` - The transport configuration (not used when feature is disabled)
     pub fn new(config: TransportConfig) -> Self {
-        Self { _config: config }
+        Self { _private: () }
     }
 }
 

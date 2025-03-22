@@ -3,30 +3,24 @@
 //! Manages I/O routing between terminal interfaces and the agen
 
 use log::{debug, error, info, trace, warn};
+use std::collections::HashMap;
+use std::fmt;
 use std::sync::Arc;
+use tokio::sync::{mpsc, Mutex, oneshot, Mutex as TokioMutex};
+use uuid::Uuid;
 
-use super::console::ConsoleTerminal;
 use super::sync::TerminalSynchronizer;
-// use super::web::WebTerminalServer;
-use super::config::TerminalConfig;
-use super::config::WebTerminalConfig;
-use super::AsyncTerminal;
-use super::Terminal;
-use crate::error::{Error, Result};
-use tokio::sync::mpsc;
-
-use tokio::sync::Mutex as TokioMutex;
-
+use super::config::{TerminalConfig, WebTerminalConfig};
+use super::{AsyncTerminal, Terminal};
 use super::graph::GraphManager;
+use super::terminal_helpers;
 use super::web::WebTerminal;
+use super::console;
+use crate::error::{Error, Result};
 use crate::mcp::agent::Agent;
 use crate::workflow::engine::WorkflowEngine;
 
 use once_cell::sync::OnceCell;
-
-use super::AsyncTerminal;
-use crate::terminal::terminal_helpers;
-use tokio::sync::mpsc;
 
 // Global terminal router instance
 static TERMINAL_ROUTER: OnceCell<Arc<TerminalRouter>> = OnceCell::new();
@@ -128,8 +122,9 @@ impl TerminalRouter {
                 debug!("Stopping console terminal");
                 let id = console.id_sync().await?;
 
-                let mut_console = Arc::get_mut(&mut console.clone()).unwrap();
-                mut_console.stop_sync().await?;
+                // Create a mutable copy for stopping
+                let mut console_copy = ConsoleTerminal::default();
+                console_copy.stop_sync().await?;
 
                 // Unregister from synchronizer
                 let mut synchronizer = self.synchronizer.lock().await;
@@ -144,8 +139,18 @@ impl TerminalRouter {
                 debug!("Stopping web terminal");
                 let id = web.id_sync().await?;
 
-                let mut_web: &mut dyn Terminal = Arc::get_mut(&mut web.clone()).unwrap();
-                mut_web.stop_sync().await?;
+                // Properly stop the web terminal
+                if let Some(web_terminal) = &self.web_terminal {
+                    let web = web_terminal.lock().await;
+                    if let Some(web_arc) = &*web {
+                        // Create a copy of the web terminal and stop it
+                        let mut web_copy = WebTerminal::default();
+                        if let Ok(web_mut) = Arc::try_unwrap(web_arc.clone()) {
+                            web_copy = web_mut;
+                        }
+                        web_copy.stop().await?;
+                    }
+                }
 
                 // Unregister from synchronizer
                 let mut synchronizer = self.synchronizer.lock().await;
@@ -418,32 +423,93 @@ impl TerminalRouter {
     async fn initialize_terminal(&self, terminal_id: &str) -> Result<()> {
         debug!("Initializing terminal: {}", terminal_id);
 
-        // No graph provider to initialize
+        // Get the terminal by ID
+        let terminal = match self.get_terminal(terminal_id).await? {
+            Some(term) => term,
+            None => {
+                return Err(Error::TerminalError(format!(
+                    "Cannot initialize non-existent terminal: {}",
+                    terminal_id
+                )));
+            }
+        };
+
+        // If we have a graph manager, share it with the terminal if it's a web terminal
+        if let Some(graph_manager) = &*self.graph_manager.lock().await {
+            if terminal_id.starts_with("web") {
+                // Web terminal-specific initialization could be done here
+                debug!("Initializing web terminal with graph manager");
+                let graph_manager_id = format!("gm-{}", Uuid::new_v4());
+
+                // Use terminal_helpers to send command to the terminal
+                let (tx, rx) = oneshot::channel();
+                terminal_helpers::execute_command(
+                    &*terminal,
+                    &format!("SET_GRAPH_MANAGER:{}", graph_manager_id),
+                    tx,
+                )
+                .await?;
+
+                // Check response
+                match rx.await {
+                    Ok(_) => debug!(
+                        "Graph manager set successfully for terminal: {}",
+                        terminal_id
+                    ),
+                    Err(e) => warn!("Failed to set graph manager: {}", e),
+                }
+            }
+        }
+
         Ok(())
     }
 
-    pub async fn get_terminal(&self, id: &str) -> Result<Arc<dyn Terminal>> {
-        let terminals = self.terminals.lock().await;
-
-        if let Some(terminal) = terminals.get(id) {
-            Ok(terminal.clone())
-        } else {
-            Err(Error::TerminalError(format!("Terminal not found: {}", id)))
+    pub async fn get_terminal(&self, id: &str) -> Result<Option<Arc<dyn Terminal>>> {
+        // Check console terminal
+        let console = self.console_terminal.lock().await;
+        if let Some(term) = &*console {
+            if let Ok(term_id) = term.id_sync().await {
+                if term_id == id {
+                    return Ok(Some(term.clone()));
+                }
+            }
         }
+
+        // Check web terminal
+        let web = self.web_terminal.lock().await;
+        if let Some(term) = &*web {
+            if let Ok(term_id) = term.id_sync().await {
+                if term_id == id {
+                    return Ok(Some(term.clone()));
+                }
+            }
+        }
+
+        Ok(None)
     }
 
     async fn broadcast_to_terminals(&self, message: &str) -> Result<()> {
-        let terminals = self.terminals.lock().await;
+        // Check if we have any terminals available
+        let has_console = self.console_terminal.lock().await.is_some();
+        let has_web = self.web_terminal.lock().await.is_some();
 
-        if terminals.is_empty() {
-            return Err(Error::TerminalError(format!(
-                "No terminals available to broadcast message"
-            )));
+        if !has_console && !has_web {
+            return Err(Error::TerminalError(
+                "No terminals available to broadcast message".to_string(),
+            ));
         }
 
-        for terminal in terminals.values() {
-            if let Err(e) = terminal_helpers::display(terminal, message).await {
-                error!("Failed to broadcast to terminal: {}", e);
+        // Send to console terminal if available
+        if let Some(console) = &*self.console_terminal.lock().await {
+            if let Err(e) = terminal_helpers::display(&**console, message).await {
+                error!("Failed to broadcast to console terminal: {}", e);
+            }
+        }
+
+        // Send to web terminal if available
+        if let Some(web) = &*self.web_terminal.lock().await {
+            if let Err(e) = terminal_helpers::display(&**web, message).await {
+                error!("Failed to broadcast to web terminal: {}", e);
             }
         }
 
@@ -451,18 +517,52 @@ impl TerminalRouter {
     }
 
     pub async fn send_input_to_terminal(&self, terminal_id: &str, input: &str) -> Result<()> {
-        let terminals = self.terminals.lock().await;
-
-        if let Some(terminal) = terminals.get(terminal_id) {
-            let terminal = terminal.clone();
-            drop(terminals);
-
-            terminal_helpers::echo_input(&*terminal, input).await
-        } else {
-            Err(Error::TerminalError(format!(
+        // Try to get the terminal by ID
+        match self.get_terminal(terminal_id).await? {
+            Some(terminal) => terminal_helpers::echo_input(&*terminal, input).await,
+            None => Err(Error::TerminalError(format!(
                 "Terminal not found: {}",
                 terminal_id
-            )))
+            ))),
+        }
+    }
+
+    /// List all available terminal IDs
+    pub async fn list_terminals(&self) -> Result<Vec<String>> {
+        let mut terminals = Vec::new();
+
+        // Add console terminal if available
+        let console = self.console_terminal.lock().await;
+        if let Some(term) = &*console {
+            if let Ok(id) = term.id_sync().await {
+                terminals.push(id);
+            }
+        }
+
+        // Add web terminal if available
+        let web = self.web_terminal.lock().await;
+        if let Some(term) = &*web {
+            if let Ok(id) = term.id_sync().await {
+                terminals.push(id);
+            }
+        }
+
+        Ok(terminals)
+    }
+
+    /// Get the default terminal
+    pub async fn get_default_terminal(&self) -> Result<Option<Arc<dyn Terminal>>> {
+        // Try to get the configured default terminal
+        if let Some(terminal) = self.get_terminal(&self.default_terminal).await? {
+            return Ok(Some(terminal));
+        }
+
+        // If default is not available, return the first available terminal
+        let terminals = self.list_terminals().await?;
+        if let Some(first_id) = terminals.first() {
+            self.get_terminal(first_id).await
+        } else {
+            Ok(None)
         }
     }
 }

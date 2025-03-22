@@ -6,6 +6,8 @@ use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
 
+use crate::terminal::terminal_helpers;
+use log::{debug as log_debug, error as log_error, info as log_info, warn};
 use tokio::sync::{mpsc, oneshot, Mutex};
 use tracing::{debug, error, info};
 

@@ -1,5 +1,4 @@
 use anyhow::Result;
-use std::collections::HashMap;
 
 use mcp_agent::telemetry::{init_telemetry, TelemetryConfig};
 

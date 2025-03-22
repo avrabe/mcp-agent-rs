@@ -179,8 +179,3 @@ path = "examples/graph_visualization.rs"
 name = "simple_graph"
 path = "examples/simple_graph.rs"
 required-features = ["terminal-web"]
-
-[[example]]
-name = "standalone_graph"
-path = "examples/standalone_graph.rs"
-required-features = ["terminal-web"]

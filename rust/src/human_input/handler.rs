@@ -13,7 +13,7 @@ use crate::human_input::types::{HumanInputHandler, HumanInputRequest, HumanInput
 /// A console-based human input handler that displays prompts and collects input via the terminal
 #[derive(Debug, Clone)]
 pub struct ConsoleInputHandler {
-    /// Whether to use colored output
+    /// Whether to use colored outpu
     colored_output: bool,
 
     /// Access mutex to coordinate multiple requests
@@ -57,7 +57,7 @@ impl ConsoleInputHandler {
         // Add separator line
         prompt_text.push_str(&format!("{}\n", "─".repeat(50)));
 
-        // Add description if present
+        // Add description if presen
         if let Some(description) = &request.description {
             if self.colored_output {
                 prompt_text.push_str(&format!("{}\n\n", description.bold()));
@@ -66,10 +66,10 @@ impl ConsoleInputHandler {
             }
         }
 
-        // Add the prompt
+        // Add the promp
         prompt_text.push_str(&request.prompt);
 
-        // Add timeout information if present
+        // Add timeout information if presen
         if let Some(timeout_seconds) = request.timeout_seconds {
             if self.colored_output {
                 prompt_text.push_str(&format!(
@@ -90,7 +90,7 @@ impl ConsoleInputHandler {
         // Use a mutex to ensure only one input request is active at a time
         let _lock = self.access_mutex.lock().await;
 
-        // Print the formatted prompt
+        // Print the formatted promp
         let prompt = self.format_prompt(request);
         println!("\n{}\n", prompt);
 

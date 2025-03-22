@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MCP-Agent Web Terminal</title>
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/xterm@5.1.0/css/xterm.css"
+    />
+    <style>
+      body {
+        font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+        margin: 0;
+        padding: 0;
+        background-color: #2d2d2d;
+        color: #eaeaea;
+        height: 100vh;
+        display: flex;
+        flex-direction: column;
+      }
+
+      header {
+        background-color: #1e1e1e;
+        padding: 10px 20px;
+        border-bottom: 1px solid #444;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+
+      h1 {
+        margin: 0;
+        font-size: 1.5rem;
+        font-weight: 500;
+      }
+
+      .status {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 0.9rem;
+      }
+
+      .status-indicator {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background-color: #888;
+      }
+
+      .status-indicator.connected {
+        background-color: #4caf50;
+      }
+
+      .status-indicator.disconnected {
+        background-color: #f44336;
+      }
+
+      main {
+        flex: 1;
+        padding: 20px;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+      }
+
+      #terminal-container {
+        flex: 1;
+        background-color: #1e1e1e;
+        border-radius: 6px;
+        overflow: hidden;
+        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+      }
+
+      footer {
+        background-color: #1e1e1e;
+        padding: 10px 20px;
+        border-top: 1px solid #444;
+        font-size: 0.8rem;
+        text-align: center;
+      }
+
+      .auth-container {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background-color: rgba(0, 0, 0, 0.7);
+        display: none;
+        justify-content: center;
+        align-items: center;
+        z-index: 100;
+      }
+
+      .auth-form {
+        background-color: #2d2d2d;
+        padding: 20px;
+        border-radius: 8px;
+        width: 300px;
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+      }
+
+      .auth-form h2 {
+        margin-top: 0;
+        text-align: center;
+      }
+
+      .form-group {
+        margin-bottom: 15px;
+      }
+
+      .form-group label {
+        display: block;
+        margin-bottom: 5px;
+      }
+
+      .form-group input {
+        width: 100%;
+        padding: 8px;
+        border-radius: 4px;
+        border: 1px solid #444;
+        background-color: #333;
+        color: #eaeaea;
+        box-sizing: border-box;
+      }
+
+      .form-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 10px;
+        margin-top: 20px;
+      }
+
+      button {
+        padding: 8px 16px;
+        border-radius: 4px;
+        border: none;
+        background-color: #0078d4;
+        color: white;
+        cursor: pointer;
+      }
+
+      button:hover {
+        background-color: #0066b3;
+      }
+
+      button.secondary {
+        background-color: #444;
+      }
+
+      button.secondary:hover {
+        background-color: #555;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>MCP-Agent Web Terminal</h1>
+      <div class="status">
+        <div id="status-indicator" class="status-indicator disconnected"></div>
+        <span id="status-text">Disconnected</span>
+      </div>
+    </header>
+
+    <main>
+      <div id="terminal-container"></div>
+    </main>
+
+    <footer>
+      <p>MCP-Agent Terminal System - Powered by Rust and xterm.js</p>
+    </footer>
+
+    <div id="auth-container" class="auth-container">
+      <div class="auth-form">
+        <h2>Authentication Required</h2>
+        <div class="form-group">
+          <label for="username">Username</label>
+          <input type="text" id="username" name="username" />
+        </div>
+        <div class="form-group">
+          <label for="password">Password</label>
+          <input type="password" id="password" name="password" />
+        </div>
+        <div class="form-actions">
+          <button class="secondary" id="cancel-auth">Cancel</button>
+          <button id="submit-auth">Login</button>
+        </div>
+      </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/xterm@5.1.0/lib/xterm.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.7.0/lib/xterm-addon-fit.js"></script>
+    <script>
+      // Terminal settings
+      const clientId = `client-${Math.random().toString(36).substr(2, 9)}`;
+      let socket = null;
+      let term = null;
+      let authToken = null;
+      let reconnectAttempts = 0;
+      const maxReconnectAttempts = 5;
+      const reconnectDelay = 2000;
+
+      // Get elements
+      const statusIndicator = document.getElementById("status-indicator");
+      const statusText = document.getElementById("status-text");
+      const authContainer = document.getElementById("auth-container");
+      const usernameInput = document.getElementById("username");
+      const passwordInput = document.getElementById("password");
+      const submitAuthButton = document.getElementById("submit-auth");
+      const cancelAuthButton = document.getElementById("cancel-auth");
+
+      // Initialize terminal
+      function initTerminal() {
+        // Create terminal
+        term = new Terminal({
+          cursorBlink: true,
+          fontSize: 14,
+          fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+          theme: {
+            background: "#1e1e1e",
+            foreground: "#eaeaea",
+            cursor: "#ffffff",
+            selection: "rgba(170, 170, 170, 0.3)",
+            black: "#000000",
+            brightBlack: "#666666",
+            red: "#E06C75",
+            brightRed: "#F44747",
+            green: "#98C379",
+            brightGreen: "#B5CEA8",
+            yellow: "#E5C07B",
+            brightYellow: "#D7BA7D",
+            blue: "#61AFEF",
+            brightBlue: "#9CDCFE",
+            magenta: "#C678DD",
+            brightMagenta: "#D7A3E5",
+            cyan: "#56B6C2",
+            brightCyan: "#9CDCFE",
+            white: "#DBDBDB",
+            brightWhite: "#FFFFFF",
+          },
+        });
+
+        // Use fit addon to make terminal responsive
+        const fitAddon = new FitAddon.FitAddon();
+        term.loadAddon(fitAddon);
+
+        // Open terminal in container
+        term.open(document.getElementById("terminal-container"));
+        fitAddon.fit();
+
+        // Handle window resize
+        window.addEventListener("resize", () => {
+          fitAddon.fit();
+        });
+
+        // Handle user input
+        term.onData((data) => {
+          if (socket && socket.readyState === WebSocket.OPEN) {
+            socket.send(data);
+          }
+        });
+
+        // Display welcome message
+        term.writeln(
+          "\x1b[1;34m=== MCP-Agent Web Terminal Interface ===\x1b[0m"
+        );
+        term.writeln("Connecting to server...");
+
+        // Connect to WebSocket server
+        connectWebSocket();
+      }
+
+      // Connect to WebSocket server
+      function connectWebSocket() {
+        const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+        const host = window.location.host;
+        const wsUrl = `${protocol}//${host}/ws/${clientId}`;
+
+        updateStatus("connecting", "Connecting...");
+
+        try {
+          socket = new WebSocket(wsUrl);
+
+          socket.onopen = () => {
+            reconnectAttempts = 0;
+            updateStatus("connected", "Connected");
+            term.writeln("\r\n\x1b[1;32mConnected to server\x1b[0m");
+          };
+
+          socket.onmessage = (event) => {
+            term.write(event.data);
+          };
+
+          socket.onclose = () => {
+            updateStatus("disconnected", "Disconnected");
+            term.writeln("\r\n\x1b[1;31mDisconnected from server\x1b[0m");
+
+            // Try to reconnect
+            if (reconnectAttempts < maxReconnectAttempts) {
+              reconnectAttempts++;
+              term.writeln(
+                `\r\nReconnecting... Attempt ${reconnectAttempts}/${maxReconnectAttempts}`
+              );
+              setTimeout(connectWebSocket, reconnectDelay);
+            } else {
+              term.writeln(
+                "\r\n\x1b[1;31mFailed to reconnect after multiple attempts\x1b[0m"
+              );
+              term.writeln("Please refresh the page to try again.");
+            }
+          };
+
+          socket.onerror = (error) => {
+            console.error("WebSocket error:", error);
+            term.writeln("\r\n\x1b[1;31mWebSocket error occurred\x1b[0m");
+          };
+        } catch (error) {
+          console.error("Failed to create WebSocket:", error);
+          term.writeln(
+            "\r\n\x1b[1;31mFailed to create WebSocket connection\x1b[0m"
+          );
+          updateStatus("disconnected", "Connection Failed");
+        }
+      }
+
+      // Update connection status indicator
+      function updateStatus(status, text) {
+        statusText.textContent = text;
+        statusIndicator.className = "status-indicator";
+
+        if (status === "connected") {
+          statusIndicator.classList.add("connected");
+        } else if (status === "disconnected") {
+          statusIndicator.classList.add("disconnected");
+        } else {
+          // Default or connecting state
+          statusIndicator.style.backgroundColor = "#FFA500"; // Orange for connecting
+        }
+      }
+
+      // Initialize when page loads
+      window.addEventListener("load", () => {
+        initTerminal();
+      });
+    </script>
+  </body>
+</html>

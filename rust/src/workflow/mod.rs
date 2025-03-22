@@ -3,7 +3,7 @@
 //! This module provides a Rust implementation of the workflow engine
 //! ported from the Python implementation. It supports:
 //!
-//! - Workflow state management
+//! - Workflow state managemen
 //! - Task execution with retry policies
 //! - Signal handling for workflow pausing/resuming
 //! - Integration with the MCP agent telemetry system

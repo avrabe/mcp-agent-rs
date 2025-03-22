@@ -96,6 +96,255 @@ The MCP-Agent architecture consists of the following major components:
    
    Provides a unified terminal interface layer supporting both console and web-based terminals with synchronized I/O, configurable activation, and secure remote access.
 
+.. arch:: Terminal System
+   :id: ARCH-013
+   :status: implemented
+   :tags: ui;terminal
+   :links: REQ-020;REQ-021;REQ-022
+   
+   Provides both console and web-based terminal interfaces with synchronization capabilities for consistent user interaction.
+
+.. uml:: _static/terminal_system.puml
+   :alt: Terminal System
+
+Graph Visualization System
+-------------------------
+
+.. arch:: Graph Visualization System
+   :id: ARCH-016
+   :status: open
+   :tags: ui;visualization
+   :links: REQ-026;REQ-027;REQ-028;REQ-029;REQ-030;REQ-031;REQ-032;REQ-033;REQ-034
+   
+   Provides interactive graph visualization for workflows, agents, and system components, with real-time updates and integration with the terminal system.
+
+.. arch:: Graph Data Providers
+   :id: ARCH-017
+   :status: open
+   :tags: visualization;data
+   :links: REQ-026;REQ-027;REQ-028;REQ-029;ARCH-016
+   
+   Extracts data from MCP-Agent components (workflow engine, agent system, etc.) and converts it to standardized graph models for visualization.
+
+.. arch:: Graph Manager
+   :id: ARCH-018
+   :status: open
+   :tags: visualization;state
+   :links: REQ-031;ARCH-016;ARCH-017
+   
+   Manages graph state and propagates updates to subscribers, serving as the central coordinator for the visualization system.
+
+.. arch:: Graph Visualization API
+   :id: ARCH-019
+   :status: open
+   :tags: visualization;api
+   :links: REQ-033;ARCH-016;ARCH-018
+   
+   Provides REST and WebSocket endpoints for accessing graph data, allowing clients to retrieve graphs and subscribe to real-time updates.
+
+.. arch:: Sprotty Integration
+   :id: ARCH-020
+   :status: open
+   :tags: visualization;frontend
+   :links: REQ-034;ARCH-016;ARCH-019
+   
+   Implements client-side integration with Eclipse Sprotty for interactive graph rendering, with model mapping between backend data and Sprotty-compatible formats.
+
+.. uml:: graph-visualization-system
+
+    @startuml
+    
+    package "MCP-Agent Core" {
+        [WorkflowEngine] as WE
+        [AgentSystem] as AS
+        [LlmProviders] as LLM
+        [HumanInputSystem] as HIS
+    }
+    
+    package "Graph Visualization System" {
+        [GraphManager] as GM
+        
+        package "Data Providers" {
+            [WorkflowGraphProvider] as WGP
+            [AgentGraphProvider] as AGP
+            [LlmIntegrationProvider] as LIP
+            [HumanInputProvider] as HIP
+        }
+        
+        package "Backend API" {
+            [GraphRestAPI] as GAPI
+            [GraphWebSocketAPI] as GWSAPI
+        }
+    }
+    
+    package "Terminal System" {
+        [WebTerminal] as WT
+        [ConsoleTerminal] as CT
+    }
+    
+    package "Web Client" {
+        [SprottyRenderer] as SR
+        [VisualizationControls] as VC
+        [WebSocket Client] as WSC
+    }
+    
+    WE --> WGP : "Provides data"
+    AS --> AGP : "Provides data"
+    LLM --> LIP : "Provides data"
+    HIS --> HIP : "Provides data"
+    
+    WGP --> GM : "Registers graphs"
+    AGP --> GM : "Registers graphs"
+    LIP --> GM : "Registers graphs"
+    HIP --> GM : "Registers graphs"
+    
+    GM --> GAPI : "Provides data"
+    GM --> GWSAPI : "Provides updates"
+    
+    GAPI --> SR : "Initial graph data"
+    GWSAPI --> WSC : "Real-time updates"
+    WSC --> SR : "Updates visualization"
+    
+    WT --> WSC : "Embeds"
+    WT --> SR : "Embeds"
+    WT --> VC : "Embeds"
+    
+    @enduml
+
+.. uml:: graph-data-models
+
+    @startuml
+    
+    package "Core Graph Model" {
+        class Graph {
+            +id: String
+            +name: String
+            +graph_type: String
+            +nodes: Vec<GraphNode>
+            +edges: Vec<GraphEdge>
+            +properties: HashMap<String, Value>
+        }
+        
+        class GraphNode {
+            +id: String
+            +name: String
+            +node_type: String
+            +status: String
+            +properties: HashMap<String, Value>
+        }
+        
+        class GraphEdge {
+            +id: String
+            +source: String
+            +target: String
+            +edge_type: String
+            +properties: HashMap<String, Value>
+        }
+        
+        class GraphUpdate {
+            +graph_id: String
+            +update_type: GraphUpdateType
+            +graph: Option<Graph>
+            +node: Option<GraphNode>
+            +edge: Option<GraphEdge>
+        }
+        
+        enum GraphUpdateType {
+            +FullUpdate
+            +NodeAdded
+            +NodeUpdated
+            +NodeRemoved
+            +EdgeAdded
+            +EdgeUpdated
+            +EdgeRemoved
+        }
+    }
+    
+    package "Sprotty Model" {
+        class SprottyRoot {
+            +id: String
+            +type: String
+            +children: Vec<SprottyElement>
+        }
+        
+        class SprottyNode {
+            +id: String
+            +cssClasses: Option<Vec<String>>
+            +layout: Option<String>
+            +position: Option<SprottyPoint>
+            +size: Option<SprottyDimension>
+            +children: Vec<SprottyElement>
+            +properties: HashMap<String, Value>
+        }
+        
+        class SprottyEdge {
+            +id: String
+            +sourceId: String
+            +targetId: String
+            +cssClasses: Option<Vec<String>>
+            +routingPoints: Option<Vec<SprottyPoint>>
+            +children: Vec<SprottyElement>
+            +properties: HashMap<String, Value>
+        }
+    }
+    
+    Graph o--> GraphNode : "contains"
+    Graph o--> GraphEdge : "contains"
+    GraphUpdate --> Graph : "may contain"
+    GraphUpdate --> GraphNode : "may contain"
+    GraphUpdate --> GraphEdge : "may contain"
+    GraphUpdate --> GraphUpdateType : "has type"
+    
+    SprottyRoot o--> SprottyNode : "may contain"
+    SprottyRoot o--> SprottyEdge : "may contain"
+    
+    @enduml
+
+.. uml:: graph-data-flow
+
+    @startuml
+    
+    actor User
+    participant WebClient
+    participant WebTerminal
+    participant GraphWebSocketAPI
+    participant GraphRestAPI
+    participant GraphManager
+    participant DataProviders
+    participant MCPComponents
+    
+    == Initialization ==
+    
+    User -> WebTerminal: Access web terminal
+    WebTerminal -> GraphRestAPI: Request available graphs
+    GraphRestAPI -> GraphManager: Get graph list
+    GraphManager --> GraphRestAPI: Return graph IDs
+    GraphRestAPI --> WebTerminal: Graph IDs
+    WebTerminal -> WebClient: Show visualization toggle
+    
+    == Connect to Data Stream ==
+    
+    User -> WebClient: Toggle visualization
+    WebClient -> GraphWebSocketAPI: Open WebSocket connection
+    GraphWebSocketAPI -> GraphManager: Subscribe to updates
+    GraphManager --> GraphWebSocketAPI: Confirm subscription
+    WebClient -> GraphRestAPI: Request initial graph data
+    GraphRestAPI -> GraphManager: Get graph data
+    GraphManager --> GraphRestAPI: Return graph data
+    GraphRestAPI --> WebClient: Graph data
+    WebClient -> WebClient: Render graph
+    
+    == Real-time Updates ==
+    
+    MCPComponents -> DataProviders: State change notification
+    DataProviders -> GraphManager: Update graph data
+    GraphManager -> GraphManager: Process update
+    GraphManager -> GraphWebSocketAPI: Broadcast update
+    GraphWebSocketAPI -> WebClient: Send update
+    WebClient -> WebClient: Update visualization
+    
+    @enduml
+
 Component Diagram
 ----------------
 

@@ -91,7 +91,7 @@ impl<T: 'static + Send> WorkflowTask<T> {
         self
     }
 
-    /// Execute the task with retries and timeout
+    /// Execute the task with retries and timeou
     #[instrument(skip(self), fields(task.name = %self.name, task.id = %self.id))]
     pub async fn execute(self) -> Result<T> {
         let mut attempt = 0;

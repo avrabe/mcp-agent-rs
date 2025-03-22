@@ -2,9 +2,9 @@
 //!
 //! This module offers comprehensive observability features:
 //! - Distributed tracing with Jaeger or OTLP exporters
-//! - Custom metrics collection and export
-//! - Span instrumentation with detailed context
-//! - Resource and attributes management
+//! - Custom metrics collection and expor
+//! - Span instrumentation with detailed contex
+//! - Resource and attributes managemen
 //! - Alerting system based on telemetry thresholds
 
 use std::collections::HashMap;
@@ -223,7 +223,7 @@ fn setup_jaeger_tracer(
 ) -> Result<(), Box<dyn std::error::Error>> {
     use tracing_opentelemetry::OpenTelemetryLayer;
 
-    // Parse agent endpoint into host and port
+    // Parse agent endpoint into host and por
     let parts: Vec<&str> = endpoint.split(':').collect();
     let (agent_host, agent_port) = match parts.as_slice() {
         [host, port] => (host.to_string(), port.parse::<u16>().unwrap_or(6831)),
@@ -330,7 +330,7 @@ pub fn add_metrics(metrics: HashMap<&'static str, f64>) {
     alerting().process_metrics(&metrics);
 }
 
-/// Create a new trace context
+/// Create a new trace contex
 pub fn create_trace_context(name: &'static str, level: Level) -> Span {
     match level {
         Level::TRACE => tracing::trace_span!("context", name = name),

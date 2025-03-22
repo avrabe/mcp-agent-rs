@@ -18,13 +18,13 @@ async fn main() -> Result<()> {
     // Create a handler
     let handler = ConsoleInputHandler::new();
 
-    // Simple input request
+    // Simple input reques
     let simple_request = HumanInputRequest::new("What is your name?");
     let name_response = handler.handle_request(simple_request).await?;
 
     println!("\n{} {}\n", "You entered:".bold(), name_response.response);
 
-    // Request with description and timeout
+    // Request with description and timeou
     let timeout_request = HumanInputRequest::new("What is your favorite color?")
         .with_description("Please answer in 10 seconds")
         .with_timeout(10);

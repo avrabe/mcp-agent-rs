@@ -43,7 +43,7 @@ impl SubWorkflow {
     }
 }
 
-struct OrchestratorWorkflow {
+pub struct OrchestratorWorkflow {
     state: WorkflowState,
     engine: WorkflowEngine,
     llm_client: Arc<MockLlmClient>,
@@ -53,7 +53,7 @@ struct OrchestratorWorkflow {
 }
 
 impl OrchestratorWorkflow {
-    fn new(engine: WorkflowEngine, llm_client: Arc<MockLlmClient>, input_data: String) -> Self {
+    pub fn new(engine: WorkflowEngine, llm_client: Arc<MockLlmClient>, input_data: String) -> Self {
         let mut metadata = HashMap::new();
         metadata.insert("input_size".to_string(), json!(input_data.len()));
 
@@ -397,12 +397,13 @@ impl OrchestratorWorkflow {
 }
 
 /// A mock LLM client for testing
-struct MockLlmClient {
+pub struct MockLlmClient {
     config: LlmConfig,
+    responses: HashMap<String, String>,
 }
 
 impl MockLlmClient {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             config: LlmConfig {
                 model: "mock-llama2".to_string(),
@@ -413,6 +414,7 @@ impl MockLlmClient {
                 top_p: Some(0.9),
                 parameters: HashMap::new(),
             },
+            responses: HashMap::new(),
         }
     }
 }

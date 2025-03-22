@@ -7,10 +7,10 @@ use uuid::Uuid;
 /// Signal name for human input in the workflow engine
 pub const HUMAN_INPUT_SIGNAL_NAME: &str = "__human_input__";
 
-/// A request for human input
+/// A request for human inpu
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HumanInputRequest {
-    /// Unique identifier for this request
+    /// Unique identifier for this reques
     pub request_id: String,
 
     /// The prompt to show to the user
@@ -34,7 +34,7 @@ pub struct HumanInputRequest {
 }
 
 impl HumanInputRequest {
-    /// Create a new human input request
+    /// Create a new human input reques
     pub fn new(prompt: impl Into<String>) -> Self {
         Self {
             request_id: Uuid::new_v4().to_string(),
@@ -46,25 +46,25 @@ impl HumanInputRequest {
         }
     }
 
-    /// Add a description to the request
+    /// Add a description to the reques
     pub fn with_description(mut self, description: impl Into<String>) -> Self {
         self.description = Some(description.into());
         self
     }
 
-    /// Add a workflow ID to the request
+    /// Add a workflow ID to the reques
     pub fn with_workflow_id(mut self, workflow_id: impl Into<String>) -> Self {
         self.workflow_id = Some(workflow_id.into());
         self
     }
 
-    /// Add a timeout to the request
+    /// Add a timeout to the reques
     pub fn with_timeout(mut self, seconds: u64) -> Self {
         self.timeout_seconds = Some(seconds);
         self
     }
 
-    /// Add metadata to the request
+    /// Add metadata to the reques
     pub fn with_metadata(mut self, metadata: HashMap<String, serde_json::Value>) -> Self {
         self.metadata = Some(metadata);
         self
@@ -76,10 +76,10 @@ impl HumanInputRequest {
     }
 }
 
-/// A response to a human input request
+/// A response to a human input reques
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HumanInputResponse {
-    /// ID of the original request
+    /// ID of the original reques
     pub request_id: String,
 
     /// The input provided by the human
@@ -110,7 +110,7 @@ impl HumanInputResponse {
 /// A trait for human input handlers
 #[async_trait]
 pub trait HumanInputHandler: Send + Sync {
-    /// Handle a human input request
+    /// Handle a human input reques
     async fn handle_request(
         &self,
         request: HumanInputRequest,

@@ -1,13 +1,12 @@
 #![allow(missing_docs)]
 #![allow(dead_code)]
 
-//! Error types for MCP-Agent
+//! Error types for MCP-Agen
 //!
 //! This module defines the error types used throughout the MCP-Agent codebase.
 
-use std::io;
-use thiserror::Error;
 use std::fmt;
+use std::io;
 
 /// MCP-Agent error types
 #[derive(Debug)]
@@ -42,7 +41,7 @@ pub enum Error {
     /// Feature not implemented
     NotImplemented(String),
 
-    /// Request timeout
+    /// Request timeou
     Timeout,
 
     /// Request cancelled
@@ -138,4 +137,4 @@ impl From<tokio::task::JoinError> for Error {
     fn from(err: tokio::task::JoinError) -> Self {
         Error::TerminalError(format!("Task join error: {}", err))
     }
-} 
+}

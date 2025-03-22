@@ -1,11 +1,12 @@
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::future::BoxFuture;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{Mutex, oneshot};
+use tokio::sync::{oneshot, Mutex};
 use tokio::time::timeout;
 use tracing::{debug, instrument};
 use uuid::Uuid;
@@ -114,19 +115,74 @@ pub struct PendingSignal {
     pub sender: oneshot::Sender<WorkflowSignal>,
 }
 
-/// Signal handler interface for workflow signals
-#[async_trait]
+/// Object-safe trait for signal handlers
 pub trait SignalHandler: Send + Sync + std::fmt::Debug {
+    /// Send a signal to the workflow (non-async wrapper)
+    fn signal_boxed(&self, signal: WorkflowSignal) -> BoxFuture<Result<()>>;
+
+    /// Wait for a signal of the specified type (non-async wrapper)
+    fn wait_for_signal_boxed(
+        &self,
+        signal_type: &str,
+        timeout_seconds: Option<u64>,
+    ) -> BoxFuture<Result<WorkflowSignal>>;
+}
+
+/// Async signal handler trait
+pub trait AsyncSignalHandler: Send + Sync + std::fmt::Debug {
     /// Send a signal to the workflow
     async fn signal(&self, signal: WorkflowSignal) -> Result<()>;
 
-    /// Wait for a signal with the given name
+    /// Wait for a signal of the specified type
     async fn wait_for_signal(
         &self,
-        signal_name: &str,
-        workflow_id: Option<&str>,
-        timeout: Option<Duration>,
+        signal_type: &str,
+        timeout_seconds: Option<u64>,
     ) -> Result<WorkflowSignal>;
+}
+
+/// Helper extension trait
+pub trait SignalHandlerExt: AsyncSignalHandler {
+    fn as_signal_handler(&self) -> &dyn SignalHandler;
+}
+
+impl<T: AsyncSignalHandler + 'static> SignalHandler for T {
+    fn signal_boxed(&self, signal: WorkflowSignal) -> BoxFuture<Result<()>> {
+        Box::pin(async move { self.signal(signal).await })
+    }
+
+    fn wait_for_signal_boxed(
+        &self,
+        signal_type: &str,
+        timeout_seconds: Option<u64>,
+    ) -> BoxFuture<Result<WorkflowSignal>> {
+        Box::pin(async move { self.wait_for_signal(signal_type, timeout_seconds).await })
+    }
+}
+
+impl<T: AsyncSignalHandler + 'static> SignalHandlerExt for T {
+    fn as_signal_handler(&self) -> &dyn SignalHandler {
+        self
+    }
+}
+
+/// Async helper functions to make working with dyn SignalHandler easier
+pub mod signal_handler_helpers {
+    use super::*;
+
+    pub async fn signal(handler: &dyn SignalHandler, signal: WorkflowSignal) -> Result<()> {
+        handler.signal_boxed(signal).await
+    }
+
+    pub async fn wait_for_signal(
+        handler: &dyn SignalHandler,
+        signal_type: &str,
+        timeout_seconds: Option<u64>,
+    ) -> Result<WorkflowSignal> {
+        handler
+            .wait_for_signal_boxed(signal_type, timeout_seconds)
+            .await
+    }
 }
 
 /// Asynchronous signal handler
@@ -155,7 +211,7 @@ impl AsyncSignalHandler {
 }
 
 #[async_trait]
-impl SignalHandler for AsyncSignalHandler {
+impl AsyncSignalHandler for AsyncSignalHandler {
     #[instrument(skip(self), fields(signal.name = %signal.name, signal.id = %signal.id))]
     async fn signal(&self, signal: WorkflowSignal) -> Result<()> {
         debug!("Emitting signal: {}", signal.name);
@@ -205,12 +261,11 @@ impl SignalHandler for AsyncSignalHandler {
     async fn wait_for_signal(
         &self,
         signal_name: &str,
-        workflow_id: Option<&str>,
-        timeout_duration: Option<Duration>,
+        timeout_seconds: Option<u64>,
     ) -> Result<WorkflowSignal> {
         debug!("Waiting for signal: {}", signal_name);
 
-        let registration = SignalRegistration::new(signal_name, workflow_id);
+        let registration = SignalRegistration::new(signal_name, None);
         let (sender, receiver) = oneshot::channel();
 
         let pending_signal = PendingSignal {
@@ -228,27 +283,29 @@ impl SignalHandler for AsyncSignalHandler {
         }
 
         // Wait for the signal with optional timeout
-        let signal = if let Some(duration) = timeout_duration {
-            match timeout(duration, receiver).await {
-                Ok(result) => result.map_err(|_| anyhow!("Signal channel closed"))?,
-                Err(_) => {
-                    // Timeout occurred, remove the registration
-                    let mut pending_signals = self.pending_signals.lock().await;
-                    if let Some(handlers) = pending_signals.get_mut(signal_name) {
-                        handlers
-                            .retain(|ps| ps.registration.unique_name != registration.unique_name);
-                        if handlers.is_empty() {
-                            pending_signals.remove(signal_name);
+        let signal = match timeout_seconds {
+            Some(secs) => {
+                match timeout(Duration::from_secs(secs), receiver).await {
+                    Ok(result) => result.map_err(|_| anyhow!("Signal channel closed"))?,
+                    Err(_) => {
+                        // Timeout occurred, remove the registration
+                        let mut pending_signals = self.pending_signals.lock().await;
+                        if let Some(handlers) = pending_signals.get_mut(signal_name) {
+                            handlers.retain(|ps| {
+                                ps.registration.unique_name != registration.unique_name
+                            });
+                            if handlers.is_empty() {
+                                pending_signals.remove(signal_name);
+                            }
                         }
-                    }
 
-                    return Err(anyhow!("Timeout waiting for signal: {}", signal_name));
+                        return Err(anyhow!("Timeout waiting for signal: {}", signal_name));
+                    }
                 }
             }
-        } else {
-            receiver
+            None => receiver
                 .await
-                .map_err(|_| anyhow!("Signal channel closed"))?
+                .map_err(|_| anyhow!("Signal channel closed"))?,
         };
 
         debug!("Received signal: {}", signal_name);
@@ -275,11 +332,7 @@ mod tests {
         let handler_clone = Arc::new(handler);
         let wait_task = tokio::spawn({
             let handler = Arc::clone(&handler_clone);
-            async move {
-                handler
-                    .wait_for_signal("test_signal", None, Some(Duration::from_secs(1)))
-                    .await
-            }
+            async move { handler.wait_for_signal("test_signal", None).await }
         });
 
         // Give the wait task time to register
@@ -306,17 +359,13 @@ mod tests {
         let handler = AsyncSignalHandler::new();
 
         // Wait for a signal with a short timeout
-        let result = handler
-            .wait_for_signal("timeout_signal", None, Some(Duration::from_millis(100)))
-            .await;
+        let result = handler.wait_for_signal("timeout_signal", Some(1)).await;
 
-        // Should timeout
+        // Should time out
         assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("Timeout waiting for signal")
-        );
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Timeout waiting for signal"));
     }
 }

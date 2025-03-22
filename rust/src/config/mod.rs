@@ -6,7 +6,7 @@ use std::path::Path;
 
 use crate::utils::error::{McpError, McpResult};
 
-/// Settings for MCP Agent
+/// Settings for MCP Agen
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Settings {
     /// MCP-specific settings
@@ -107,7 +107,7 @@ pub struct LogPathSettings {
     /// Unique ID type (timestamp, session_id)
     pub unique_id: String,
 
-    /// Timestamp format
+    /// Timestamp forma
     pub timestamp_format: Option<String>,
 }
 

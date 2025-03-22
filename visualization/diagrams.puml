@@ -1,0 +1,276 @@
+@startuml SystemArchitecture
+!theme plain
+title MCP-Agent Graph Visualization - System Architecture
+
+package "MCP-Agent Core" {
+  [WorkflowEngine] as WE
+  [AgentSystem] as AS
+  [LlmProviders] as LLM
+  [HumanInputSystem] as HIS
+}
+
+package "Graph Visualization System" {
+  [GraphManager] as GM
+  
+  package "Data Providers" {
+    [WorkflowGraphProvider] as WGP
+    [AgentGraphProvider] as AGP
+    [LlmIntegrationProvider] as LIP
+    [HumanInputProvider] as HIP
+  }
+  
+  package "Backend API" {
+    [GraphRestAPI] as GAPI
+    [GraphWebSocketAPI] as GWSAPI
+  }
+}
+
+package "Terminal System" {
+  [WebTerminal] as WT
+  [ConsoleTerminal] as CT
+}
+
+package "Web Client" {
+  [SprottyRenderer] as SR
+  [VisualizationControls] as VC
+  [WebSocket Client] as WSC
+}
+
+WE --> WGP : "Provides data"
+AS --> AGP : "Provides data"
+LLM --> LIP : "Provides data"
+HIS --> HIP : "Provides data"
+
+WGP --> GM : "Registers graphs"
+AGP --> GM : "Registers graphs"
+LIP --> GM : "Registers graphs"
+HIP --> GM : "Registers graphs"
+
+GM --> GAPI : "Provides data"
+GM --> GWSAPI : "Provides updates"
+
+GAPI --> SR : "Initial graph data"
+GWSAPI --> WSC : "Real-time updates"
+WSC --> SR : "Updates visualization"
+
+WT --> WSC : "Embeds"
+WT --> SR : "Embeds"
+WT --> VC : "Embeds"
+
+@enduml
+
+@startuml DataModels
+!theme plain
+title MCP-Agent Graph Visualization - Data Models
+
+package "Core Graph Model" {
+  class Graph {
+    +id: String
+    +name: String
+    +graph_type: String
+    +nodes: Vec<GraphNode>
+    +edges: Vec<GraphEdge>
+    +properties: HashMap<String, Value>
+  }
+  
+  class GraphNode {
+    +id: String
+    +name: String
+    +node_type: String
+    +status: String
+    +properties: HashMap<String, Value>
+  }
+  
+  class GraphEdge {
+    +id: String
+    +source: String
+    +target: String
+    +edge_type: String
+    +properties: HashMap<String, Value>
+  }
+  
+  class GraphUpdate {
+    +graph_id: String
+    +update_type: GraphUpdateType
+    +graph: Option<Graph>
+    +node: Option<GraphNode>
+    +edge: Option<GraphEdge>
+  }
+  
+  enum GraphUpdateType {
+    +FullUpdate
+    +NodeAdded
+    +NodeUpdated
+    +NodeRemoved
+    +EdgeAdded
+    +EdgeUpdated
+    +EdgeRemoved
+  }
+}
+
+package "Sprotty Model" {
+  class SprottyRoot {
+    +id: String
+    +type: String
+    +children: Vec<SprottyElement>
+  }
+  
+  class SprottyNode {
+    +id: String
+    +cssClasses: Option<Vec<String>>
+    +layout: Option<String>
+    +position: Option<SprottyPoint>
+    +size: Option<SprottyDimension>
+    +children: Vec<SprottyElement>
+    +properties: HashMap<String, Value>
+  }
+  
+  class SprottyEdge {
+    +id: String
+    +sourceId: String
+    +targetId: String
+    +cssClasses: Option<Vec<String>>
+    +routingPoints: Option<Vec<SprottyPoint>>
+    +children: Vec<SprottyElement>
+    +properties: HashMap<String, Value>
+  }
+  
+  class SprottyLabel {
+    +id: String
+    +text: String
+    +cssClasses: Option<Vec<String>>
+    +position: Option<SprottyPoint>
+    +size: Option<SprottyDimension>
+    +properties: HashMap<String, Value>
+  }
+}
+
+Graph o--> GraphNode : "contains"
+Graph o--> GraphEdge : "contains"
+GraphUpdate --> Graph : "may contain"
+GraphUpdate --> GraphNode : "may contain"
+GraphUpdate --> GraphEdge : "may contain"
+GraphUpdate --> GraphUpdateType : "has type"
+
+SprottyRoot o--> SprottyNode : "may contain"
+SprottyRoot o--> SprottyEdge : "may contain"
+SprottyNode o--> SprottyLabel : "may contain"
+
+@enduml
+
+@startuml DataFlow
+!theme plain
+title MCP-Agent Graph Visualization - Data Flow
+
+actor User
+participant WebClient
+participant WebTerminal
+participant GraphWebSocketAPI
+participant GraphRestAPI
+participant GraphManager
+participant DataProviders
+participant MCPComponents
+
+== Initialization ==
+
+User -> WebTerminal: Access web terminal
+WebTerminal -> GraphRestAPI: Request available graphs
+GraphRestAPI -> GraphManager: Get graph list
+GraphManager --> GraphRestAPI: Return graph IDs
+GraphRestAPI --> WebTerminal: Graph IDs
+WebTerminal -> WebClient: Show visualization toggle
+
+== Connect to Data Stream ==
+
+User -> WebClient: Toggle visualization
+WebClient -> GraphWebSocketAPI: Open WebSocket connection
+GraphWebSocketAPI -> GraphManager: Subscribe to updates
+GraphManager --> GraphWebSocketAPI: Confirm subscription
+WebClient -> GraphRestAPI: Request initial graph data
+GraphRestAPI -> GraphManager: Get graph data
+GraphManager --> GraphRestAPI: Return graph data
+GraphRestAPI --> WebClient: Graph data
+WebClient -> WebClient: Render graph
+
+== Real-time Updates ==
+
+MCPComponents -> DataProviders: State change notification
+DataProviders -> GraphManager: Update graph data
+GraphManager -> GraphManager: Process update
+GraphManager -> GraphWebSocketAPI: Broadcast update
+GraphWebSocketAPI -> WebClient: Send update
+WebClient -> WebClient: Update visualization
+
+== User Interaction ==
+
+User -> WebClient: Select graph node
+WebClient -> WebClient: Show details
+User -> WebClient: Toggle graph type
+WebClient -> GraphRestAPI: Request different graph
+GraphRestAPI -> GraphManager: Get graph data
+GraphManager --> GraphRestAPI: Return graph data
+GraphRestAPI --> WebClient: Graph data
+WebClient -> WebClient: Render new graph
+
+@enduml
+
+@startuml ComponentDiagram
+!theme plain
+title MCP-Agent Graph Visualization - Component Diagram
+
+component [Graph Visualization System] as GVS {
+  component [GraphManager] as GM
+  
+  component [Data Providers] as DP {
+    component [WorkflowGraphProvider] as WGP
+    component [AgentGraphProvider] as AGP
+    component [LlmIntegrationProvider] as LIP
+    component [HumanInputProvider] as HIP
+  }
+  
+  component [API Layer] as API {
+    component [REST API] as REST
+    component [WebSocket API] as WS
+  }
+  
+  interface "Graph Updates" as GU
+  interface "Graph Data Access" as GDA
+  
+  GM -- GU
+  GM -- GDA
+  
+  GU -- WS
+  GDA -- REST
+  
+  DP --> GM
+}
+
+component [MCP-Agent] as MCP {
+  component [Workflow Engine] as WE
+  component [Agent System] as AS
+  component [LLM Integration] as LLM
+  component [Human Input] as HI
+}
+
+component [Web Terminal] as WT {
+  component [Web UI] as UI
+  component [Terminal Backend] as TB
+  
+  component [Graph Visualization UI] as GVUI {
+    component [Sprotty Renderer] as SR
+    component [Controls] as C
+    component [WebSocket Client] as WSC
+  }
+  
+  GVUI --> UI
+}
+
+WE --> WGP
+AS --> AGP
+LLM --> LIP
+HI --> HIP
+
+REST --> TB
+WS <--> WSC
+
+@enduml 

@@ -766,3 +766,74 @@ You can use mcp-agent applications in a standalone fashion (i.e. they aren't par
 ### Tell me a fun fact
 
 I debated naming this project _silsila_ (سلسلہ), which means chain of events in Urdu. mcp-agent is more matter-of-fact, but there's still an easter egg in the project paying homage to silsila.
+
+# MCP-Agent
+
+Model Context Protocol (MCP) Agent implementation.
+
+## Features
+
+- **Full MCP Protocol Implementation**: Complete support for the Model Context Protocol
+- **Workflow Engine**: Built-in workflow capabilities for complex agent operations
+- **LLM Integration**: Connect with various LLM providers
+- **Telemetry & Observability**: Comprehensive monitoring and logging
+- **Dual Terminal System**: Console and web-based terminal interfaces
+
+## Dual Terminal System
+
+The MCP-Agent includes a dual terminal system, allowing you to interact with the agent through either:
+
+1. **Console Terminal**: A traditional command-line interface
+2. **Web Terminal**: A browser-based terminal with identical functionality
+
+This feature enables:
+
+- Remote access to the agent via web browser
+- Synchronized I/O across both interfaces
+- Seamless switching between interfaces without losing context
+
+### Using the Dual Terminal
+
+To use the dual terminal system, include the `terminal-web` or `terminal-full` feature flag when building the project:
+
+```bash
+cargo build --features terminal-full
+```
+
+Then run any example that uses the terminal system:
+
+```bash
+cargo run --features terminal-full --example dual_terminal
+```
+
+The web terminal will be available at the URL displayed in the console (typically http://127.0.0.1:8080).
+
+### Terminal Configuration
+
+The terminal system is highly configurable:
+
+```rust
+// Create a terminal configuration
+let config = TerminalConfig::dual_terminal()
+    .with_web_port(3000)           // Custom web port
+    .with_authentication(true)     // Enable authentication
+    .with_jwt_auth("secret-key");  // Use JWT authentication
+
+// Create and start the terminal system
+let terminal = TerminalSystem::new(config);
+terminal.start().await?;
+```
+
+## Getting Started
+
+1. Clone the repository
+2. Build the project: `cargo build`
+3. Run an example: `cargo run --example simple_client`
+
+## Documentation
+
+For more information about the MCP-Agent and its components, see the [documentation](./docs/README.md).
+
+## License
+
+This project is licensed under the MIT License - see the LICENSE file for details.

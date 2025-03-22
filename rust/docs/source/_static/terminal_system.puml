@@ -1,0 +1,18 @@
+    @startuml
+
+    package "Terminal System" {
+        interface "Terminal" as TerminalInterface
+        class "ConsoleTerminal" as CT
+        class "WebTerminal" as WT
+        class "TerminalRouter" as TR
+        class "SyncTerminal" as ST
+    }
+
+    TerminalInterface <|.. CT
+    TerminalInterface <|.. WT
+    TerminalInterface <|.. ST
+    TR --> TerminalInterface : routes to
+    ST --> CT : syncs with
+    ST --> WT : syncs with
+
+    @enduml

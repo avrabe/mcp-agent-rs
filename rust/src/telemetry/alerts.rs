@@ -13,13 +13,13 @@ use tracing::debug;
 /// Alert severity levels
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum AlertSeverity {
-    /// Informational alert
+    /// Informational aler
     Info,
-    /// Warning alert
+    /// Warning aler
     Warning,
-    /// Error alert
+    /// Error aler
     Error,
-    /// Critical alert
+    /// Critical aler
     Critical,
 }
 
@@ -37,15 +37,15 @@ impl fmt::Display for AlertSeverity {
 /// Alert definition for a specific metric
 #[derive(Debug, Clone)]
 pub struct AlertDefinition {
-    /// Unique identifier for the alert
+    /// Unique identifier for the aler
     pub id: String,
-    /// Human-readable name for the alert
+    /// Human-readable name for the aler
     pub name: String,
-    /// Description of the alert
+    /// Description of the aler
     pub description: String,
     /// Metric name to monitor
     pub metric_name: String,
-    /// Threshold value that triggers the alert
+    /// Threshold value that triggers the aler
     pub threshold: f64,
     /// Comparison operator (>, <, >=, <=, ==)
     pub operator: AlertOperator,
@@ -87,9 +87,9 @@ impl fmt::Display for AlertOperator {
 /// Triggered alert instance
 #[derive(Debug, Clone)]
 pub struct Alert {
-    /// Alert definition that triggered this alert
+    /// Alert definition that triggered this aler
     pub definition: AlertDefinition,
-    /// Actual value that triggered the alert
+    /// Actual value that triggered the aler
     pub value: f64,
     /// Time when the alert was triggered
     pub triggered_at: Instant,
@@ -128,7 +128,7 @@ impl Alert {
         is_expired
     }
 
-    /// Acknowledge the alert
+    /// Acknowledge the aler
     pub fn acknowledge(&mut self) {
         self.acknowledged = true;
         self.acknowledged_at = Some(Instant::now());
@@ -160,7 +160,7 @@ impl Alert {
 pub struct TerminalAlertOptions {
     /// Whether to show timestamps
     pub show_timestamps: bool,
-    /// Whether to use colors in terminal output
+    /// Whether to use colors in terminal outpu
     pub use_colors: bool,
     /// Whether to show acknowledged alerts
     pub show_acknowledged: bool,
@@ -329,7 +329,7 @@ impl AlertingSystem {
             return;
         }
 
-        // Clean up expired alerts first
+        // Clean up expired alerts firs
         self.cleanup_expired_alerts();
 
         let definitions = self.definitions.read().unwrap();
@@ -385,7 +385,7 @@ impl AlertingSystem {
                     drop(active_alerts);
 
                     if !is_active {
-                        // Trigger new alert
+                        // Trigger new aler
                         self.trigger_alert(definition.clone(), value);
                     }
                 }
@@ -395,7 +395,7 @@ impl AlertingSystem {
         }
     }
 
-    /// Trigger a new alert
+    /// Trigger a new aler
     fn trigger_alert(&self, definition: AlertDefinition, value: f64) {
         let alert = Alert::new(definition, value);
 
@@ -456,7 +456,7 @@ impl AlertingSystem {
             }
         }
 
-        // Format and print alert
+        // Format and print aler
         let mut alert_text = alert.format();
 
         // Add timestamp if enabled
@@ -656,7 +656,7 @@ mod tests {
         // Active alerts should be empty now (expired)
         assert_eq!(alerting.get_active_alerts().len(), 0);
 
-        // But history should have the alert
+        // But history should have the aler
         assert_eq!(alerting.get_alert_history().len(), 1);
     }
 
@@ -677,7 +677,7 @@ mod tests {
 
         alerting.add_definition(alert_def);
 
-        // Suppress the alert
+        // Suppress the aler
         assert!(alerting.suppress_alert_for_session("test_suppress"));
 
         // Test - should not trigger due to suppression

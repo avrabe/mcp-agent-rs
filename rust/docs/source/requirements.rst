@@ -319,4 +319,106 @@ Terminal Interface
    :tags: interface;terminal;usability
    :links: REQ-026;REQ-027
    
-   The system must support dynamic enabling and disabling of the web terminal interface at runtime without restarting the application or disrupting ongoing operations. 
+   The system must support dynamic enabling and disabling of the web terminal interface at runtime without restarting the application or disrupting ongoing operations.
+
+Terminal Requirements
+===================
+
+.. req:: Console Terminal Support
+   :id: REQ-020
+   :status: implemented
+   :tags: ui;terminal
+   :links: ARCH-013
+   
+   The system must provide a console-based terminal interface for command execution, input/output operations, and status display.
+
+.. req:: Web Terminal Support
+   :id: REQ-021
+   :status: implemented
+   :tags: ui;terminal;web
+   :links: ARCH-013
+   
+   The system must provide a web-based terminal interface accessible through a browser, supporting the same operations as the console terminal.
+
+.. req:: Terminal Synchronization
+   :id: REQ-022
+   :status: implemented
+   :tags: ui;terminal;sync
+   :links: REQ-020;REQ-021;ARCH-013
+   
+   The system must support synchronization between multiple terminal interfaces, ensuring that output is consistently displayed across all active terminals.
+
+Graph Visualization Requirements
+==============================
+
+.. req:: Workflow Graph Visualization
+   :id: REQ-026
+   :status: open
+   :tags: ui;visualization;workflow
+   :links: REQ-004;ARCH-013;ARCH-005
+   
+   The system must provide interactive visualization of workflow graphs, showing tasks, dependencies, and workflow state with real-time updates as workflow status changes.
+
+.. req:: Agent System Visualization
+   :id: REQ-027
+   :status: open
+   :tags: ui;visualization;agent
+   :links: REQ-002;ARCH-002;ARCH-013
+   
+   The system must visualize agent hierarchy, relationships, and message passing between agents, with indicators for connection status and real-time updates.
+
+.. req:: LLM Integration Visualization
+   :id: REQ-028
+   :status: open
+   :tags: ui;visualization;llm
+   :links: REQ-010;ARCH-008;ARCH-013
+   
+   The system must visualize LLM integration points, active interactions, and the flow of data between components and LLM providers.
+
+.. req:: Human Input Visualization
+   :id: REQ-029
+   :status: open
+   :tags: ui;visualization;human-input
+   :links: REQ-009;ARCH-007;ARCH-013
+   
+   The system must visualize human input points in workflows and their real-time status during workflow execution.
+
+.. req:: Visualization UI Controls
+   :id: REQ-030
+   :status: open
+   :tags: ui;visualization;usability
+   :links: ARCH-013
+   
+   The visualization interface must provide intuitive controls for toggling visualization on/off, zooming, panning, and selecting graph elements, with an information panel for displaying details about selected components.
+
+.. req:: Real-Time Visualization Updates
+   :id: REQ-031
+   :status: open
+   :tags: ui;visualization;performance
+   :links: REQ-026;REQ-027;REQ-028;REQ-029
+   
+   The visualization system must support real-time updates with minimal latency (< 100ms) when component states change, without impacting the performance of the terminal or other system components.
+
+.. req:: Web Terminal Visualization Integration
+   :id: REQ-032
+   :status: open
+   :tags: ui;visualization;integration
+   :links: REQ-021;REQ-026;REQ-027;REQ-028;REQ-029
+   
+   The graph visualization must be integrated with the web terminal interface, allowing users to switch between terminal and visualization views without loss of context.
+
+.. req:: Graph Visualization API
+   :id: REQ-033
+   :status: open
+   :tags: api;visualization
+   :links: REQ-026;REQ-027;REQ-028;REQ-029;ARCH-013
+   
+   The system must provide REST and WebSocket APIs for accessing graph data, including endpoints for listing available graphs, retrieving specific graph data, and subscribing to real-time updates.
+
+.. req:: Sprotty-Compatible Visualization
+   :id: REQ-034
+   :status: open
+   :tags: ui;visualization;technology
+   :links: REQ-026;REQ-027;REQ-028;REQ-029
+   
+   The visualization system must use Eclipse Sprotty for rendering interactive graphs, with appropriate model mapping between backend data structures and Sprotty-compatible formats. 

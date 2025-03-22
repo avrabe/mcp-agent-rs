@@ -130,7 +130,7 @@ async fn validate_request(id: &str, priority: u8) -> Result<(), RequestError> {
 
     // Higher priority requests are handled differently
     if priority > 10 {
-        // Create a proper error that implements Error trait
+        // Create a proper error that implements Error trai
         let err = RequestError(format!("Request {id} has too high priority: {priority}"));
         // Return error that will be displayed in span
         return Err(err);

@@ -11,7 +11,7 @@ pub enum MessageRole {
     System,
     /// Message from the user
     User,
-    /// Message from the assistant
+    /// Message from the assistan
     Assistant,
     /// Message from a function call
     Function,
@@ -125,7 +125,7 @@ impl Default for LlmConfig {
 /// A completion request to an LLM
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompletionRequest {
-    /// Model to use for the request
+    /// Model to use for the reques
     pub model: String,
 
     /// Messages in the conversation
@@ -151,14 +151,14 @@ pub struct CompletionRequest {
 /// A completion response from an LLM
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Completion {
-    /// Generated content
+    /// Generated conten
     pub content: String,
 
     /// Model that generated the completion
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
 
-    /// Number of tokens in the prompt
+    /// Number of tokens in the promp
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prompt_tokens: Option<u32>,
 
@@ -184,6 +184,6 @@ pub trait LlmClient: Send + Sync + 'static {
     /// Check if the model is available
     async fn is_available(&self) -> Result<bool>;
 
-    /// Get the configuration for the client
+    /// Get the configuration for the clien
     fn config(&self) -> &LlmConfig;
 }

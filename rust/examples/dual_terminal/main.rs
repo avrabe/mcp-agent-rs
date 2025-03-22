@@ -4,16 +4,17 @@
 //! It shows how terminal input and output are synchronized across both interfaces.
 
 use std::error::Error as StdError;
+use std::net::Ipv4Addr;
 use std::time::Duration;
 
-// use mcp_agent::error::Error;
-use mcp_agent::terminal::config::{AuthConfig, AuthMethod, TerminalConfig};
+use mcp_agent::error::Result;
 use mcp_agent::terminal::TerminalSystem;
-use tracing::{error, info, Level};
+use mcp_agent::terminal::config::{AuthConfig, AuthMethod, TerminalConfig};
+use tracing::{Level, error, info};
 use tracing_subscriber::fmt;
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn StdError>> {
+async fn main() -> Result<()> {
     // Set up logging
     fmt::fmt()
         .with_max_level(Level::DEBUG)
@@ -24,14 +25,14 @@ async fn main() -> Result<(), Box<dyn StdError>> {
 
     // Create a terminal configuration with both console and web enabled
     let mut config = TerminalConfig::dual_terminal();
-    
-    // Configure web terminal settings
-    config.web_terminal_host = "127.0.0.1".parse().unwrap();
-    config.web_terminal_port = 9876;
-    config.require_authentication = false;
-    
+
+    // Configure web terminal settings (using the new nested config structure)
+    config.web_terminal_config.host = std::net::IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
+    config.web_terminal_config.port = 9876;
+    config.web_terminal_config.auth_config.allow_anonymous = true;
+
     // Configure authentication
-    config.auth_config = AuthConfig {
+    config.web_terminal_config.auth_config = AuthConfig {
         auth_method: AuthMethod::None, // No auth for easy testing
         jwt_secret: "test-secret".to_string(),
         token_expiration_secs: 3600,
@@ -47,23 +48,32 @@ async fn main() -> Result<(), Box<dyn StdError>> {
     info!("Starting terminal system...");
     if let Err(e) = terminal.start().await {
         error!("Failed to start terminal system: {}", e);
-        return Err(e.into());
+        return Err(e);
     }
 
     // Print welcome message
-    if let Err(e) = terminal.write("\n\n===================================\n").await {
+    if let Err(e) = terminal
+        .write("\n\n===================================\n")
+        .await
+    {
         error!("Write error: {}", e);
     }
     if let Err(e) = terminal.write("🌟 MCP-Agent Dual Terminal Demo 🌟\n").await {
         error!("Write error: {}", e);
     }
-    if let Err(e) = terminal.write("===================================\n\n").await {
+    if let Err(e) = terminal
+        .write("===================================\n\n")
+        .await
+    {
         error!("Write error: {}", e);
     }
 
     // Show info about the web terminal
-    if let Some(addr) = terminal.web_terminal_address() {
-        if let Err(e) = terminal.write(&format!("Web terminal available at: {}\n\n", addr)).await {
+    if let Ok(addr) = terminal.web_terminal_address().await {
+        if let Err(e) = terminal
+            .write(&format!("Web terminal available at: {}\n\n", addr))
+            .await
+        {
             error!("Write error: {}", e);
         }
     } else {
@@ -144,7 +154,10 @@ async fn main() -> Result<(), Box<dyn StdError>> {
                 // Ignore empty input
             }
             _ => {
-                if let Err(e) = terminal.write(&format!("Unknown command: {}\n", input)).await {
+                if let Err(e) = terminal
+                    .write(&format!("Unknown command: {}\n", input))
+                    .await
+                {
                     error!("Write error: {}", e);
                 }
             }
@@ -155,9 +168,9 @@ async fn main() -> Result<(), Box<dyn StdError>> {
     info!("Stopping terminal system...");
     if let Err(e) = terminal.stop().await {
         error!("Failed to stop terminal system: {}", e);
-        return Err(e.into());
+        return Err(e);
     }
 
     info!("Example completed successfully");
     Ok(())
-} 
+}

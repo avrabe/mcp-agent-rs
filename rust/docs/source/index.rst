@@ -1,89 +1,88 @@
-=============================
-MCP-Agent Documentation
-=============================
+.. MCP Agent documentation master file, created by
+   sphinx-quickstart on Thu Aug 17 09:30:44 2023.
+   You can adapt this file completely to your liking, but it should at least
+   contain the root `toctree` directive.
 
-Welcome to the official documentation for MCP-Agent, a Rust implementation of the Model Context Protocol (MCP).
-
-The Model Context Protocol (MCP) provides a standardized way for AI models to communicate with their environments, offering better structure, context management, and tool usage capabilities.
+Welcome to MCP Agent's documentation!
+====================================
 
 .. toctree::
    :maxdepth: 2
    :caption: Contents:
-
+   
    requirements
-   architecture
-   project
-   rust-migration
    changelog
+   rust-migration
+   project
+
+.. toctree::
+   :maxdepth: 2
+   :caption: Technical Documentation
+   
+   architecture
+   visualization/requirements
+   visualization/architecture
+
+.. toctree::
+   :maxdepth: 2
+   :caption: API Reference
 
 Overview
 ========
 
-MCP-Agent is a framework for building AI agents with these key features:
+MCP-Agent is a Rust implementation of the Model Context Protocol (MCP), which is a framework
+for building AI-powered agents and workflows. It provides a unified interface for integrating 
+various AI models, human input, and external tools.
 
-* **Standardized Communication**: Implements the MCP specification for consistent model-environment interactions
-* **Asynchronous Processing**: Built on Rust's async/await for efficient concurrent operations
-* **Workflow Engine**: Supports complex task orchestration with various workflow patterns
-* **Human-in-the-loop**: Integrates human input seamlessly into agent workflows
-* **LLM Integration**: Connect to various LLM providers through a unified interface
-* **Telemetry & Metrics**: Comprehensive monitoring and debugging capabilities
+The MCP protocol defines how agents interact with each other and with the world, 
+establishing a clear context management system to maintain state across interactions.
 
-Getting Started
-===============
-
-Installation
-------------
-
-Add the MCP-Agent to your Cargo.toml:
-
-.. code-block:: toml
-
-   [dependencies]
-   mcp-agent = "0.1.0"
-
-Basic Usage
+Key Features
 -----------
 
-Here's a simple example of using the MCP-Agent:
+* **Agent Management**: Create, connect, and manage MCP agents
+* **Workflow Orchestration**: Define and execute complex workflows with dependencies
+* **LLM Integration**: Connect to various LLM providers through a unified interface
+* **Human Input**: Integrate human feedback and decisions into agent workflows
+* **Terminal Interfaces**: Both console and web-based terminal interfaces
+* **Visualization Tools**: Graph-based visualization of workflows and agent systems
+
+Getting Started
+==============
+
+Installation
+-----------
+
+To install MCP-Agent:
+
+.. code-block:: bash
+
+   cargo add mcp-agent
+
+Basic Usage
+----------
 
 .. code-block:: rust
 
    use mcp_agent::prelude::*;
    
    #[tokio::main]
-   async fn main() -> Result<(), Box<dyn std::error::Error>> {
-       // Initialize agent with default configuration
-       let agent = Agent::new(None);
+   async fn main() -> Result<()> {
+       // Create a simple agent
+       let mut agent = Agent::new();
        
-       // Execute a task
-       let result = agent.execute_task("hello_world", serde_json::json!({}), None).await?;
+       // Connect to a provider
+       agent.connect("provider_url").await?;
        
-       println!("Task result: {:?}", result);
+       // Send a message
+       let response = agent.send("Hello, world!").await?;
+       
+       println!("Response: {}", response);
+       
        Ok(())
    }
 
-Requirements and Architecture Overview
-=====================================
-
-.. needtable::
-   :columns: id;title;status;tags
-   :filter: type == "requirement"
-   :style: table
-
-.. needtable::
-   :columns: id;title;status;links
-   :filter: type == "arch"
-   :style: table
-
-Project Status
-=============
-
-.. needtable::
-   :filter: status == "open"
-   :columns: id;title;status;type;tags
-   :style: table
-
-Indices and Tables
+Indices and tables
 ==================
 
 * :ref:`genindex`

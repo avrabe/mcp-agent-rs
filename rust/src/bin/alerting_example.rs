@@ -4,7 +4,7 @@
 //! 1. Configure and initialize the telemetry with alerting
 //! 2. Define alert thresholds for various metrics
 //! 3. Trigger alerts by exceeding thresholds
-//! 4. Handle alert suppression and acknowledgement
+//! 4. Handle alert suppression and acknowledgemen
 
 use std::collections::HashMap;
 use std::error::Error;
@@ -97,7 +97,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             cpu_usage, network_latency, memory_usage, error_rate
         );
 
-        // Get active alerts and display count
+        // Get active alerts and display coun
         let active_alerts = alerting().get_active_alerts();
         if !active_alerts.is_empty() {
             println!("\nActive alerts: {}", active_alerts.len());
@@ -110,7 +110,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 /// Define alert thresholds for various metrics
 fn define_alerts() {
     let alert_definitions = [
-        // High CPU usage alert
+        // High CPU usage aler
         AlertDefinition::new(
             "high_cpu",
             "High CPU Usage",
@@ -120,7 +120,7 @@ fn define_alerts() {
             AlertOperator::GreaterThan,
             AlertSeverity::Warning,
         ),
-        // Critical CPU usage alert
+        // Critical CPU usage aler
         AlertDefinition::new(
             "critical_cpu",
             "Critical CPU Usage",
@@ -130,7 +130,7 @@ fn define_alerts() {
             AlertOperator::GreaterThan,
             AlertSeverity::Critical,
         ),
-        // High network latency alert
+        // High network latency aler
         AlertDefinition::new(
             "high_latency",
             "High Network Latency",
@@ -141,7 +141,7 @@ fn define_alerts() {
             AlertSeverity::Warning,
         )
         .with_cooldown(Duration::from_secs(30)),
-        // High memory usage alert
+        // High memory usage aler
         AlertDefinition::new(
             "high_memory",
             "High Memory Usage",
@@ -151,7 +151,7 @@ fn define_alerts() {
             AlertOperator::GreaterThan,
             AlertSeverity::Warning,
         ),
-        // High error rate alert
+        // High error rate aler
         AlertDefinition::new(
             "high_error_rate",
             "High Error Rate",
@@ -173,7 +173,7 @@ fn define_alerts() {
     }
 }
 
-/// Process user commands for alert management
+/// Process user commands for alert managemen
 fn process_commands() {
     let stdin = io::stdin();
     let mut buffer = String::new();

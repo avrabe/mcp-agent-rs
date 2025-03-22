@@ -12,32 +12,81 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use futures::StreamExt;
-use tokio::sync::{RwLock, mpsc};
+use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, error, info};
 
 use super::{Graph, GraphEdge, GraphManager, GraphNode};
 use crate::error::Error;
 use crate::mcp::agent::Agent;
-use crate::workflow::WorkflowEngine;
 use crate::workflow::state::WorkflowState;
+use crate::workflow::WorkflowEngine;
 // Comment out these imports for now - these would be implemented based on LLM and human input systems
 // use crate::llm::LlmProvider;
 // use crate::human_input::HumanInputProvider;
 
-/// Graph data provider trai
-#[async_trait]
+/// Object-safe trait for graph data providers
 pub trait GraphDataProvider: Send + Sync + Debug {
-    /// Get the provider name
-    fn name(&self) -> &str;
+    /// Generate a graph representation (non-async wrapper)
+    fn generate_graph_boxed(
+        &self,
+    ) -> Box<dyn std::future::Future<Output = Result<Graph>> + Send + Unpin>;
 
-    /// Get the graph type this provider generates
-    fn graph_type(&self) -> &str;
+    /// Set up tracking for graph updates (non-async wrapper)
+    fn setup_tracking_boxed(
+        &self,
+        graph_manager: Arc<GraphManager>,
+    ) -> Box<dyn std::future::Future<Output = Result<()>> + Send + Unpin>;
+}
 
-    /// Generate the current graph
-    async fn generate_graph(&self) -> Result<Graph, Error>;
+/// Async trait for graph data providers
+pub trait AsyncGraphDataProvider: Send + Sync + Debug {
+    /// Generate a graph representation
+    async fn generate_graph(&self) -> Result<Graph>;
 
-    /// Set up tracking of changes to update the graph in real-time
-    async fn setup_tracking(&self, graph_manager: Arc<GraphManager>) -> Result<(), Error>;
+    /// Set up tracking for graph updates
+    async fn setup_tracking(&self, graph_manager: Arc<GraphManager>) -> Result<()>;
+}
+
+/// Helper extension trait
+pub trait GraphDataProviderExt: AsyncGraphDataProvider {
+    fn as_graph_data_provider(&self) -> &dyn GraphDataProvider;
+}
+
+impl<T: AsyncGraphDataProvider + 'static> GraphDataProvider for T {
+    fn generate_graph_boxed(
+        &self,
+    ) -> Box<dyn std::future::Future<Output = Result<Graph>> + Send + Unpin> {
+        Box::new(async move { self.generate_graph().await })
+    }
+
+    fn setup_tracking_boxed(
+        &self,
+        graph_manager: Arc<GraphManager>,
+    ) -> Box<dyn std::future::Future<Output = Result<()>> + Send + Unpin> {
+        Box::new(async move { self.setup_tracking(graph_manager).await })
+    }
+}
+
+impl<T: AsyncGraphDataProvider + 'static> GraphDataProviderExt for T {
+    fn as_graph_data_provider(&self) -> &dyn GraphDataProvider {
+        self
+    }
+}
+
+/// Async helper functions for working with dyn GraphDataProvider
+pub mod graph_provider_helpers {
+    use super::*;
+
+    pub async fn generate_graph(provider: &dyn GraphDataProvider) -> Result<Graph> {
+        provider.generate_graph_boxed().await
+    }
+
+    pub async fn setup_tracking(
+        provider: &dyn GraphDataProvider,
+        graph_manager: Arc<GraphManager>,
+    ) -> Result<()> {
+        provider.setup_tracking_boxed(graph_manager).await
+    }
 }
 
 /// Workflow graph provider
@@ -218,20 +267,12 @@ impl WorkflowGraphProvider {
 }
 
 #[async_trait]
-impl GraphDataProvider for WorkflowGraphProvider {
-    fn name(&self) -> &str {
-        &self.name
-    }
-
-    fn graph_type(&self) -> &str {
-        "workflow"
-    }
-
-    async fn generate_graph(&self) -> Result<Graph, Error> {
+impl AsyncGraphDataProvider for WorkflowGraphProvider {
+    async fn generate_graph(&self) -> Result<Graph> {
         self.create_graph_from_workflow().await
     }
 
-    async fn setup_tracking(&self, graph_manager: Arc<GraphManager>) -> Result<(), Error> {
+    async fn setup_tracking(&self, graph_manager: Arc<GraphManager>) -> Result<()> {
         // Create a workflow graph
         let mut graph = Graph::new("workflow-graph", "Workflow Graph");
         graph.graph_type = "workflow".to_string();
@@ -349,20 +390,12 @@ impl AgentGraphProvider {
 }
 
 #[async_trait]
-impl GraphDataProvider for AgentGraphProvider {
-    fn name(&self) -> &str {
-        &self.name
-    }
-
-    fn graph_type(&self) -> &str {
-        "agent"
-    }
-
-    async fn generate_graph(&self) -> Result<Graph, Error> {
+impl AsyncGraphDataProvider for AgentGraphProvider {
+    async fn generate_graph(&self) -> Result<Graph> {
         self.create_graph_from_agents().await
     }
 
-    async fn setup_tracking(&self, graph_manager: Arc<GraphManager>) -> Result<(), Error> {
+    async fn setup_tracking(&self, graph_manager: Arc<GraphManager>) -> Result<()> {
         // Create an agent graph
         let mut graph = Graph::new("agent-graph", "Agent Graph");
         graph.graph_type = "agent".to_string();
@@ -475,21 +508,12 @@ impl HumanInputGraphProvider {
 }
 
 #[async_trait]
-impl GraphDataProvider for HumanInputGraphProvider {
-    fn name(&self) -> &str {
-        // &self.name
-        "Human Input Graph Provider"
-    }
-
-    fn graph_type(&self) -> &str {
-        "human_input"
-    }
-
-    async fn generate_graph(&self) -> Result<Graph, Error> {
+impl AsyncGraphDataProvider for HumanInputGraphProvider {
+    async fn generate_graph(&self) -> Result<Graph> {
         self.create_graph_from_human_input().await
     }
 
-    async fn setup_tracking(&self, graph_manager: Arc<GraphManager>) -> Result<(), Error> {
+    async fn setup_tracking(&self, graph_manager: Arc<GraphManager>) -> Result<()> {
         // Create a human input graph
         let mut graph = Graph::new("human-input-graph", "Human Input Graph");
         graph.graph_type = "human-input".to_string();
@@ -595,21 +619,12 @@ impl LlmIntegrationGraphProvider {
 }
 
 #[async_trait]
-impl GraphDataProvider for LlmIntegrationGraphProvider {
-    fn name(&self) -> &str {
-        // &self.name
-        "LLM Integration Graph Provider"
-    }
-
-    fn graph_type(&self) -> &str {
-        "llm_integration"
-    }
-
-    async fn generate_graph(&self) -> Result<Graph, Error> {
+impl AsyncGraphDataProvider for LlmIntegrationGraphProvider {
+    async fn generate_graph(&self) -> Result<Graph> {
         self.create_graph_from_llm_integration().await
     }
 
-    async fn setup_tracking(&self, graph_manager: Arc<GraphManager>) -> Result<(), Error> {
+    async fn setup_tracking(&self, graph_manager: Arc<GraphManager>) -> Result<()> {
         // Create an LLM integration graph
         let mut graph = Graph::new("llm-graph", "LLM Integration Graph");
         graph.graph_type = "llm".to_string();

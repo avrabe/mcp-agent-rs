@@ -13,7 +13,7 @@ use super::types::{Completion, CompletionRequest, LlmClient, LlmConfig, Message,
 /// Client for the Ollama API
 #[derive(Debug, Clone)]
 pub struct OllamaClient {
-    /// Configuration for the client
+    /// Configuration for the clien
     config: LlmConfig,
 
     /// HTTP client for making requests
@@ -29,7 +29,7 @@ struct OllamaRequest {
     /// Messages in the conversation
     messages: Vec<OllamaMessage>,
 
-    /// Parameters for the request
+    /// Parameters for the reques
     #[serde(skip_serializing_if = "Option::is_none")]
     options: Option<OllamaOptions>,
 }
@@ -44,7 +44,7 @@ struct OllamaMessage {
     content: String,
 }
 
-/// Options for the Ollama request
+/// Options for the Ollama reques
 #[derive(Debug, Serialize)]
 struct OllamaOptions {
     /// Temperature for sampling
@@ -55,7 +55,7 @@ struct OllamaOptions {
     #[serde(skip_serializing_if = "Option::is_none")]
     top_p: Option<f32>,
 
-    /// Number of tokens to predict
+    /// Number of tokens to predic
     #[serde(skip_serializing_if = "Option::is_none")]
     num_predict: Option<u32>,
 }
@@ -66,7 +66,7 @@ struct OllamaResponse {
     /// Model used for the response
     model: String,
 
-    /// Generated content
+    /// Generated conten
     message: OllamaResponseMessage,
 
     /// Whether the response is complete
@@ -99,7 +99,7 @@ struct OllamaResponseMessage {
 }
 
 impl OllamaClient {
-    /// Create a new Ollama client
+    /// Create a new Ollama clien
     pub fn new(config: LlmConfig) -> Self {
         let client = Client::builder()
             .timeout(std::time::Duration::from_secs(120))
@@ -114,7 +114,7 @@ impl OllamaClient {
         Self::new(LlmConfig::default())
     }
 
-    /// Convert messages to Ollama format
+    /// Convert messages to Ollama forma
     fn convert_messages(&self, messages: &[Message]) -> Vec<OllamaMessage> {
         messages
             .iter()
@@ -125,7 +125,7 @@ impl OllamaClient {
             .collect()
     }
 
-    /// Create Ollama options from a completion request
+    /// Create Ollama options from a completion reques
     fn create_options(&self, request: &CompletionRequest) -> Option<OllamaOptions> {
         if request.temperature.is_none() && request.top_p.is_none() && request.max_tokens.is_none()
         {
@@ -156,7 +156,7 @@ impl LlmClient for OllamaClient {
         };
 
         let response = self
-            .client
+            .clien
             .post(&api_url)
             .json(&ollama_request)
             .send()

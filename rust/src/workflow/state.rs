@@ -1,7 +1,8 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use tokio::sync::Mutex as TokioMutex;
 
 /// Represents the current state of a workflow
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -97,7 +98,7 @@ impl WorkflowState {
 }
 
 /// Thread-safe shared workflow state
-pub type SharedWorkflowState = Arc<Mutex<WorkflowState>>;
+pub type SharedWorkflowState = Arc<TokioMutex<WorkflowState>>;
 
 /// Result of a workflow execution
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -105,7 +106,7 @@ pub struct WorkflowResult {
     /// The result value
     pub value: Option<serde_json::Value>,
 
-    /// Metadata for the result
+    /// Metadata for the resul
     pub metadata: HashMap<String, serde_json::Value>,
 
     /// Start time of the workflow
@@ -122,7 +123,7 @@ impl Default for WorkflowResult {
 }
 
 impl WorkflowResult {
-    /// Create a new workflow result
+    /// Create a new workflow resul
     pub fn new() -> Self {
         Self {
             value: None,
@@ -142,7 +143,7 @@ impl WorkflowResult {
         }
     }
 
-    /// Create a success result with the given output
+    /// Create a success result with the given outpu
     pub fn success<T: Into<serde_json::Value>>(output: T) -> Self {
         let mut result = Self::with_value(output.into());
         result.start_time = Some(Utc::now() - chrono::Duration::seconds(1));
@@ -230,7 +231,7 @@ impl WorkflowResult {
         }
     }
 
-    /// Get the error message if present
+    /// Get the error message if presen
     pub fn error(&self) -> Option<String> {
         self.metadata
             .get("error")

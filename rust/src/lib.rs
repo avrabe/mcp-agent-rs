@@ -18,7 +18,7 @@ pub mod mcp;
 /// Utility modules for error handling and common functionality.
 pub mod utils;
 
-/// Configuration management
+/// Configuration managemen
 pub mod config;
 
 /// Telemetry and observability with OpenTelemetry integration
@@ -33,6 +33,13 @@ pub mod llm;
 /// Human input handling for interactive workflows
 pub mod human_input;
 
+/// Error types for MCP-Agen
+pub mod error;
+
+/// Terminal system with console and web interfaces
+#[cfg(feature = "terminal-web")]
+pub mod terminal;
+
 // Re-export key MCP types
 pub use mcp::{
     executor::Executor,
@@ -46,6 +53,7 @@ pub use workflow::{
 };
 
 // Re-export error types
+pub use error::Error;
 pub use utils::error::{McpError, McpResult};
 
 /// Re-export telemetry types and functions for easier access
@@ -65,6 +73,10 @@ pub use human_input::{
     ConsoleInputHandler, HUMAN_INPUT_SIGNAL_NAME, HumanInputHandler, HumanInputRequest,
     HumanInputResponse,
 };
+
+/// Re-export terminal system types for easier access
+#[cfg(feature = "terminal-web")]
+pub use terminal::{TerminalSystem, TerminalType, config::TerminalConfig};
 
 #[cfg(feature = "ollama")]
 pub use crate::llm::OllamaClient;

@@ -222,7 +222,7 @@ impl WorkflowEngine {
     ) -> Result<crate::human_input::HumanInputResponse> {
         use crate::human_input::HUMAN_INPUT_SIGNAL_NAME;
 
-        // Create a value from the request
+        // Create a value from the reques
         let request_value = serde_json::to_value(&request)?;
 
         // Wait for a signal with the response

@@ -10,7 +10,7 @@
 //! - Implementing timeout mechanisms
 //! - Providing metrics for protocol operations
 //!
-//! ## Binary Format
+//! ## Binary Forma
 //!
 //! MCP messages are encoded in a custom binary format:
 //! 1. Message type (1 byte)
@@ -30,15 +30,15 @@
 //! async fn example() -> Result<(), Box<dyn std::error::Error>> {
 //!     let protocol = McpProtocol::new();
 //!     let mut stream = TcpStream::connect("127.0.0.1:8080").await?;
-//!     
+//!
 //!     // Send a message
 //!     let message = Message::new_request(b"Hello, world!".to_vec());
 //!     protocol.write_message_async(&mut stream, &message).await?;
-//!     
+//!
 //!     // Read a message
 //!     let response = protocol.read_message_async(&mut stream).await?;
 //!     println!("Received: {:?}", response);
-//!     
+//!
 //!     Ok(())
 //! }
 //! ```
@@ -79,7 +79,7 @@ pub struct McpProtocol {
 
 impl Clone for McpProtocol {
     /// Creates a clone of the protocol instance.
-    /// 
+    ///
     /// This allows sharing the protocol between different tasks while maintaining
     /// separate buffers but shared state for pending requests. The shared state ensures
     /// that responses are properly routed to the tasks that sent the corresponding requests.
@@ -109,7 +109,7 @@ impl McpProtocol {
     /// The default configuration includes:
     /// - 1KB read buffer
     /// - 16 byte ID buffer
-    /// - 30 second request timeout
+    /// - 30 second request timeou
     /// - Empty pending requests map
     /// - No message channels (these must be initialized separately)
     pub fn new() -> Self {
@@ -128,11 +128,11 @@ impl McpProtocol {
 
     /// Writes a message to a stream asynchronously
     ///
-    /// This method serializes an MCP message into its binary representation and writes it
+    /// This method serializes an MCP message into its binary representation and writes i
     /// to the provided output stream. The method is instrumented with tracing to capture
     /// performance metrics and debug information.
     ///
-    /// ## Message Format
+    /// ## Message Forma
     /// The binary format consists of:
     /// 1. Message type (1 byte)
     /// 2. Priority (1 byte)
@@ -169,14 +169,14 @@ impl McpProtocol {
         // Write message ID (16 bytes)
         buffer.extend_from_slice(&message.id.0);
 
-        // Write correlation ID if present
+        // Write correlation ID if presen
         let has_correlation_id = message.correlation_id.is_some();
         buffer.extend_from_slice(&[has_correlation_id as u8]);
         if let Some(correlation_id) = &message.correlation_id {
             buffer.extend_from_slice(&correlation_id.0);
         }
 
-        // Write error if present
+        // Write error if presen
         let has_error = message.error.is_some();
         buffer.extend_from_slice(&[has_error as u8]);
         if let Some(error) = &message.error {
@@ -294,7 +294,7 @@ impl McpProtocol {
         stream.read_exact(&mut id_buf).await?;
         let id = MessageId(id_buf);
 
-        // Read correlation ID if present
+        // Read correlation ID if presen
         let mut has_correlation_id_buf = [0u8; 1];
         stream.read_exact(&mut has_correlation_id_buf).await?;
         let has_correlation_id = has_correlation_id_buf[0] == 1;
@@ -307,12 +307,12 @@ impl McpProtocol {
             None
         };
 
-        // Start a new span for reading the body part
+        // Start a new span for reading the body par
         drop(_read_guard);
         let body_span = trace_span!("read_stream_body", message_id = %id, message_type = ?message_type, priority = ?priority);
         let _body_guard = body_span.enter();
 
-        // Read error if present
+        // Read error if presen
         let mut has_error_buf = [0u8; 1];
         stream.read_exact(&mut has_error_buf).await?;
         let has_error = has_error_buf[0] == 1;

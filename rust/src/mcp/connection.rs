@@ -2,9 +2,10 @@
 
 use std::collections::HashMap;
 use std::fmt::{self, Debug, Formatter};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Instant;
 use tokio::net::TcpStream;
+use tokio::sync::Mutex;
 use tracing::{debug, error, info, instrument, trace_span, warn};
 
 use crate::telemetry;
@@ -40,6 +41,57 @@ impl ConnectionManager {
         Self {
             connections: HashMap::new(),
         }
+    }
+
+    /// Add a connection with an endpoint identifier
+    #[instrument(skip(self), fields(endpoint_id = %endpoint_id, endpoint_address = %endpoint_address))]
+    pub async fn add_connection(
+        &mut self,
+        endpoint_id: String,
+        endpoint_address: String,
+    ) -> McpResult<()> {
+        debug!(
+            "Adding endpoint {} with address {}",
+            endpoint_id, endpoint_address
+        );
+
+        // Try to connect to the endpoint
+        match TcpStream::connect(&endpoint_address).await {
+            Ok(stream) => {
+                self.connections
+                    .insert(endpoint_id, StreamType::Tcp(Arc::new(Mutex::new(stream))));
+                Ok(())
+            }
+            Err(e) => {
+                error!("Failed to connect to {}: {}", endpoint_address, e);
+                Err(e.into())
+            }
+        }
+    }
+
+    /// Check if a connection with the given ID exists
+    #[instrument(skip(self), fields(endpoint_id = %endpoint_id))]
+    pub fn contains_key(&self, endpoint_id: &str) -> bool {
+        self.connections.contains_key(endpoint_id)
+    }
+
+    /// Get the number of active connections
+    #[instrument(skip(self))]
+    pub fn len(&self) -> usize {
+        self.connections.len()
+    }
+
+    /// Get a list of all connection IDs
+    #[instrument(skip(self))]
+    pub fn keys(&self) -> impl Iterator<Item = &String> {
+        self.connections.keys()
+    }
+
+    /// Remove a connection by ID
+    #[instrument(skip(self), fields(endpoint_id = %endpoint_id))]
+    pub fn remove(&mut self, endpoint_id: &str) -> Option<StreamType> {
+        debug!("Removing connection for endpoint {}", endpoint_id);
+        self.connections.remove(endpoint_id)
     }
 
     /// Connect to a TCP endpoint

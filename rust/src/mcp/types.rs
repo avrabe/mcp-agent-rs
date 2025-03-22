@@ -23,21 +23,21 @@
 //!
 //! For JSON-RPC compatibility, the module includes:
 //!
-//! - `JsonRpcRequest`: Represents a method invocation request
+//! - `JsonRpcRequest`: Represents a method invocation reques
 //! - `JsonRpcResponse`: Contains the result of a method call
 //! - `JsonRpcNotification`: One-way messages that require no response
 //! - `JsonRpcError`: Standard error format for JSON-RPC
 //!
 //! ## Example
 //!
-//! ```rust
+//! ```rus
 //! use mcp_agent::mcp::types::{Message, MessageType, Priority};
 //!
 //! // Create a request message with payload
 //! let payload = b"Hello, world!".to_vec();
 //! let request = Message::request(payload, Priority::Normal);
 //!
-//! // Create a response to the request
+//! // Create a response to the reques
 //! let response_payload = b"Response data".to_vec();
 //! let response = Message::response(response_payload, request.id.clone());
 //!
@@ -92,7 +92,7 @@ impl fmt::Display for MessageId {
     }
 }
 
-/// The type of message being sent
+/// The type of message being sen
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MessageType {
     /// A request message
@@ -312,12 +312,12 @@ pub struct JsonRpcRequest {
     /// Parameters for the method
     #[serde(skip_serializing_if = "Option::is_none")]
     pub params: Option<serde_json::Value>,
-    /// Unique identifier for the request
+    /// Unique identifier for the reques
     pub id: serde_json::Value,
 }
 
 impl JsonRpcRequest {
-    /// Create a new JSON-RPC request
+    /// Create a new JSON-RPC reques
     pub fn new(method: &str, params: Option<serde_json::Value>, id: serde_json::Value) -> Self {
         Self {
             jsonrpc: "2.0".to_string(),
@@ -348,7 +348,7 @@ pub struct JsonRpcResponse {
     /// Result of the method call, must be present if no error
     #[serde(skip_serializing_if = "Option::is_none")]
     pub result: Option<serde_json::Value>,
-    /// Error information, must be present if no result
+    /// Error information, must be present if no resul
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<JsonRpcError>,
     /// Request identifier that this response corresponds to
@@ -384,8 +384,9 @@ impl JsonRpcResponse {
 
     /// Deserialize from JSON bytes
     pub fn from_bytes(bytes: &[u8]) -> McpResult<Self> {
-        serde_json::from_slice(bytes)
-            .map_err(|e| McpError::Deserialization(format!("Failed to deserialize response: {}", e)))
+        serde_json::from_slice(bytes).map_err(|e| {
+            McpError::Deserialization(format!("Failed to deserialize response: {}", e))
+        })
     }
 }
 
@@ -413,14 +414,16 @@ impl JsonRpcNotification {
 
     /// Serialize the notification to JSON bytes
     pub fn to_bytes(&self) -> McpResult<Vec<u8>> {
-        serde_json::to_vec(self)
-            .map_err(|e| McpError::Serialization(format!("Failed to serialize notification: {}", e)))
+        serde_json::to_vec(self).map_err(|e| {
+            McpError::Serialization(format!("Failed to serialize notification: {}", e))
+        })
     }
 
     /// Deserialize from JSON bytes
     pub fn from_bytes(bytes: &[u8]) -> McpResult<Self> {
-        serde_json::from_slice(bytes)
-            .map_err(|e| McpError::Deserialization(format!("Failed to deserialize notification: {}", e)))
+        serde_json::from_slice(bytes).map_err(|e| {
+            McpError::Deserialization(format!("Failed to deserialize notification: {}", e))
+        })
     }
 }
 
@@ -473,7 +476,10 @@ impl JsonRpcError {
 
     /// Server error (-32000 to -32099)
     pub fn server_error(code: i32, message: &str, data: Option<serde_json::Value>) -> Self {
-        assert!(-32099 <= code && code <= -32000, "Server error code must be between -32099 and -32000");
+        assert!(
+            -32099 <= code && code <= -32000,
+            "Server error code must be between -32099 and -32000"
+        );
         Self::new(code, message, data)
     }
 }

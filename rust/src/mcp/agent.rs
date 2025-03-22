@@ -27,7 +27,7 @@
 //! use mcp_agent::mcp::types::Message;
 //!
 //! async fn example() {
-//!     // Create a new agent
+//!     // Create a new agen
 //!     let agent = Agent::new(None);
 //!
 //!     // Connect to a server
@@ -40,19 +40,21 @@
 //!     // Execute a task
 //!     let args = serde_json::json!({ "param": "value" });
 //!     let result = agent.execute_task("example_task", args, None).await.unwrap();
-//!     
+//!
 //!     // Check agent metrics
 //!     let metrics = agent.get_stats().await;
 //!     println!("Messages sent: {}", metrics.messages_sent);
 //! }
 
 use std::collections::HashMap;
+use std::fmt::Debug;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
-use tracing::{debug, info, instrument, warn};
+use tracing::{debug, error, info, instrument, warn};
 use uuid::Uuid;
 
+use crate::mcp::connection::ConnectionManager;
 use crate::mcp::types::Message;
 use crate::telemetry;
 use crate::utils::error::{McpError, McpResult};
@@ -73,18 +75,18 @@ pub struct AgentConfig {
 /// An agent that can connect to multiple servers and manage message passing.
 #[derive(Debug)]
 pub struct Agent {
-    /// Active connections
-    connections: Arc<Mutex<HashMap<String, String>>>,
+    /// Active connections manager
+    connection_manager: Arc<Mutex<ConnectionManager>>,
     /// Agent configuration
     config: AgentConfig,
     /// Message statistics
     stats: Arc<Mutex<AgentStats>>,
 }
 
-/// Message and connection statistics for the agent
+/// Message and connection statistics for the agen
 #[derive(Debug, Default)]
 struct AgentStats {
-    /// Total number of messages sent
+    /// Total number of messages sen
     messages_sent: u64,
     /// Total number of messages received
     messages_received: u64,
@@ -110,7 +112,7 @@ impl Agent {
         let config = AgentConfig::default();
 
         let agent = Self {
-            connections: Arc::new(Mutex::new(HashMap::new())),
+            connection_manager: Arc::new(Mutex::new(ConnectionManager::new())),
             config,
             stats: Arc::new(Mutex::new(AgentStats::default())),
         };
@@ -137,33 +139,52 @@ impl Agent {
             stats.connection_attempts += 1;
         }
 
-        // Simulate connection process
-        let mut connections = self.connections.lock().await;
-        connections.insert(server_id.to_string(), server_address.to_string());
-
-        let duration = start.elapsed();
-        debug!("Connected to server {} in {:?}", server_id, duration);
-
-        // Update statistics
+        // Connect to the server using connection manager
+        let mut connection_manager = self.connection_manager.lock().await;
+        match connection_manager
+            .add_connection(server_id.to_string(), server_address.to_string())
+            .await
         {
-            let mut stats = self.stats.lock().await;
-            stats.connection_successes += 1;
+            Ok(_) => {
+                let duration = start.elapsed();
+                debug!("Connected to server {} in {:?}", server_id, duration);
 
-            // Record metrics
-            let mut metrics = HashMap::new();
-            metrics.insert("connection_duration_ms", duration.as_millis() as f64);
-            metrics.insert("active_connections", connections.len() as f64);
-            metrics.insert("connection_successes", stats.connection_successes as f64);
-            telemetry::add_metrics(metrics);
+                // Update statistics
+                {
+                    let mut stats = self.stats.lock().await;
+                    stats.connection_successes += 1;
+
+                    // Record metrics
+                    let mut metrics = HashMap::new();
+                    metrics.insert("connection_duration_ms", duration.as_millis() as f64);
+                    metrics.insert("active_connections", connection_manager.len() as f64);
+                    metrics.insert("connection_successes", stats.connection_successes as f64);
+                    telemetry::add_metrics(metrics);
+                }
+
+                Ok(())
+            }
+            Err(e) => {
+                // Update statistics
+                {
+                    let mut stats = self.stats.lock().await;
+                    stats.connection_failures += 1;
+
+                    // Record metrics
+                    let mut metrics = HashMap::new();
+                    metrics.insert("connection_failures", stats.connection_failures as f64);
+                    telemetry::add_metrics(metrics);
+                }
+
+                Err(e)
+            }
         }
-
-        Ok(())
     }
 
     /// Returns the number of active connections
     #[instrument(skip(self))]
     pub async fn connection_count(&self) -> usize {
-        let connections = self.connections.lock().await;
+        let connections = self.connection_manager.lock().await;
         let count = connections.len();
 
         debug!("Current connection count: {}", count);
@@ -175,32 +196,27 @@ impl Agent {
     pub async fn list_connections(&self) -> Vec<String> {
         let _guard = telemetry::span_duration("list_connections");
 
-        let connections = self.connections.lock().await;
+        let connections = self.connection_manager.lock().await;
         let connection_list = connections.keys().cloned().collect::<Vec<_>>();
 
         debug!("Listed {} active connections", connection_list.len());
         connection_list
     }
 
-    /// Sends a message to a specific server
-    #[instrument(skip(self, message), fields(server_id = %server_id, message_type = ?message.message_type, message_id = %message.id))]
+    /// Sends a message to a specified server
+    #[instrument(skip(self, message), fields(server_id = %server_id, message_id = %message.id))]
     pub async fn send_message(&self, server_id: &str, message: Message) -> McpResult<()> {
         let _guard = telemetry::span_duration("send_message");
         let start = Instant::now();
 
-        info!(
-            "Sending message to server {}: type={:?}, id={}",
-            server_id, message.message_type, message.id
-        );
-
         // Check if we're connected to this server
         let is_connected = {
-            let connections = self.connections.lock().await;
+            let connections = self.connection_manager.lock().await;
             connections.contains_key(server_id)
         };
 
         if !is_connected {
-            warn!("Cannot send message: not connected to server {}", server_id);
+            error!("Cannot send message: not connected to server {}", server_id);
 
             // Track failure
             {
@@ -244,7 +260,7 @@ impl Agent {
         Ok(())
     }
 
-    /// Executes a task on a server with arguments and wait for result
+    /// Executes a task on a server with arguments and wait for resul
     #[instrument(skip(self, args), fields(task_name = %task_name))]
     pub async fn execute_task(
         &self,
@@ -290,41 +306,38 @@ impl Agent {
         Ok(result)
     }
 
-    /// Disconnect from a specific server
+    /// Disconnects from a server
     #[instrument(skip(self), fields(server_id = %server_id))]
     pub async fn disconnect(&self, server_id: &str) -> McpResult<()> {
-        let _guard = telemetry::span_duration("disconnect");
-        let start = Instant::now();
+        let _guard = telemetry::span_duration("disconnect_from_server");
 
         info!("Disconnecting from server {}", server_id);
 
-        let mut connections = self.connections.lock().await;
-        let was_connected = connections.remove(server_id).is_some();
+        let mut connection_manager = self.connection_manager.lock().await;
+        let was_connected = connection_manager.remove(server_id).is_some();
 
         if was_connected {
-            let duration = start.elapsed();
-            info!("Disconnected from server {} in {:?}", server_id, duration);
+            debug!("Disconnected from server {}", server_id);
 
             // Record metrics
             let mut metrics = HashMap::new();
-            metrics.insert("disconnection_duration_ms", duration.as_millis() as f64);
-            metrics.insert("active_connections", connections.len() as f64);
+            metrics.insert("active_connections", connection_manager.len() as f64);
             telemetry::add_metrics(metrics);
 
             Ok(())
         } else {
-            warn!("Cannot disconnect: not connected to server {}", server_id);
+            warn!("No active connection to server {}", server_id);
             Ok(())
         }
     }
 
-    /// Get agent statistics
+    /// Gets current agent metrics
     #[instrument(skip(self))]
     pub async fn get_stats(&self) -> AgentMetrics {
         let _guard = telemetry::span_duration("get_stats");
 
         let stats = self.stats.lock().await;
-        let connections = self.connections.lock().await;
+        let connections = self.connection_manager.lock().await;
 
         let metrics = AgentMetrics {
             connections_count: connections.len(),
@@ -336,17 +349,21 @@ impl Agent {
             connection_failures: stats.connection_failures,
         };
 
-        debug!("Retrieved agent metrics: {:?}", metrics);
+        debug!(
+            "Agent stats: {} connections, {} msgs sent, {} msgs received",
+            metrics.connections_count, metrics.messages_sent, metrics.messages_received
+        );
+
         metrics
     }
 }
 
-/// Public metrics for the agent
+/// Public metrics for the agen
 #[derive(Debug, Clone)]
 pub struct AgentMetrics {
     /// Number of active connections
     pub connections_count: usize,
-    /// Total number of messages sent
+    /// Total number of messages sen
     pub messages_sent: u64,
     /// Total number of messages received
     pub messages_received: u64,

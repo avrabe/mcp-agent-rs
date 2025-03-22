@@ -28,16 +28,16 @@
 //!         Ok(params.unwrap_or(serde_json::Value::Null))
 //!     }).await.unwrap();
 //!
-//!     // Create a request
+//!     // Create a reques
 //!     let request = JsonRpcRequest::new(
 //!         "echo",
 //!         Some(serde_json::json!("Hello, world!")),
 //!         serde_json::Value::String("1".to_string()),
 //!     );
 //!
-//!     // Process the request
+//!     // Process the reques
 //!     let response = handler.handle_request(request).await.unwrap();
-//!     
+//!
 //!     // Use the response
 //!     println!("Result: {:?}", response.result);
 //! }
@@ -62,8 +62,9 @@ use crate::utils::error::{McpError, McpResult};
 /// The function must be:
 /// - Thread-safe (`Send + Sync`)
 /// - Able to handle any valid JSON parameters
-/// - Return a JSON-compatible result
-pub type MethodHandler = Box<dyn Fn(Option<serde_json::Value>) -> McpResult<serde_json::Value> + Send + Sync>;
+/// - Return a JSON-compatible resul
+pub type MethodHandler =
+    Box<dyn Fn(Option<serde_json::Value>) -> McpResult<serde_json::Value> + Send + Sync>;
 
 /// JSON-RPC handler for MCP protocol
 ///
@@ -78,7 +79,7 @@ pub type MethodHandler = Box<dyn Fn(Option<serde_json::Value>) -> McpResult<serd
 /// All methods on this struct are thread-safe and can be called from multiple tasks.
 /// The handler can be cloned and shared between tasks safely.
 ///
-/// # State Management
+/// # State Managemen
 ///
 /// - Method registrations are stored for the lifetime of the handler
 /// - Notification handlers are registered separately from methods
@@ -95,9 +96,33 @@ pub struct JsonRpcHandler {
 impl std::fmt::Debug for JsonRpcHandler {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("JsonRpcHandler")
-            .field("methods_count", &format!("{} methods", self.methods.try_lock().map(|m| m.len()).unwrap_or(0)))
-            .field("notification_handlers_count", &format!("{} handlers", self.notification_handlers.try_lock().map(|h| h.len()).unwrap_or(0)))
-            .field("pending_requests_count", &format!("{} pending", self.pending_requests.try_lock().map(|p| p.len()).unwrap_or(0)))
+            .field(
+                "methods_count",
+                &format!(
+                    "{} methods",
+                    self.methods.try_lock().map(|m| m.len()).unwrap_or(0)
+                ),
+            )
+            .field(
+                "notification_handlers_count",
+                &format!(
+                    "{} handlers",
+                    self.notification_handlers
+                        .try_lock()
+                        .map(|h| h.len())
+                        .unwrap_or(0)
+                ),
+            )
+            .field(
+                "pending_requests_count",
+                &format!(
+                    "{} pending",
+                    self.pending_requests
+                        .try_lock()
+                        .map(|p| p.len())
+                        .unwrap_or(0)
+                ),
+            )
             .finish()
     }
 }
@@ -106,7 +131,7 @@ impl JsonRpcHandler {
     /// Creates a new JSON-RPC handler with empty registrations
     ///
     /// # Returns
-    /// 
+    ///
     /// A new instance of `JsonRpcHandler` with no registered methods or notification handlers.
     ///
     /// # Example
@@ -147,7 +172,7 @@ impl JsonRpcHandler {
     ///
     /// async fn register_method() {
     ///     let handler = JsonRpcHandler::new();
-    ///     
+    ///
     ///     handler.register_method("echo", |params| {
     ///         // Simply return the parameters
     ///         Ok(params.unwrap_or(serde_json::Value::Null))
@@ -189,7 +214,7 @@ impl JsonRpcHandler {
     ///
     /// async fn register_notification() {
     ///     let handler = JsonRpcHandler::new();
-    ///     
+    ///
     ///     handler.register_notification("log", |params| {
     ///         if let Some(msg) = params {
     ///             println!("Log: {:?}", msg);
@@ -237,9 +262,12 @@ impl JsonRpcHandler {
     #[instrument(skip(self, request), fields(method = %request.method, id = ?request.id))]
     pub async fn handle_request(&self, request: JsonRpcRequest) -> McpResult<JsonRpcResponse> {
         let _guard = telemetry::span_duration("handle_jsonrpc_request");
-        
-        debug!("Handling JSON-RPC request: method={}, id={:?}", request.method, request.id);
-        
+
+        debug!(
+            "Handling JSON-RPC request: method={}, id={:?}",
+            request.method, request.id
+        );
+
         // Check for required jsonrpc version
         if request.jsonrpc != "2.0" {
             warn!("Invalid JSON-RPC version: {}", request.jsonrpc);
@@ -248,11 +276,11 @@ impl JsonRpcHandler {
                 request.id,
             ));
         }
-        
+
         // Find the method handler
         let methods = self.methods.lock().await;
         let handler = methods.get(&request.method);
-        
+
         match handler {
             Some(handler) => {
                 // Call the handler with the parameters
@@ -273,7 +301,10 @@ impl JsonRpcHandler {
             None => {
                 warn!("Method not found: {}", request.method);
                 Ok(JsonRpcResponse::error(
-                    JsonRpcError::method_not_found(&format!("Method '{}' not found", request.method)),
+                    JsonRpcError::method_not_found(&format!(
+                        "Method '{}' not found",
+                        request.method
+                    )),
                     request.id,
                 ))
             }
@@ -301,44 +332,59 @@ impl JsonRpcHandler {
     /// - Invalid JSON-RPC version
     /// - Handler execution errors
     ///
-    /// Unlike requests, if no handler is found for a notification, 
+    /// Unlike requests, if no handler is found for a notification,
     /// it is silently ignored per the JSON-RPC 2.0 specification.
     #[instrument(skip(self, notification), fields(method = %notification.method))]
     pub async fn handle_notification(&self, notification: JsonRpcNotification) -> McpResult<()> {
         let _guard = telemetry::span_duration("handle_jsonrpc_notification");
-        
-        debug!("Handling JSON-RPC notification: method={}", notification.method);
-        
+
+        debug!(
+            "Handling JSON-RPC notification: method={}",
+            notification.method
+        );
+
         // Check for required jsonrpc version
         if notification.jsonrpc != "2.0" {
-            warn!("Invalid JSON-RPC version in notification: {}", notification.jsonrpc);
+            warn!(
+                "Invalid JSON-RPC version in notification: {}",
+                notification.jsonrpc
+            );
             return Err(McpError::InvalidMessage(format!(
                 "Invalid JSON-RPC version: {}",
                 notification.jsonrpc
             )));
         }
-        
+
         // Find the notification handler
         let handlers = self.notification_handlers.lock().await;
         let handler = handlers.get(&notification.method);
-        
+
         match handler {
             Some(handler) => {
                 // Call the handler with the parameters
                 match handler(notification.params) {
                     Ok(_) => {
-                        debug!("Notification processed successfully: {}", notification.method);
+                        debug!(
+                            "Notification processed successfully: {}",
+                            notification.method
+                        );
                         Ok(())
                     }
                     Err(error) => {
-                        warn!("Notification processing failed: {}: {}", notification.method, error);
+                        warn!(
+                            "Notification processing failed: {}: {}",
+                            notification.method, error
+                        );
                         Err(error)
                     }
                 }
             }
             None => {
                 // For notifications, it's valid to just ignore unknown methods
-                debug!("No handler for notification method: {}", notification.method);
+                debug!(
+                    "No handler for notification method: {}",
+                    notification.method
+                );
                 Ok(())
             }
         }
@@ -363,13 +409,13 @@ impl JsonRpcHandler {
     /// # Error Handling
     ///
     /// Returns an error if:
-    /// - The JSON data is invalid or doesn't match a request or notification format
+    /// - The JSON data is invalid or doesn't match a request or notification forma
     /// - The request or notification handler returns an error
     #[instrument(skip(self, json_data))]
     pub async fn process_json_message(&self, json_data: &[u8]) -> McpResult<Option<Vec<u8>>> {
         let _guard = telemetry::span_duration("process_json_message");
-        
-        // Try to parse as a request
+
+        // Try to parse as a reques
         match serde_json::from_slice::<JsonRpcRequest>(json_data) {
             Ok(request) => {
                 let response = self.handle_request(request).await?;
@@ -386,7 +432,10 @@ impl JsonRpcHandler {
                     Err(e) => {
                         // Not a notification either
                         warn!("Invalid JSON-RPC message: {}", e);
-                        return Err(McpError::InvalidMessage(format!("Invalid JSON-RPC message: {}", e)));
+                        return Err(McpError::InvalidMessage(format!(
+                            "Invalid JSON-RPC message: {}",
+                            e
+                        )));
                     }
                 }
             }
@@ -413,7 +462,7 @@ impl JsonRpcHandler {
     /// - The request times out waiting for a response
     /// - The response channel is closed
     /// - The response contains an error
-    /// - The response doesn't contain a result
+    /// - The response doesn't contain a resul
     ///
     /// # Note
     ///
@@ -427,42 +476,43 @@ impl JsonRpcHandler {
         params: Option<serde_json::Value>,
     ) -> McpResult<serde_json::Value> {
         let _guard = telemetry::span_duration("send_jsonrpc_request");
-        
-        // Generate a unique ID for the request
+
+        // Generate a unique ID for the reques
         let id = serde_json::Value::String(Uuid::new_v4().to_string());
-        
-        // Create the request
+
+        // Create the reques
         let request = JsonRpcRequest::new(method, params, id.clone());
-        
+
         // Create a channel for the response
         let (tx, rx) = tokio::sync::oneshot::channel();
-        
+
         // Store the channel sender in pending requests
         {
             let mut pending = self.pending_requests.lock().await;
             if let serde_json::Value::String(id_str) = &id {
                 pending.insert(id_str.clone(), tx);
             } else {
-                return Err(McpError::InvalidState("Request ID must be a string".to_string()));
+                return Err(McpError::InvalidState(
+                    "Request ID must be a string".to_string(),
+                ));
             }
         }
-        
+
         // Send the request (this would be implemented by the caller)
         // For example, passing the serialized request to a network handler
         let serialized = request.to_bytes()?;
         debug!("Serialized JSON-RPC request: {} bytes", serialized.len());
-        
+
         // In a real implementation, you would send the serialized request here
         // This is a placeholder for that logic
         // For example: network_handler.send(serialized).await?;
-        
-        // Wait for the response with a timeout
-        let response = tokio::time::timeout(
-            tokio::time::Duration::from_secs(30),
-            rx
-        ).await.map_err(|_| McpError::Timeout)?
-        .map_err(|_| McpError::InvalidState("Response channel closed".to_string()))?;
-        
+
+        // Wait for the response with a timeou
+        let response = tokio::time::timeout(tokio::time::Duration::from_secs(30), rx)
+            .await
+            .map_err(|_| McpError::Timeout)?
+            .map_err(|_| McpError::InvalidState("Response channel closed".to_string()))?;
+
         // Check for errors
         if let Some(error) = response.error {
             return Err(McpError::Custom {
@@ -470,12 +520,14 @@ impl JsonRpcHandler {
                 message: error.message,
             });
         }
-        
-        // Return the result
-        response.result.ok_or_else(|| McpError::InvalidMessage("No result in response".to_string()))
+
+        // Return the resul
+        response
+            .result
+            .ok_or_else(|| McpError::InvalidMessage("No result in response".to_string()))
     }
 
-    /// Handles a JSON-RPC response and delivers it to the waiting request
+    /// Handles a JSON-RPC response and delivers it to the waiting reques
     ///
     /// This method processes a JSON-RPC response by:
     /// 1. Validating the JSON-RPC version
@@ -494,15 +546,15 @@ impl JsonRpcHandler {
     ///
     /// Returns an error if:
     /// - The JSON-RPC version is invalid
-    /// - The response ID has an invalid format
+    /// - The response ID has an invalid forma
     /// - No pending request is found for the response ID
     /// - The channel for the pending request is closed
     #[instrument(skip(self, response), fields(id = ?response.id))]
     pub async fn handle_response(&self, response: JsonRpcResponse) -> McpResult<()> {
         let _guard = telemetry::span_duration("handle_jsonrpc_response");
-        
+
         debug!("Handling JSON-RPC response: id={:?}", response.id);
-        
+
         // Check for required jsonrpc version
         if response.jsonrpc != "2.0" {
             warn!("Invalid JSON-RPC version: {}", response.jsonrpc);
@@ -511,33 +563,40 @@ impl JsonRpcHandler {
                 response.jsonrpc
             )));
         }
-        
+
         // Get the ID as string
         let id_str = match &response.id {
             serde_json::Value::String(s) => s.clone(),
             _ => {
                 warn!("Invalid response ID type: {:?}", response.id);
-                return Err(McpError::InvalidMessage("Invalid response ID type".to_string()));
+                return Err(McpError::InvalidMessage(
+                    "Invalid response ID type".to_string(),
+                ));
             }
         };
-        
-        // Find the pending request
+
+        // Find the pending reques
         let sender = {
             let mut pending = self.pending_requests.lock().await;
             pending.remove(&id_str)
         };
-        
-        // Send the response to the pending request
+
+        // Send the response to the pending reques
         if let Some(sender) = sender {
             if sender.send(response).is_err() {
                 warn!("Failed to send response to requester (channel closed)");
-                return Err(McpError::InvalidState("Response channel closed".to_string()));
+                return Err(McpError::InvalidState(
+                    "Response channel closed".to_string(),
+                ));
             }
             debug!("Response delivered to requester: id={}", id_str);
             Ok(())
         } else {
             warn!("No pending request found for response: id={}", id_str);
-            Err(McpError::InvalidState(format!("No pending request found for response ID: {}", id_str)))
+            Err(McpError::InvalidState(format!(
+                "No pending request found for response ID: {}",
+                id_str
+            )))
         }
     }
 }
@@ -551,52 +610,64 @@ impl Default for JsonRpcHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[tokio::test]
     async fn test_register_and_handle_method() {
         let handler = JsonRpcHandler::new();
-        
+
         // Register a method
-        handler.register_method("test.method", |params| {
-            match params {
+        handler
+            .register_method("test.method", |params| match params {
                 Some(serde_json::Value::Object(obj)) if obj.contains_key("echo") => {
                     Ok(obj["echo"].clone())
                 }
                 _ => Ok(serde_json::Value::String("default".to_string())),
-            }
-        }).await.unwrap();
-        
-        // Create a test request
+            })
+            .await
+            .unwrap();
+
+        // Create a test reques
         let params = serde_json::json!({ "echo": "hello world" });
-        let request = JsonRpcRequest::new("test.method", Some(params), serde_json::Value::String("1".to_string()));
-        
-        // Handle the request
+        let request = JsonRpcRequest::new(
+            "test.method",
+            Some(params),
+            serde_json::Value::String("1".to_string()),
+        );
+
+        // Handle the reques
         let response = handler.handle_request(request).await.unwrap();
-        
+
         // Verify the response
         assert_eq!(response.jsonrpc, "2.0");
         assert_eq!(response.id, serde_json::Value::String("1".to_string()));
         assert!(response.error.is_none());
-        assert_eq!(response.result.as_ref().unwrap(), &serde_json::Value::String("hello world".to_string()));
+        assert_eq!(
+            response.result.as_ref().unwrap(),
+            &serde_json::Value::String("hello world".to_string())
+        );
     }
-    
+
     #[tokio::test]
     async fn test_method_not_found() {
         let handler = JsonRpcHandler::new();
-        
-        // Create a request for a method that doesn't exist
-        let request = JsonRpcRequest::new("nonexistent.method", None, serde_json::Value::String("1".to_string()));
-        
-        // Handle the request
+
+        // Create a request for a method that doesn't exis
+        let request = JsonRpcRequest::new(
+            "nonexistent.method",
+            None,
+            serde_json::Value::String("1".to_string()),
+        );
+
+        // Handle the reques
         let response = handler.handle_request(request).await.unwrap();
-        
+
         // Verify the response contains an error
         assert_eq!(response.jsonrpc, "2.0");
         assert_eq!(response.id, serde_json::Value::String("1".to_string()));
         assert_eq!(response.result, None);
         assert!(response.error.is_some());
-        
+
         let error = response.error.unwrap();
         assert_eq!(error.code, -32601); // Method not found error code
     }
-} 
+}

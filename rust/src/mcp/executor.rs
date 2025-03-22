@@ -6,7 +6,7 @@
 //! ## Key Components
 //!
 //! - `Executor`: Trait defining the core task execution interface
-//! - `AsyncioExecutor`: Tokio-based implementation of the Executor trait
+//! - `AsyncioExecutor`: Tokio-based implementation of the Executor trai
 //! - `ExecutorConfig`: Configuration options for task execution behavior
 //! - `Signal`: Inter-workflow communication mechanism
 //! - `TaskResult`: Represents the outcome of a task execution
@@ -43,15 +43,15 @@
 //!     let args = serde_json::json!({
 //!         "input": "Hello, world!"
 //!     });
-//!     
+//!
 //!     let result = executor.execute(
 //!         Some("my-task-1"),  // Optional task ID
 //!         "process_text",     // Function name
 //!         args,               // Arguments
-//!         Some(Duration::from_secs(10)), // Custom timeout
+//!         Some(Duration::from_secs(10)), // Custom timeou
 //!     ).await.unwrap();
-//!     
-//!     // Handle the result
+//!
+//!     // Handle the resul
 //!     match result {
 //!         TaskResult::Success(value) => println!("Task succeeded: {:?}", value),
 //!         TaskResult::Failure(err) => println!("Task failed: {}", err),
@@ -187,7 +187,7 @@ impl Signal {
 /// Result of a task execution
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum TaskResult {
-    /// Task succeeded with a result
+    /// Task succeeded with a resul
     Success(serde_json::Value),
     /// Task failed with an error
     Failure(String),
@@ -382,13 +382,13 @@ impl Executor for AsyncioExecutor {
             task_id, function, timeout
         );
 
-        // Create a oneshot channel to receive the result
+        // Create a oneshot channel to receive the resul
         let (tx, rx) = oneshot::channel();
 
         // Clone values for the task
         let function = function.to_string();
         let args = args.clone();
-        let max_attempts = self.config.retry_attempts + 1; // +1 for the initial attempt
+        let max_attempts = self.config.retry_attempts + 1; // +1 for the initial attemp
         let task_id_clone = task_id.clone();
         let this = self.clone();
 
@@ -433,7 +433,7 @@ impl Executor for AsyncioExecutor {
                     }
                 };
 
-                // Execute with timeout
+                // Execute with timeou
                 let timeout_span = trace_span!("timeout_wrapper", timeout_ms = timeout.as_millis());
                 let _timeout_guard = timeout_span.enter();
 
@@ -466,7 +466,7 @@ impl Executor for AsyncioExecutor {
                         let mut tasks = this.tasks.lock().unwrap();
                         tasks.remove(&task_id_clone);
 
-                        // Update active tasks count
+                        // Update active tasks coun
                         let tasks_count = tasks.len();
                         let mut metrics = HashMap::new();
                         metrics.insert("active_tasks", tasks_count as f64);
@@ -513,7 +513,7 @@ impl Executor for AsyncioExecutor {
                             let mut tasks = this.tasks.lock().unwrap();
                             tasks.remove(&task_id_clone);
 
-                            // Update active tasks count
+                            // Update active tasks coun
                             let tasks_count = tasks.len();
                             let mut metrics = HashMap::new();
                             metrics.insert("active_tasks", tasks_count as f64);
@@ -534,7 +534,7 @@ impl Executor for AsyncioExecutor {
                         time::sleep(Duration::from_millis(retry_delay)).await;
                     }
                     Err(_) => {
-                        // Timeout
+                        // Timeou
                         warn!("Task {} timed out on attempt {}", task_id_clone, attempt);
 
                         retry_metrics.insert(
@@ -571,7 +571,7 @@ impl Executor for AsyncioExecutor {
                             let mut tasks = this.tasks.lock().unwrap();
                             tasks.remove(&task_id_clone);
 
-                            // Update active tasks count
+                            // Update active tasks coun
                             let tasks_count = tasks.len();
                             let mut metrics = HashMap::new();
                             metrics.insert("active_tasks", tasks_count as f64);
@@ -611,14 +611,14 @@ impl Executor for AsyncioExecutor {
 
             tasks.insert(task_id.clone(), handle);
 
-            // Update active tasks count
+            // Update active tasks coun
             let tasks_count = tasks.len();
             let mut metrics = HashMap::new();
             metrics.insert("active_tasks", tasks_count as f64);
             telemetry::add_metrics(metrics);
         }
 
-        // Wait for the result
+        // Wait for the resul
         info!("Awaiting result for task {}", task_id);
         let setup_duration = start.elapsed();
 

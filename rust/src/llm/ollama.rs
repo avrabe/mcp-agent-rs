@@ -1,5 +1,5 @@
 use crate::telemetry::add_metric;
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 #[cfg(feature = "ollama")]
 use reqwest::{Client, StatusCode};

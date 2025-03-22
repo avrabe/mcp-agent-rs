@@ -7,7 +7,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{RwLock, mpsc};
+use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, error, info};
 
 use self::models::SprottyStatus;
@@ -28,14 +28,14 @@ mod workflow;
 // Re-export key components from submodules
 pub use api::create_graph_router;
 pub use models::{
-    SprottyEdge, SprottyGraph, SprottyGraphLayout, SprottyNode, SprottyRoot, TaskNode,
-    convert_to_sprotty_model,
+    convert_to_sprotty_model, SprottyEdge, SprottyGraph, SprottyGraphLayout, SprottyNode,
+    SprottyRoot, TaskNode,
 };
 pub use providers::{
     AgentGraphProvider, GraphDataProvider, HumanInputGraphProvider, LlmIntegrationGraphProvider,
     WorkflowGraphProvider,
 };
-pub use sprotty_adapter::{SprottyAction, convert_update_to_action, process_sprotty_action};
+pub use sprotty_adapter::{convert_update_to_action, process_sprotty_action, SprottyAction};
 
 /// Represents a node in the graph
 #[derive(Debug, Clone, Serialize, Deserialize)]

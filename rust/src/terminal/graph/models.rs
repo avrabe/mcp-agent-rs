@@ -716,18 +716,16 @@ mod tests {
         if let SprottyElement::Node(node) = &sprotty_model.children[0] {
             assert_eq!(node.id, "node1");
             assert_eq!(node.label, Some("Node 1".to_string()));
-            assert!(
-                node.css_classes
-                    .as_ref()
-                    .unwrap()
-                    .contains(&"type-task".to_string())
-            );
-            assert!(
-                node.css_classes
-                    .as_ref()
-                    .unwrap()
-                    .contains(&"status-active".to_string())
-            );
+            assert!(node
+                .css_classes
+                .as_ref()
+                .unwrap()
+                .contains(&"type-task".to_string()));
+            assert!(node
+                .css_classes
+                .as_ref()
+                .unwrap()
+                .contains(&"status-active".to_string()));
         } else {
             panic!("Expected node element");
         }
@@ -736,12 +734,11 @@ mod tests {
             assert_eq!(edge.id, "edge1");
             assert_eq!(edge.source, "node1");
             assert_eq!(edge.target, "node2");
-            assert!(
-                edge.css_classes
-                    .as_ref()
-                    .unwrap()
-                    .contains(&"type-dependency".to_string())
-            );
+            assert!(edge
+                .css_classes
+                .as_ref()
+                .unwrap()
+                .contains(&"type-dependency".to_string()));
         } else {
             panic!("Expected edge element");
         }

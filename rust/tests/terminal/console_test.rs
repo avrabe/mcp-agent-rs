@@ -9,7 +9,7 @@ use tokio::sync::{mpsc, oneshot};
 use tokio::time::sleep;
 
 use mcp_agent::error::Error;
-use mcp_agent::terminal::{TerminalSystem, config::TerminalConfig};
+use mcp_agent::terminal::{config::TerminalConfig, TerminalSystem};
 
 /// Test the console terminal internal functionality
 #[tokio::test]

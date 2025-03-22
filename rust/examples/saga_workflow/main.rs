@@ -1,12 +1,12 @@
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use rand::Rng;
 use tracing::{error, info};
 
 use mcp_agent::{
-    telemetry::{TelemetryConfig, init_telemetry},
+    telemetry::{init_telemetry, TelemetryConfig},
     workflow::{
-        WorkflowEngine, WorkflowResult, signal::AsyncSignalHandler, state::WorkflowState,
-        task::task,
+        signal::AsyncSignalHandler, state::WorkflowState, task::task, WorkflowEngine,
+        WorkflowResult,
     },
 };
 

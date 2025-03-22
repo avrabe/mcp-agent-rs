@@ -1,4 +1,4 @@
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use serde_json::json;
 use std::collections::HashMap;
@@ -7,10 +7,10 @@ use std::time::Duration;
 use tracing::{error, info};
 
 use mcp_agent::llm::types::LlmClient;
-use mcp_agent::telemetry::{TelemetryConfig, init_telemetry};
+use mcp_agent::telemetry::{init_telemetry, TelemetryConfig};
 use mcp_agent::workflow::{
-    AsyncSignalHandler, Workflow, WorkflowEngine, WorkflowResult, WorkflowSignal, WorkflowState,
-    execute_workflow, task,
+    execute_workflow, task, AsyncSignalHandler, Workflow, WorkflowEngine, WorkflowResult,
+    WorkflowSignal, WorkflowState,
 };
 use mcp_agent::{Completion, CompletionRequest, LlmConfig, LlmMessage as Message, MessageRole};
 
@@ -628,7 +628,8 @@ async fn main() -> Result<()> {
     let engine = WorkflowEngine::new(signal_handler);
 
     // Sample technical content about MCP
-    let technical_content = "The Model Context Protocol (MCP) is a standardized API for interaction \
+    let technical_content =
+        "The Model Context Protocol (MCP) is a standardized API for interaction \
     between language models and their environments. It defines interfaces for context management, \
     token streaming, and tool usage. The implementation includes Rust traits with async functions \
     for efficient processing.";
@@ -643,7 +644,8 @@ async fn main() -> Result<()> {
     and begins to explore the meaning of creativity through poetry and music.";
 
     // Sample query content
-    let query_content = "What are the key differences between transformer and recurrent neural network \
+    let query_content =
+        "What are the key differences between transformer and recurrent neural network \
     architectures, and when should each be used?";
 
     // Examples of different content types to demonstrate conditional processing

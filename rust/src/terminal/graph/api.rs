@@ -5,10 +5,10 @@
 
 use axum::extract::ws::{Message, WebSocket};
 use axum::{
-    Json, Router,
     extract::{Path, State, WebSocketUpgrade},
     response::{IntoResponse, Response},
     routing::{get, post},
+    Json, Router,
 };
 use futures::{sink::SinkExt, stream::StreamExt};
 use serde::{Deserialize, Serialize};
@@ -16,13 +16,13 @@ use serde_json::json;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{RwLock, mpsc, broadcast};
+use tokio::sync::{broadcast, mpsc, RwLock};
 use tracing::{debug, error, info, warn};
 
-use super::sprotty_adapter::{SprottyAction, process_sprotty_action};
 use super::models::{
-    SprottyModelUpdate, SprottyRoot, convert_to_sprotty_model, convert_update_to_sprotty,
+    convert_to_sprotty_model, convert_update_to_sprotty, SprottyModelUpdate, SprottyRoot,
 };
+use super::sprotty_adapter::{process_sprotty_action, SprottyAction};
 use super::{Graph, GraphManager, GraphUpdate};
 use crate::error::Error;
 
@@ -109,17 +109,17 @@ async fn handle_graph_socket(socket: WebSocket, graph_manager: Arc<GraphManager>
 
     // Create a subscription to all graph updates
     let update_listener = graph_manager.subscribe().await;
-    
+
     // Spawn a task to listen for graph updates
     let use_sprotty = Arc::clone(&use_sprotty_format);
     let update_sender = update_tx.clone();
     tokio::spawn(async move {
         let mut updates = update_listener;
-        
+
         while let Ok(update) = updates.recv().await {
             debug!("Received graph update: {:?}", update.update_type);
             let use_sprotty_val = *use_sprotty.read().await;
-            
+
             let json_result = if use_sprotty_val {
                 if let Some(sprotty_update) = convert_update_to_sprotty(&update) {
                     let action = super::sprotty_adapter::convert_update_to_action(&sprotty_update);
@@ -130,7 +130,7 @@ async fn handle_graph_socket(socket: WebSocket, graph_manager: Arc<GraphManager>
             } else {
                 serde_json::to_string(&update)
             };
-            
+
             if let Ok(json) = json_result {
                 if let Err(e) = update_sender.send(Message::Text(json)).await {
                     error!("Error sending graph update over WebSocket: {}", e);
@@ -139,7 +139,7 @@ async fn handle_graph_socket(socket: WebSocket, graph_manager: Arc<GraphManager>
             }
         }
     });
-    
+
     // Forward messages from the update channel to the WebSocket
     tokio::spawn(async move {
         while let Some(msg) = update_rx.recv().await {
@@ -167,19 +167,20 @@ async fn handle_graph_socket(socket: WebSocket, graph_manager: Arc<GraphManager>
                     if let Ok(action) = serde_json::from_str::<SprottyAction>(&text) {
                         // Process Sprotty action
                         debug!("Received Sprotty action: {:?}", action);
-                        
+
                         match process_sprotty_action(action, graph_manager.clone()).await {
                             Ok(Some(response_action)) => {
                                 if let Ok(json) = serde_json::to_string(&response_action) {
-                                    if let Err(e) = sender_for_recv.send(Message::Text(json)).await {
+                                    if let Err(e) = sender_for_recv.send(Message::Text(json)).await
+                                    {
                                         error!("Error sending Sprotty action response: {}", e);
                                         break;
                                     }
                                 }
-                            },
+                            }
                             Ok(None) => {
                                 // No response needed
-                            },
+                            }
                             Err(e) => {
                                 error!("Error processing Sprotty action: {}", e);
                                 // Send error response
@@ -187,7 +188,10 @@ async fn handle_graph_socket(socket: WebSocket, graph_manager: Arc<GraphManager>
                                     "kind": "error",
                                     "message": format!("Error: {}", e)
                                 });
-                                if let Err(e) = sender_for_recv.send(Message::Text(error_json.to_string())).await {
+                                if let Err(e) = sender_for_recv
+                                    .send(Message::Text(error_json.to_string()))
+                                    .await
+                                {
                                     error!("Error sending error response: {}", e);
                                     break;
                                 }
@@ -196,12 +200,12 @@ async fn handle_graph_socket(socket: WebSocket, graph_manager: Arc<GraphManager>
                     } else if let Ok(request) = serde_json::from_str::<GraphClientRequest>(&text) {
                         // Handle legacy client request
                         debug!("Received client request: {}", request.request_type);
-                        
+
                         match request.request_type.as_str() {
                             "subscribe" => {
                                 if let Some(graph_id) = &request.graph_id {
                                     debug!("Client subscribing to graph: {}", graph_id);
-                                    
+
                                     // Send the initial graph state
                                     if let Some(graph) = graph_manager.get_graph(graph_id).await {
                                         let use_sprotty = *use_sprotty_format_clone.read().await;
@@ -319,25 +323,17 @@ mod tests {
         let router = create_graph_router(manager);
 
         // The router should include the expected routes
-        assert!(
-            router
-                .find_route(&axum::http::Method::GET, "/api/graph")
-                .is_some()
-        );
-        assert!(
-            router
-                .find_route(&axum::http::Method::GET, "/api/graph/test-graph")
-                .is_some()
-        );
-        assert!(
-            router
-                .find_route(&axum::http::Method::GET, "/api/graph/sprotty/test-graph")
-                .is_some()
-        );
-        assert!(
-            router
-                .find_route(&axum::http::Method::GET, "/api/graph/ws")
-                .is_some()
-        );
+        assert!(router
+            .find_route(&axum::http::Method::GET, "/api/graph")
+            .is_some());
+        assert!(router
+            .find_route(&axum::http::Method::GET, "/api/graph/test-graph")
+            .is_some());
+        assert!(router
+            .find_route(&axum::http::Method::GET, "/api/graph/sprotty/test-graph")
+            .is_some());
+        assert!(router
+            .find_route(&axum::http::Method::GET, "/api/graph/ws")
+            .is_some());
     }
 }

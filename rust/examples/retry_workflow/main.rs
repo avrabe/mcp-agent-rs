@@ -1,4 +1,4 @@
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use rand::Rng;
 use serde_json::json;
@@ -9,10 +9,10 @@ use tokio::sync::Mutex as TokioMutex;
 use tracing::{debug, error, info, warn};
 
 use mcp_agent::llm::types::LlmClient;
-use mcp_agent::telemetry::{TelemetryConfig, init_telemetry};
+use mcp_agent::telemetry::{init_telemetry, TelemetryConfig};
 use mcp_agent::workflow::{
-    AsyncSignalHandler, Workflow, WorkflowEngine, WorkflowResult, WorkflowSignal, WorkflowState,
-    execute_workflow, task,
+    execute_workflow, task, AsyncSignalHandler, Workflow, WorkflowEngine, WorkflowResult,
+    WorkflowSignal, WorkflowState,
 };
 use mcp_agent::{Completion, CompletionRequest, LlmConfig};
 

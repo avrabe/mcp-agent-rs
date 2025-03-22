@@ -8,9 +8,9 @@ use std::net::Ipv4Addr;
 use std::time::Duration;
 
 use mcp_agent::error::Result;
-use mcp_agent::terminal::TerminalSystem;
 use mcp_agent::terminal::config::{AuthConfig, AuthMethod, TerminalConfig};
-use tracing::{Level, error, info};
+use mcp_agent::terminal::TerminalSystem;
+use tracing::{error, info, Level};
 use tracing_subscriber::fmt;
 
 #[tokio::main]

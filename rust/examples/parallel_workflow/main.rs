@@ -9,10 +9,10 @@ use serde_json::json;
 use mcp_agent::llm::types::{
     Completion, CompletionRequest, LlmClient, LlmConfig, Message, MessageRole,
 };
-use mcp_agent::telemetry::{TelemetryConfig, init_telemetry};
+use mcp_agent::telemetry::{init_telemetry, TelemetryConfig};
 use mcp_agent::workflow::{
-    AsyncSignalHandler, Workflow, WorkflowEngine, WorkflowResult, WorkflowSignal, WorkflowState,
-    execute_workflow, task,
+    execute_workflow, task, AsyncSignalHandler, Workflow, WorkflowEngine, WorkflowResult,
+    WorkflowSignal, WorkflowState,
 };
 
 /// A parallel workflow that summarizes different aspects of a text
@@ -271,7 +271,8 @@ async fn main() -> Result<()> {
     let engine = WorkflowEngine::new(signal_handler);
 
     // Sample text about MCP to summarize
-    let text = "The Model Context Protocol (MCP) is a standardized protocol for communication between \
+    let text =
+        "The Model Context Protocol (MCP) is a standardized protocol for communication between \
     language models and their environments. It enables more structured, efficient, and transparent \
     interactions with AI systems, allowing for better debugging, monitoring, and control. \
     MCP defines a set of messages and operations that facilitate the exchange of information \

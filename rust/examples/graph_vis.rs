@@ -1,5 +1,5 @@
 use env_logger;
-use log::{LevelFilter, info};
+use log::{info, LevelFilter};
 
 fn main() {
     // Initialize logging

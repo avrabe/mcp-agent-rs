@@ -28,7 +28,7 @@ mod terminal_web_code {
 
     use mcp_agent::terminal::config::AuthConfig;
     use mcp_agent::terminal::graph::{Graph, GraphEdge, GraphNode, GraphUpdateType};
-    use mcp_agent::terminal::{TerminalConfig, initialize_terminal, initialize_visualization};
+    use mcp_agent::terminal::{initialize_terminal, initialize_visualization, TerminalConfig};
 
     pub async fn run_visualization() -> Result<()> {
         // Setup terminal config with visualization enabled

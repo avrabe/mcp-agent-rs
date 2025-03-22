@@ -18,7 +18,7 @@ pub mod state;
 pub mod task;
 
 // Re-export key components
-pub use engine::{Workflow, WorkflowEngine, WorkflowEngineConfig, execute_workflow};
+pub use engine::{execute_workflow, Workflow, WorkflowEngine, WorkflowEngineConfig};
 pub use signal::{AsyncSignalHandler, SignalHandler, WorkflowSignal};
 pub use state::{SharedWorkflowState, WorkflowResult, WorkflowState};
-pub use task::{RetryConfig, TaskGroup, WorkflowTask, task};
+pub use task::{task, RetryConfig, TaskGroup, WorkflowTask};

@@ -3,15 +3,15 @@ use colored::Colorize;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use tracing::{Level, info};
+use tracing::{info, Level};
 
-use mcp_agent::telemetry::{TelemetryConfig, init_telemetry};
-use mcp_agent::workflow::{WorkflowEngine, execute_workflow};
+use mcp_agent::telemetry::{init_telemetry, TelemetryConfig};
+use mcp_agent::workflow::{execute_workflow, WorkflowEngine};
 
 // Import orchestrator code with public visibility
 mod orchestrator {
     // Re-export the MockLlmClient and OrchestratorWorkflow with public visibility
-    use anyhow::{Result, anyhow};
+    use anyhow::{anyhow, Result};
     use async_trait::async_trait;
     use serde_json::json;
     use std::collections::HashMap;
@@ -20,10 +20,10 @@ mod orchestrator {
     use tracing::{error, info, warn};
 
     use mcp_agent::llm::types::LlmClient;
-    use mcp_agent::telemetry::{TelemetryConfig, init_telemetry};
+    use mcp_agent::telemetry::{init_telemetry, TelemetryConfig};
     use mcp_agent::workflow::{
-        AsyncSignalHandler, Workflow, WorkflowEngine, WorkflowResult, WorkflowSignal,
-        WorkflowState, execute_workflow, task,
+        execute_workflow, task, AsyncSignalHandler, Workflow, WorkflowEngine, WorkflowResult,
+        WorkflowSignal, WorkflowState,
     };
     use mcp_agent::{Completion, CompletionRequest, LlmConfig, LlmMessage as Message, MessageRole};
 
@@ -190,7 +190,7 @@ async fn main() -> Result<()> {
     #[cfg(feature = "terminal-web")]
     {
         use mcp_agent::terminal::config::AuthConfig;
-        use mcp_agent::terminal::{TerminalConfig, TerminalSystem, initialize_visualization};
+        use mcp_agent::terminal::{initialize_visualization, TerminalConfig, TerminalSystem};
 
         // Create the terminal system with web visualization enabled
         let terminal_config = TerminalConfig {

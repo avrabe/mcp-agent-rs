@@ -16,12 +16,12 @@ use std::time::Duration;
 #[cfg(feature = "transport-ws")]
 use tokio::net::TcpStream;
 #[cfg(feature = "transport-ws")]
-use tokio::sync::{Mutex, RwLock, mpsc};
+use tokio::sync::{mpsc, Mutex, RwLock};
 #[cfg(feature = "transport-ws")]
 use tokio::time;
 #[cfg(feature = "transport-ws")]
 use tokio_tungstenite::{
-    MaybeTlsStream, WebSocketStream, connect_async, tungstenite::protocol::Message as WsMessage,
+    connect_async, tungstenite::protocol::Message as WsMessage, MaybeTlsStream, WebSocketStream,
 };
 #[cfg(feature = "transport-ws")]
 use url::Url;

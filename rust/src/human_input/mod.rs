@@ -9,5 +9,5 @@ mod types;
 // Re-export key components
 pub use handler::ConsoleInputHandler;
 pub use types::{
-    HUMAN_INPUT_SIGNAL_NAME, HumanInputHandler, HumanInputRequest, HumanInputResponse,
+    HumanInputHandler, HumanInputRequest, HumanInputResponse, HUMAN_INPUT_SIGNAL_NAME,
 };

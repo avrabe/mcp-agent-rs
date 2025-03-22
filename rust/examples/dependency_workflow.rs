@@ -7,7 +7,7 @@ use std::time::Duration;
 use tokio::sync::Mutex;
 use tracing::info;
 
-use mcp_agent::workflow::{Workflow, WorkflowResult, WorkflowState, execute_workflow, task};
+use mcp_agent::workflow::{execute_workflow, task, Workflow, WorkflowResult, WorkflowState};
 
 // Task status for visualization
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

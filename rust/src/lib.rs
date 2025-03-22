@@ -49,7 +49,7 @@ pub use mcp::{
 
 // Re-export workflow types
 pub use workflow::{
-    SignalHandler, TaskGroup, WorkflowEngine, WorkflowResult, WorkflowSignal, WorkflowState, task,
+    task, SignalHandler, TaskGroup, WorkflowEngine, WorkflowResult, WorkflowSignal, WorkflowState,
 };
 
 // Re-export error types
@@ -57,7 +57,7 @@ pub use error::Error;
 pub use utils::error::{McpError, McpResult};
 
 /// Re-export telemetry types and functions for easier access
-pub use telemetry::{TelemetryConfig, alerting, init_telemetry, shutdown_telemetry, span_duration};
+pub use telemetry::{alerting, init_telemetry, shutdown_telemetry, span_duration, TelemetryConfig};
 
 /// Re-export alerting system types for easier access
 pub use telemetry::alerts::{
@@ -70,13 +70,13 @@ pub use llm::{Completion, CompletionRequest, LlmConfig, Message as LlmMessage, M
 
 /// Re-export human input types for easier access
 pub use human_input::{
-    ConsoleInputHandler, HUMAN_INPUT_SIGNAL_NAME, HumanInputHandler, HumanInputRequest,
-    HumanInputResponse,
+    ConsoleInputHandler, HumanInputHandler, HumanInputRequest, HumanInputResponse,
+    HUMAN_INPUT_SIGNAL_NAME,
 };
 
 /// Re-export terminal system types for easier access
 #[cfg(feature = "terminal-web")]
-pub use terminal::{TerminalSystem, TerminalType, config::TerminalConfig};
+pub use terminal::{config::TerminalConfig, TerminalSystem, TerminalType};
 
 #[cfg(feature = "ollama")]
 pub use crate::llm::OllamaClient;

@@ -13,7 +13,7 @@ use std::thread;
 use std::time::Duration;
 
 use mcp_agent::telemetry::{
-    TelemetryConfig, add_metrics, alerting, init_telemetry, shutdown_telemetry,
+    add_metrics, alerting, init_telemetry, shutdown_telemetry, TelemetryConfig,
 };
 use mcp_agent::{
     AlertDefinition, AlertOperator, AlertSeverity, AlertingConfig, TerminalAlertOptions,

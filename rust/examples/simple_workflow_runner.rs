@@ -4,10 +4,10 @@ use std::collections::HashMap;
 use std::time::Duration;
 use tracing::info;
 
-use mcp_agent::telemetry::{TelemetryConfig, init_telemetry};
+use mcp_agent::telemetry::{init_telemetry, TelemetryConfig};
 use mcp_agent::workflow::signal::AsyncSignalHandler;
 use mcp_agent::workflow::state::WorkflowState;
-use mcp_agent::workflow::{Workflow, WorkflowEngine, WorkflowResult, execute_workflow};
+use mcp_agent::workflow::{execute_workflow, Workflow, WorkflowEngine, WorkflowResult};
 
 // Simple workflow definition
 struct SimpleWorkflow {

@@ -3,7 +3,7 @@ use colored::Colorize;
 use tokio::time::Duration;
 
 use mcp_agent::human_input::{ConsoleInputHandler, HumanInputHandler, HumanInputRequest};
-use mcp_agent::telemetry::{TelemetryConfig, init_telemetry};
+use mcp_agent::telemetry::{init_telemetry, TelemetryConfig};
 
 #[tokio::main]
 async fn main() -> Result<()> {

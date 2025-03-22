@@ -6,8 +6,8 @@ use std::net::{IpAddr, Ipv4Addr};
 use mcp_agent::{
     error::Result,
     terminal::{
-        TerminalSystem,
         config::{AuthConfig, AuthMethod, TerminalConfig, WebTerminalConfig},
+        TerminalSystem,
     },
 };
 

@@ -7,8 +7,8 @@
 //! 4. Visualize the resulting traces in Jaeger UI
 
 use mcp_agent::telemetry::{
-    TelemetryConfig, add_metrics, init_telemetry, set_error_on_current_span, shutdown_telemetry,
-    span_duration,
+    add_metrics, init_telemetry, set_error_on_current_span, shutdown_telemetry, span_duration,
+    TelemetryConfig,
 };
 use std::collections::HashMap;
 use std::error::Error;

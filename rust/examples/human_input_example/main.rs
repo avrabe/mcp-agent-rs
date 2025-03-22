@@ -4,7 +4,7 @@ use tokio::time::Duration;
 use tracing::info;
 
 use mcp_agent::human_input::{ConsoleInputHandler, HumanInputHandler, HumanInputRequest};
-use mcp_agent::telemetry::{TelemetryConfig, init_telemetry};
+use mcp_agent::telemetry::{init_telemetry, TelemetryConfig};
 use mcp_agent::workflow::signal::AsyncSignalHandler;
 use mcp_agent::workflow::{Workflow, WorkflowEngine, WorkflowResult, WorkflowState};
 use serde_json::Value;

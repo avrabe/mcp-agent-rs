@@ -1,4 +1,4 @@
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use chrono::{DateTime, Utc};
 use rand::Rng;
 use std::collections::VecDeque;
@@ -7,9 +7,9 @@ use tokio::sync::Mutex;
 use tracing::{error, info};
 use uuid::Uuid;
 
-use mcp_agent::telemetry::{TelemetryConfig, init_telemetry};
+use mcp_agent::telemetry::{init_telemetry, TelemetryConfig};
 use mcp_agent::workflow::{
-    WorkflowEngine, WorkflowResult, signal::AsyncSignalHandler, state::WorkflowState, task::task,
+    signal::AsyncSignalHandler, state::WorkflowState, task::task, WorkflowEngine, WorkflowResult,
 };
 
 /// An event that can be processed by the workflow

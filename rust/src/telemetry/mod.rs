@@ -8,7 +8,7 @@
 //! - Alerting system based on telemetry thresholds
 
 use std::collections::HashMap;
-use tracing::{Level, Span, field, span};
+use tracing::{field, span, Level, Span};
 use tracing_subscriber::util::SubscriberInitExt;
 
 // Re-export alerts module

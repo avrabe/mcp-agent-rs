@@ -11,12 +11,12 @@ use std::time::Duration;
 use mcp_agent::error::Result;
 #[cfg(feature = "terminal-web")]
 use mcp_agent::terminal::{
-    TerminalSystem,
     config::{AuthConfig, AuthMethod, TerminalConfig, WebTerminalConfig},
     graph::{
-        Graph, GraphEdge, GraphManager, GraphNode,
         models::{SprottyEdge, SprottyGraph, SprottyNode, SprottyStatus},
+        Graph, GraphEdge, GraphManager, GraphNode,
     },
+    TerminalSystem,
 };
 
 #[cfg(not(feature = "terminal-web"))]

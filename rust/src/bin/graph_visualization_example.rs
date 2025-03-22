@@ -6,25 +6,225 @@
 
 #[cfg(feature = "terminal-web")]
 use {
+    axum::{
+        extract::{Extension, Path, WebSocketUpgrade},
+        http::StatusCode,
+        response::{Html, IntoResponse, Json},
+        routing::get,
+        Router,
+    },
+    futures::{SinkExt, StreamExt},
+    serde::{Deserialize, Serialize},
     std::collections::HashMap,
+    std::fmt,
     std::sync::Arc,
     std::time::Duration,
-
-    axum::{
-        Router,
-        routing::get,
-        extract::{Extension, Path},
-        response::{Html, IntoResponse, Json},
-        http::StatusCode,
-    },
     tokio::sync::{mpsc, RwLock},
     tokio::time::sleep,
-    tracing::{info, debug, error},
+    tracing::{debug, error, info},
     uuid::Uuid,
-
-    mcp_agent::error::{Error, Result},
-    mcp_agent::terminal::graph::{Graph, GraphManager, GraphNode, GraphEdge, GraphUpdate, GraphUpdateType},
 };
+
+// Custom error type for the example
+#[derive(Debug)]
+pub enum Error {
+    TerminalError(String),
+    WebSocketError(String),
+}
+
+impl std::error::Error for Error {}
+
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Error::TerminalError(msg) => write!(f, "Terminal error: {}", msg),
+            Error::WebSocketError(msg) => write!(f, "WebSocket error: {}", msg),
+        }
+    }
+}
+
+pub type Result<T> = std::result::Result<T, Error>;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Graph {
+    pub id: String,
+    pub name: String,
+    pub graph_type: String,
+    pub nodes: Vec<GraphNode>,
+    pub edges: Vec<GraphEdge>,
+    pub properties: HashMap<String, String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GraphNode {
+    pub id: String,
+    pub name: String,
+    pub node_type: String,
+    pub status: String,
+    pub properties: HashMap<String, String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GraphEdge {
+    pub id: String,
+    pub source: String,
+    pub target: String,
+    pub edge_type: String,
+    pub properties: HashMap<String, String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GraphUpdate {
+    pub graph_id: String,
+    pub update_type: GraphUpdateType,
+    pub graph: Option<Graph>,
+    pub node: Option<GraphNode>,
+    pub edge: Option<GraphEdge>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub enum GraphUpdateType {
+    FullUpdate,
+    NodeAdded,
+    NodeUpdated,
+    EdgeAdded,
+}
+
+pub struct GraphManager {
+    graphs: RwLock<HashMap<String, Graph>>,
+    update_channels: RwLock<Vec<mpsc::Sender<GraphUpdate>>>,
+}
+
+impl GraphManager {
+    pub fn new() -> Self {
+        Self {
+            graphs: RwLock::new(HashMap::new()),
+            update_channels: RwLock::new(Vec::new()),
+        }
+    }
+
+    pub async fn register_graph(&self, graph: Graph) -> Result<()> {
+        let mut graphs = self.graphs.write().await;
+        graphs.insert(graph.id.clone(), graph.clone());
+
+        // Notify subscribers of the full graph update
+        drop(graphs);
+        self.notify_update(GraphUpdate {
+            graph_id: graph.id,
+            update_type: GraphUpdateType::FullUpdate,
+            graph: Some(graph),
+            node: None,
+            edge: None,
+        })
+        .await;
+
+        Ok(())
+    }
+
+    pub async fn add_node(&self, graph_id: &str, node: GraphNode) -> Result<()> {
+        let mut graphs = self.graphs.write().await;
+
+        if let Some(graph) = graphs.get_mut(graph_id) {
+            graph.nodes.push(node.clone());
+
+            // Notify subscribers of the node addition
+            drop(graphs);
+            self.notify_update(GraphUpdate {
+                graph_id: graph_id.to_string(),
+                update_type: GraphUpdateType::NodeAdded,
+                graph: None,
+                node: Some(node),
+                edge: None,
+            })
+            .await;
+
+            Ok(())
+        } else {
+            Err(Error::TerminalError(format!(
+                "Graph {} not found",
+                graph_id
+            )))
+        }
+    }
+
+    pub async fn add_edge(&self, graph_id: &str, edge: GraphEdge) -> Result<()> {
+        let mut graphs = self.graphs.write().await;
+
+        if let Some(graph) = graphs.get_mut(graph_id) {
+            graph.edges.push(edge.clone());
+
+            // Notify subscribers of the edge addition
+            drop(graphs);
+            self.notify_update(GraphUpdate {
+                graph_id: graph_id.to_string(),
+                update_type: GraphUpdateType::EdgeAdded,
+                graph: None,
+                node: None,
+                edge: Some(edge),
+            })
+            .await;
+
+            Ok(())
+        } else {
+            Err(Error::TerminalError(format!(
+                "Graph {} not found",
+                graph_id
+            )))
+        }
+    }
+
+    async fn notify_update(&self, update: GraphUpdate) {
+        let channels = self.update_channels.read().await;
+        for channel in channels.iter() {
+            if let Err(e) = channel.send(update.clone()).await {
+                error!("Failed to send graph update: {}", e);
+            }
+        }
+    }
+
+    pub async fn get_graph(&self, graph_id: &str) -> Option<Graph> {
+        let graphs = self.graphs.read().await;
+        graphs.get(graph_id).cloned()
+    }
+
+    pub async fn update_node(&self, graph_id: &str, node: GraphNode) -> Result<()> {
+        let mut graphs = self.graphs.write().await;
+
+        if let Some(graph) = graphs.get_mut(graph_id) {
+            if let Some(index) = graph.nodes.iter().position(|n| n.id == node.id) {
+                graph.nodes[index] = node.clone();
+
+                // Notify subscribers of the node update
+                drop(graphs);
+                self.notify_update(GraphUpdate {
+                    graph_id: graph_id.to_string(),
+                    update_type: GraphUpdateType::NodeUpdated,
+                    graph: None,
+                    node: Some(node),
+                    edge: None,
+                })
+                .await;
+
+                Ok(())
+            } else {
+                Err(Error::TerminalError(format!(
+                    "Node {} not found in graph {}",
+                    node.id, graph_id
+                )))
+            }
+        } else {
+            Err(Error::TerminalError(format!(
+                "Graph {} not found",
+                graph_id
+            )))
+        }
+    }
+
+    pub async fn register_update_channel(&self, sender: mpsc::Sender<GraphUpdate>) {
+        self.update_channels.write().await.push(sender);
+    }
+}
 
 #[cfg(not(feature = "terminal-web"))]
 fn main() {
@@ -353,58 +553,14 @@ async fn index_handler() -> impl IntoResponse {
         });
     </script>
 </body>
-</html>"#
+</html>"#,
     )
-}
-
-// Extend the GraphManager for our example
-#[cfg(feature = "terminal-web")]
-impl GraphManager {
-    // Get a graph by ID
-    pub async fn get_graph(&self, graph_id: &str) -> Option<Graph> {
-        let graphs = self.graphs.read().await;
-        graphs.get(graph_id).cloned()
-    }
-    
-    // Update a node in a graph
-    pub async fn update_node(&self, graph_id: &str, node: GraphNode) -> Result<()> {
-        let mut graphs = self.graphs.write().await;
-        
-        if let Some(graph) = graphs.get_mut(graph_id) {
-            // Find and update the node
-            if let Some(index) = graph.nodes.iter().position(|n| n.id == node.id) {
-                graph.nodes[index] = node.clone();
-                
-                // Notify subscribers of the node update
-                drop(graphs); // Release the lock before notify_update
-                self.notify_update(GraphUpdate {
-                    graph_id: graph_id.to_string(),
-                    update_type: GraphUpdateType::NodeUpdated,
-                    graph: None,
-                    node: Some(node),
-                    edge: None,
-                }).await;
-                
-                Ok(())
-            } else {
-                Err(Error::TerminalError(format!(
-                    "Node {} not found in graph {}",
-                    node.id, graph_id
-                )))
-            }
-        } else {
-            Err(Error::TerminalError(format!(
-                "Graph {} not found",
-                graph_id
-            )))
-        }
-    }
 }
 
 #[cfg(feature = "terminal-web")]
 /// WebSocket handler for graph updates
 async fn ws_handler(
-    ws: axum::extract::ws::WebSocketUpgrade,
+    ws: WebSocketUpgrade,
     Extension(state): Extension<Arc<AppState>>,
 ) -> impl IntoResponse {
     ws.on_upgrade(|socket| handle_socket(socket, state))
@@ -412,24 +568,24 @@ async fn ws_handler(
 
 #[cfg(feature = "terminal-web")]
 /// Handle WebSocket connection
-async fn handle_socket(
-    socket: axum::extract::ws::WebSocket,
-    state: Arc<AppState>,
-) {
-    let (mut sender, _receiver) = socket.split();
-    
+async fn handle_socket(mut socket: axum::extract::ws::WebSocket, state: Arc<AppState>) {
     // Create a channel for graph updates
     let (tx, mut rx) = mpsc::channel::<GraphUpdate>(100);
-    
+
     // Register the channel with the graph manager
     state.graph_manager.register_update_channel(tx).await;
-    
+
     // Forward updates to the WebSocket
     while let Some(update) = rx.recv().await {
-        if let Ok(json) = serde_json::to_string(&update) {
-            if let Err(e) = sender.send(axum::extract::ws::Message::Text(json)).await {
-                error!("Error sending WebSocket message: {}", e);
-                break;
+        match serde_json::to_string(&update) {
+            Ok(json) => {
+                if let Err(e) = socket.send(axum::extract::ws::Message::Text(json)).await {
+                    error!("Error sending WebSocket message: {}", e);
+                    break;
+                }
+            }
+            Err(e) => {
+                error!("Error serializing graph update: {}", e);
             }
         }
     }
@@ -442,10 +598,19 @@ async fn add_node_handler(
     Extension(state): Extension<Arc<AppState>>,
 ) -> impl IntoResponse {
     // Extract node data
-    let node_name = payload.get("name").and_then(|v| v.as_str()).unwrap_or("Unnamed Node");
-    let node_type = payload.get("node_type").and_then(|v| v.as_str()).unwrap_or("default");
-    let status = payload.get("status").and_then(|v| v.as_str()).unwrap_or("idle");
-    
+    let node_name = payload
+        .get("name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("Unnamed Node");
+    let node_type = payload
+        .get("node_type")
+        .and_then(|v| v.as_str())
+        .unwrap_or("default");
+    let status = payload
+        .get("status")
+        .and_then(|v| v.as_str())
+        .unwrap_or("idle");
+
     // Create new node with UUID
     let node = GraphNode {
         id: Uuid::new_v4().to_string(),
@@ -454,7 +619,7 @@ async fn add_node_handler(
         status: status.to_string(),
         properties: HashMap::new(),
     };
-    
+
     // Add node to graph
     match state.graph_manager.add_node("example-graph", node).await {
         Ok(_) => Json(serde_json::json!({
@@ -485,7 +650,7 @@ async fn update_node_handler(
             }));
         }
     };
-    
+
     // Find the node
     let node = match graph.nodes.iter().find(|n| n.id == node_id) {
         Some(n) => n.clone(),
@@ -496,10 +661,13 @@ async fn update_node_handler(
             }));
         }
     };
-    
+
     // Update the status if provided
-    let status = payload.get("status").and_then(|v| v.as_str()).unwrap_or(&node.status);
-    
+    let status = payload
+        .get("status")
+        .and_then(|v| v.as_str())
+        .unwrap_or(&node.status);
+
     // Create updated node
     let updated_node = GraphNode {
         id: node.id,
@@ -508,9 +676,13 @@ async fn update_node_handler(
         status: status.to_string(),
         properties: node.properties,
     };
-    
+
     // Update the node
-    match state.graph_manager.update_node("example-graph", updated_node).await {
+    match state
+        .graph_manager
+        .update_node("example-graph", updated_node)
+        .await
+    {
         Ok(_) => Json(serde_json::json!({
             "success": true,
             "id": node_id
@@ -538,7 +710,7 @@ async fn add_edge_handler(
             }));
         }
     };
-    
+
     let target = match payload.get("target").and_then(|v| v.as_str()) {
         Some(t) => t.to_string(),
         None => {
@@ -548,9 +720,12 @@ async fn add_edge_handler(
             }));
         }
     };
-    
-    let edge_type = payload.get("edge_type").and_then(|v| v.as_str()).unwrap_or("default");
-    
+
+    let edge_type = payload
+        .get("edge_type")
+        .and_then(|v| v.as_str())
+        .unwrap_or("default");
+
     // Create new edge with UUID
     let edge = GraphEdge {
         id: Uuid::new_v4().to_string(),
@@ -559,7 +734,7 @@ async fn add_edge_handler(
         edge_type: edge_type.to_string(),
         properties: HashMap::new(),
     };
-    
+
     // Add edge to graph
     match state.graph_manager.add_edge("example-graph", edge).await {
         Ok(_) => Json(serde_json::json!({
@@ -628,10 +803,10 @@ async fn create_sample_graph(graph_manager: Arc<GraphManager>) -> Result<()> {
         ],
         properties: HashMap::new(),
     };
-    
+
     // Register the graph
     graph_manager.register_graph(graph).await?;
-    
+
     Ok(())
 }
 
@@ -640,7 +815,7 @@ async fn create_sample_graph(graph_manager: Arc<GraphManager>) -> Result<()> {
 async fn simulate_graph_updates(graph_manager: Arc<GraphManager>) {
     // Wait a bit for the system to start
     sleep(Duration::from_secs(3)).await;
-    
+
     // Update node2 status to completed
     info!("Updating node2 status to completed");
     let updated_node = GraphNode {
@@ -650,11 +825,14 @@ async fn simulate_graph_updates(graph_manager: Arc<GraphManager>) {
         status: "completed".to_string(),
         properties: HashMap::new(),
     };
-    
-    if let Err(e) = graph_manager.update_node("example-graph", updated_node).await {
+
+    if let Err(e) = graph_manager
+        .update_node("example-graph", updated_node)
+        .await
+    {
         error!("Failed to update node2: {}", e);
     }
-    
+
     // After a while, start node3
     sleep(Duration::from_secs(5)).await;
     info!("Updating node3 status to running");
@@ -665,11 +843,14 @@ async fn simulate_graph_updates(graph_manager: Arc<GraphManager>) {
         status: "running".to_string(),
         properties: HashMap::new(),
     };
-    
-    if let Err(e) = graph_manager.update_node("example-graph", updated_node).await {
+
+    if let Err(e) = graph_manager
+        .update_node("example-graph", updated_node)
+        .await
+    {
         error!("Failed to update node3: {}", e);
     }
-    
+
     // Add a new node after a delay
     sleep(Duration::from_secs(7)).await;
     info!("Adding node4");
@@ -680,11 +861,11 @@ async fn simulate_graph_updates(graph_manager: Arc<GraphManager>) {
         status: "idle".to_string(),
         properties: HashMap::new(),
     };
-    
+
     if let Err(e) = graph_manager.add_node("example-graph", new_node).await {
         error!("Failed to add node4: {}", e);
     }
-    
+
     // Add edge from node3 to node4
     sleep(Duration::from_secs(1)).await;
     info!("Adding edge from node3 to node4");
@@ -695,20 +876,12 @@ async fn simulate_graph_updates(graph_manager: Arc<GraphManager>) {
         edge_type: "flow".to_string(),
         properties: HashMap::new(),
     };
-    
+
     if let Err(e) = graph_manager.add_edge("example-graph", new_edge).await {
         error!("Failed to add edge: {}", e);
     }
-    
-    // The rest will be controlled by human interaction via the UI
-}
 
-#[cfg(feature = "terminal-web")]
-/// Register update channel with the graph manager
-impl GraphManager {
-    pub async fn register_update_channel(&self, sender: mpsc::Sender<GraphUpdate>) {
-        self.update_channels.write().await.push(sender);
-    }
+    // The rest will be controlled by human interaction via the UI
 }
 
 #[cfg(feature = "terminal-web")]
@@ -717,33 +890,36 @@ async fn main() -> Result<()> {
     // Initialize tracing
     tracing_subscriber::fmt::init();
     info!("Starting graph visualization example");
-    
+
     // Create graph manager
     let graph_manager = Arc::new(GraphManager::new());
-    
+
     // Create sample graph
     create_sample_graph(graph_manager.clone()).await?;
-    
+
     // Create application state
     let state = Arc::new(AppState {
         graph_manager: graph_manager.clone(),
     });
-    
+
     // Start graph simulation in the background
     let sim_manager = graph_manager.clone();
     tokio::spawn(async move {
         simulate_graph_updates(sim_manager).await;
     });
-    
+
     // Create router
     let app = Router::new()
         .route("/", get(index_handler))
         .route("/ws", get(ws_handler))
         .route("/api/node", get(add_node_handler).post(add_node_handler))
-        .route("/api/node/:node_id", get(update_node_handler).patch(update_node_handler))
+        .route(
+            "/api/node/:node_id",
+            get(update_node_handler).patch(update_node_handler),
+        )
         .route("/api/edge", get(add_edge_handler).post(add_edge_handler))
         .layer(Extension(state));
-    
+
     // Start server
     let addr = std::net::SocketAddr::from(([127, 0, 0, 1], 3000));
     info!("Server listening on http://{}", addr);
@@ -751,6 +927,6 @@ async fn main() -> Result<()> {
         .serve(app.into_make_service())
         .await
         .unwrap();
-    
+
     Ok(())
-} 
+}

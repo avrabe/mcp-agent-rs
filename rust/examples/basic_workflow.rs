@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 use tracing::info;
 
-use mcp_agent::workflow::{Workflow, WorkflowResult, WorkflowState, execute_workflow, task};
+use mcp_agent::workflow::{execute_workflow, task, Workflow, WorkflowResult, WorkflowState};
 
 // A simple workflow with sequential tasks
 struct BasicWorkflow {

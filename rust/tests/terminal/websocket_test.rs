@@ -6,12 +6,12 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::time::sleep;
 
-use futures::SinkExt;
 use futures::stream::StreamExt;
+use futures::SinkExt;
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 
 use mcp_agent::error::Error;
-use mcp_agent::terminal::{TerminalSystem, config::TerminalConfig};
+use mcp_agent::terminal::{config::TerminalConfig, TerminalSystem};
 
 /// Test the WebSocket connection to the web terminal
 #[tokio::test]

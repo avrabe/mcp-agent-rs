@@ -33,8 +33,6 @@ use crate::error::{Error, Result};
 #[cfg(not(feature = "transport-http"))]
 use crate::mcp::transport::{Transport, TransportConfig, TransportFactory};
 #[cfg(not(feature = "transport-http"))]
-use std::fmt;
-#[cfg(not(feature = "transport-http"))]
 use std::sync::Arc;
 
 /// HTTP transport for MCP protocol
@@ -250,7 +248,7 @@ impl HttpTransportFactory {
     ///
     /// # Arguments
     /// * `config` - The transport configuration (not used when feature is disabled)
-    pub fn new(config: TransportConfig) -> Self {
+    pub fn new(_config: TransportConfig) -> Self {
         Self { _private: () }
     }
 }

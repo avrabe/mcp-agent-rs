@@ -2,17 +2,12 @@
 //!
 //! Provides a terminal interface via the console/stdio
 
-use std::fmt;
-use std::io::{stdin, stdout, Write};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::io::Write;
 
 use log::{debug, error, info};
 use tokio::io::AsyncWriteExt;
-use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::io::BufReader;
 use tokio::sync::oneshot;
-use tokio::sync::RwLock;
-use tokio::task::JoinHandle;
 
 use crate::error::Result;
 use crate::terminal::AsyncTerminal;
@@ -88,14 +83,13 @@ impl AsyncTerminal for ConsoleTerminal {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::Arc;
 
     #[tokio::test]
     async fn test_console_terminal_id() {
-        let terminal = ConsoleTerminal::new(Uuid::new_v4().to_string());
+        let terminal_id = Uuid::new_v4().to_string();
+        let terminal = ConsoleTerminal::new(terminal_id.clone());
         let id = terminal.id().await.unwrap();
-        assert_eq!(id, Uuid::new_v4().to_string());
+        assert_eq!(id, terminal_id);
     }
 
     #[tokio::test]

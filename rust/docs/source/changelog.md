@@ -28,6 +28,10 @@ All notable changes to this project will be documented in this file.
 - *(workflow)* Add compatibility methods to WorkflowState and WorkflowResult
 - *(human-input)* Add human input example and workflow integration
 - *(mcp)* Implement JSON-RPC for MCP protocol (REQ_001)
+- *(transport)* Implement WebSocket/HTTP transport layer for MCP protocol
+- *(terminal)* Implement Sprotty integration and real-time graph updates
+- *(visualization)* Add graph visualization example with WebSocket support
+- *(visualization)* Refactor graph visualization examples and integration
 
 ### 🐛 Bug Fixes
 
@@ -46,6 +50,18 @@ All notable changes to this project will be documented in this file.
 - *(examples)* Update saga_workflow example to match current API
 - *(examples)* Update event_driven_workflow to match current API structure
 - Update JSON-RPC tests and fix warnings
+- *(examples)* Make simple_visualization.rs compatible with feature-flags and tests
+- *(transport)* Fix import issues in transport implementation modules
+- Update workflow examples to use DefaultSignalHandler and correct constants
+- Resolve telemetry and async trait implementation issues
+- *(transport)* Resolve duplicate imports and trait implementations
+- *(transport)* Refactor WebSocketTransport implementation
+- *(transport)* Update HttpTransport implementation for feature gating
+
+### 🚜 Refactor
+
+- *(mcp)* Improve core MCP protocol implementation
+- Remove obsolete example entries from Cargo.toml
 
 ### 📚 Documentation
 

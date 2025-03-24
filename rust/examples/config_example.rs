@@ -5,17 +5,14 @@ use std::net::{IpAddr, Ipv4Addr};
 #[cfg(feature = "terminal-web")]
 use mcp_agent::{
     error::Result,
-    terminal::{
-        config::{AuthConfig, AuthMethod, TerminalConfig, WebTerminalConfig},
-        TerminalSystem,
-    },
+    terminal::config::{AuthConfig, AuthMethod, TerminalConfig, WebTerminalConfig},
 };
 
 #[cfg(feature = "terminal-web")]
 #[tokio::main]
 async fn main() -> Result<()> {
     // Initialize logging
-    env_logger::init();
+    tracing_subscriber::fmt::init();
 
     println!("Terminal Configuration Example");
     println!("=============================");
@@ -70,6 +67,7 @@ async fn main() -> Result<()> {
                 username: "admin".to_string(),
                 password: "password".to_string(),
                 allow_anonymous: false,
+                require_authentication: true,
             },
         },
         input_timeout_secs: 0,      // No timeout

@@ -7,19 +7,17 @@
 //! - LLM Integration
 
 use crate::error::{Error, Result};
-use crate::terminal::graph::{Graph, GraphManager};
+use crate::terminal::graph::{Graph, GraphEdge, GraphManager, GraphNode};
 use crate::workflow::engine::WorkflowEngine;
-use crate::workflow::signal::NullSignalHandler;
 use crate::workflow::state::WorkflowState;
 
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::sync::Arc;
-use tokio::sync::{mpsc, RwLock};
-use tracing::{debug, error, info};
+use tokio::sync::RwLock;
+use tracing::debug;
 
-use super::{GraphEdge, GraphNode};
 use crate::mcp::agent::Agent;
 // Comment out these imports for now - these would be implemented based on LLM and human input systems
 // use crate::llm::LlmProvider;
@@ -37,9 +35,13 @@ pub trait GraphDataProvider: Send + Sync + Debug {
         &self,
         graph_manager: Arc<GraphManager>,
     ) -> Box<dyn std::future::Future<Output = Result<()>> + Send + Unpin + '_>;
+
+    /// Returns a reference to self as a trait object
+    /// This allows for dynamic dispatch of the trait methods
+    fn as_graph_data_provider(&self) -> &dyn GraphDataProvider;
 }
 
-/// Trait for providers that can generate graph data
+/// Async trait for providers that can generate graph data
 #[async_trait]
 pub trait AsyncGraphDataProvider: Send + Sync + Debug {
     /// Generate a graph representation
@@ -51,6 +53,8 @@ pub trait AsyncGraphDataProvider: Send + Sync + Debug {
 
 /// Helper extension trait
 pub trait GraphDataProviderExt: AsyncGraphDataProvider {
+    /// Returns a reference to self as a trait object
+    /// This allows for dynamic dispatch of the trait methods
     fn as_graph_data_provider(&self) -> &dyn GraphDataProvider;
 }
 
@@ -66,6 +70,10 @@ impl<T: AsyncGraphDataProvider + 'static> GraphDataProvider for T {
         graph_manager: Arc<GraphManager>,
     ) -> Box<dyn std::future::Future<Output = Result<()>> + Send + Unpin + '_> {
         Box::new(Box::pin(self.setup_tracking(graph_manager)))
+    }
+
+    fn as_graph_data_provider(&self) -> &dyn GraphDataProvider {
+        self
     }
 }
 
@@ -165,7 +173,7 @@ impl WorkflowGraphProvider {
 
         // In a real implementation, we'd add nodes for each step in the workflow
         // For now, we'll create some dummy steps
-        let steps = vec!["start", "process", "evaluate", "end"];
+        let steps = ["start", "process", "evaluate", "end"];
 
         for (i, step) in steps.iter().enumerate() {
             let mut properties = HashMap::new();
@@ -348,6 +356,12 @@ pub struct AgentGraphProvider {
     graph_manager: RwLock<Option<Arc<GraphManager>>>,
 }
 
+impl Default for AgentGraphProvider {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AgentGraphProvider {
     /// Create a new agent graph provider
     pub fn new() -> Self {
@@ -462,6 +476,12 @@ pub struct HumanInputGraphProvider {
     human_input_provider: RwLock<Option<Arc<dyn std::any::Any + Send + Sync>>>,
 }
 
+impl Default for HumanInputGraphProvider {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl HumanInputGraphProvider {
     /// Create a new human input graph provider
     pub fn new() -> Self {
@@ -571,6 +591,12 @@ pub struct LlmIntegrationGraphProvider {
     llm_providers: RwLock<Vec<Arc<dyn std::any::Any + Send + Sync>>>,
 }
 
+impl Default for LlmIntegrationGraphProvider {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl LlmIntegrationGraphProvider {
     /// Create a new LLM integration graph provider
     pub fn new() -> Self {
@@ -666,9 +692,23 @@ impl Clone for LlmIntegrationGraphProvider {
     }
 }
 
+// Fixed string_to_error function
+async fn string_to_error<T>(result: std::result::Result<T, String>) -> Result<T> {
+    match result {
+        Ok(value) => Ok(value),
+        Err(e) => Err(Error::TerminalError(e)),
+    }
+}
+
+// Helper to handle the Future returned by register_graph
+async fn register_graph_with_manager(graph_manager: Arc<GraphManager>, graph: Graph) -> Result<()> {
+    graph_manager.register_graph(graph).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::workflow::signal::NullSignalHandler;
 
     #[tokio::test]
     async fn test_create_workflow_graph() {
@@ -698,17 +738,4 @@ mod tests {
         let graph = provider.generate_graph().await.unwrap();
         assert_eq!(graph.graph_type, "llm_integration");
     }
-}
-
-// Fixed string_to_error function
-async fn string_to_error<T>(result: std::result::Result<T, String>) -> Result<T> {
-    match result {
-        Ok(value) => Ok(value),
-        Err(e) => Err(Error::TerminalError(e)),
-    }
-}
-
-// Helper to handle the Future returned by register_graph
-async fn register_graph_with_manager(graph_manager: Arc<GraphManager>, graph: Graph) -> Result<()> {
-    graph_manager.register_graph(graph).await
 }

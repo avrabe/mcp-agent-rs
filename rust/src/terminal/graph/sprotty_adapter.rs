@@ -4,14 +4,10 @@
 //! the graph visualization models with the Eclipse Sprotty frontend library.
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::sync::Arc;
-use tracing::{debug, error, info};
+use tracing::{debug, error};
 
-use super::models::{
-    SprottyEdge, SprottyElement, SprottyGraph, SprottyGraphLayout, SprottyNode, SprottyRoot,
-    SprottyStatus,
-};
+use super::models::{SprottyElement, SprottyRoot};
 use super::workflow::WorkflowGraphProvider;
 use crate::error::Error;
 use crate::workflow::engine::WorkflowEngine;
@@ -184,7 +180,7 @@ pub async fn process_sprotty_action(
                 // Get the workflow provider and let it handle this action
                 let workflow_provider = Arc::new(WorkflowGraphProvider::new(
                     "default-workflow".to_string(),
-                    Arc::new(WorkflowEngine::new(NullSignalHandler::default())),
+                    Arc::new(WorkflowEngine::new(NullSignalHandler)),
                 ));
 
                 if let Some(response) = workflow_provider
@@ -241,7 +237,7 @@ pub async fn process_sprotty_action(
                     // Get the workflow provider and let it handle this action
                     let workflow_provider = Arc::new(WorkflowGraphProvider::new(
                         "test-workflow".to_string(),
-                        Arc::new(WorkflowEngine::new(NullSignalHandler::default())),
+                        Arc::new(WorkflowEngine::new(NullSignalHandler)),
                     ));
 
                     if let Some(response) = workflow_provider
@@ -270,7 +266,7 @@ pub async fn process_sprotty_action(
                         // Get the workflow provider and let it handle this action
                         let workflow_provider = Arc::new(WorkflowGraphProvider::new(
                             "event-workflow".to_string(),
-                            Arc::new(WorkflowEngine::new(NullSignalHandler::default())),
+                            Arc::new(WorkflowEngine::new(NullSignalHandler)),
                         ));
 
                         if let Some(response) = workflow_provider
@@ -306,7 +302,7 @@ pub async fn process_sprotty_action(
                         // Get the workflow provider and let it handle this action
                         let workflow_provider = Arc::new(WorkflowGraphProvider::new(
                             "layout-workflow".to_string(),
-                            Arc::new(WorkflowEngine::new(NullSignalHandler::default())),
+                            Arc::new(WorkflowEngine::new(NullSignalHandler)),
                         ));
 
                         if let Some(response) = workflow_provider

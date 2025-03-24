@@ -83,19 +83,15 @@ pub struct AuthConfig {
 /// Authentication methods
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum AuthMethod {
     /// No authentication
     None,
     /// Basic username/password authentication
     Basic,
     /// JWT token-based authentication
+    #[default]
     Jwt,
-}
-
-impl Default for AuthMethod {
-    fn default() -> Self {
-        AuthMethod::Jwt
-    }
 }
 
 impl Default for TerminalConfig {

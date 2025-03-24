@@ -3,22 +3,17 @@
 //! This module provides functionality for visualizing workflows in the terminal system.
 
 use crate::error::{Error, Result};
-use crate::terminal::graph::providers::{AsyncGraphDataProvider, GraphDataProvider};
 use crate::terminal::graph::{Graph, GraphManager};
 use crate::workflow::engine::WorkflowEngine;
 
-use async_trait::async_trait;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::sync::Arc;
-use tokio::sync::{mpsc, RwLock};
-use tracing::{debug, error, info, warn};
+use tokio::sync::RwLock;
+use tracing::{debug, error, info};
 
-use crate::mcp::types::Message;
-
-use super::models::{convert_to_sprotty_model, SprottyStatus};
-use super::sprotty_adapter::{process_sprotty_action, SprottyAction};
-use super::{GraphEdge, GraphNode, GraphUpdate, GraphUpdateType};
+use super::sprotty_adapter::SprottyAction;
+use super::{GraphEdge, GraphNode};
 
 /// A graph data provider for workflow visualization
 #[derive(Debug)]
@@ -209,7 +204,7 @@ impl WorkflowGraphProvider {
     async fn handle_workflow_event(&self, event: impl Debug) {
         debug!("Workflow event received: {:?}", event);
         if let Some(graph_manager) = &*self.graph_manager.read().await {
-            let mut graph = graph_manager
+            let graph = graph_manager
                 .get_graph(&self.name)
                 .await
                 .unwrap_or_else(|| {
@@ -218,6 +213,9 @@ impl WorkflowGraphProvider {
                         id: self.name.clone(),
                         nodes: vec![],
                         edges: vec![],
+                        graph_type: "workflow".to_string(),
+                        name: format!("Workflow Graph - {}", self.name),
+                        properties: std::collections::HashMap::new(),
                     }
                 });
 
@@ -276,7 +274,7 @@ impl WorkflowGraphProvider {
 /// Create a workflow graph from workflow state
 fn create_workflow_graph(graph_id: &str, workflow_id: &str, workflow_status: &str) -> Graph {
     // Create some dummy nodes
-    let steps = vec!["start", "process", "evaluate", "end"];
+    let steps = ["start", "process", "evaluate", "end"];
 
     // Add nodes for each step
     let mut graph_nodes = Vec::new();

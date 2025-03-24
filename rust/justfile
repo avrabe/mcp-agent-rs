@@ -243,33 +243,20 @@ check-all:
 check-udeps:
     #!/usr/bin/env bash
     # Install cargo-udeps if not already installed
-    if ! command -v cargo-udeps &> /dev/null; then
-        echo "Installing cargo-udeps..."
-        cargo install cargo-udeps --locked || echo "Warning: Failed to install cargo-udeps"
-    fi
-    
+        if ! command -v cargo-udeps &> /dev/null; then
+            echo "Installing cargo-udeps..."
+            cargo install cargo-udeps --locked || echo "Warning: Failed to install cargo-udeps"
+        fi
+        
     # Check for unused dependencies using nightly toolchain
-    echo "Checking for unused dependencies..."
+        echo "Checking for unused dependencies..."
     cargo +nightly udeps --no-default-features || echo "Note: Some dependencies might be required for specific features"
 
 # Run all safe checks (format, clippy, working tests)
 check-all-safe: fmt check test-working
     @echo "✅ All safe checks passed! Code is ready to commit."
 
-# ----------------- Documentation Commands -----------------
-
-# Build documentation
-docs:
-    cargo doc --no-deps
-
 # Build documentation with private items
-docs-private:
-    cargo doc --no-deps --document-private-items
-
-# Open documentation in browser
-docs-open:
-    cargo doc --no-deps --open
-
 # ----------------- Utility Commands -----------------
 
 # Clean all build artifacts
@@ -515,3 +502,130 @@ check-safe: fmt check-modules test-all-safe
 # Apply cargo fix to the library to clean up simple warnings
 clean-warnings:
     cargo fix --lib -p mcp-agent --allow-dirty
+
+# Run just the performance tests 
+test-performance:
+    cargo test --test ../tests/terminal/performance_test -- --test-threads=1 --nocapture
+
+# ----------------- Documentation Commands -----------------
+
+# Variables for Sphinx documentation
+sphinx_opts := ""
+sphinx_build := "sphinx-build"
+sphinx_source := "docs/source"
+sphinx_build_dir := "docs/_build"
+
+# Build HTML documentation
+docs-html:
+    {{sphinx_build}} -M html "{{sphinx_source}}" "{{sphinx_build_dir}}" {{sphinx_opts}}
+    
+# Build HTML documentation with PlantUML diagrams
+docs-with-diagrams: setup-python-deps setup-plantuml
+    #!/usr/bin/env bash
+    # Set PLANTUML_PATH environment variable
+    if command -v plantuml &> /dev/null; then
+        export PLANTUML_PATH="$(which plantuml)"
+        echo "Using PlantUML from: $PLANTUML_PATH"
+    else
+        echo "WARNING: PlantUML not found in PATH. Using default 'plantuml' command."
+    fi
+    
+    # First clean any previous diagrams
+    echo "Cleaning previous diagram build artifacts..."
+    rm -rf "{{sphinx_build_dir}}/html/_images/plantuml-*" "{{sphinx_build_dir}}/html/_plantuml" || true
+    
+    # Generate changelog 
+    git-cliff -o docs/source/changelog.md
+
+    # Build with PlantUML diagrams
+    echo "Building documentation with PlantUML diagrams..."
+    {{sphinx_build}} -M html "{{sphinx_source}}" "{{sphinx_build_dir}}" {{sphinx_opts}}
+    
+    # Confirm diagrams were generated
+    DIAGRAM_COUNT=$(find "{{sphinx_build_dir}}/html/_images" -name "plantuml-*" | wc -l)
+    echo "Generated $DIAGRAM_COUNT PlantUML diagrams"
+    
+    if [ "$DIAGRAM_COUNT" -eq 0 ]; then
+        echo "WARNING: No PlantUML diagrams were generated. There might be an issue with the PlantUML setup."
+        echo "Check that your .puml files are properly formatted and the PlantUML executable is available."
+    fi
+
+# Build PDF documentation (requires LaTeX installation)
+docs-pdf:
+    {{sphinx_build}} -M latex "{{sphinx_source}}" "{{sphinx_build_dir}}" {{sphinx_opts}}
+    @echo "LaTeX files generated in docs/_build/latex. Run 'make' in that directory to build PDF (requires LaTeX installation)."
+
+# Build all documentation formats (HTML with diagrams by default)
+docs: docs-with-diagrams
+    @echo "Documentation built successfully. HTML documentation available in docs/_build/html."
+    @echo "To build PDF documentation, run 'just docs-pdf' (requires LaTeX installation)."
+
+# Show Sphinx documentation help
+docs-help:
+    {{sphinx_build}} -M help "{{sphinx_source}}" "{{sphinx_build_dir}}" {{sphinx_opts}}
+
+
+docs-private:
+    cargo doc --no-deps --document-private-items
+
+# Open documentation in browser
+docs-open:
+    cargo doc --no-deps --open
+
+# Install Python dependencies
+setup-python-deps: 
+    cargo install git-cliff
+    cargo install sphinx-rustdocgen
+    pip install -r docs/requirements.txt
+
+# Install PlantUML (requires Java)
+setup-plantuml:
+    #!/usr/bin/env bash
+    if ! command -v plantuml &> /dev/null; then
+        echo "Installing PlantUML..."
+        if [[ "$OSTYPE" == "linux-gnu"* ]]; then
+            # Linux installation
+            sudo apt-get update && sudo apt-get install -y plantuml
+            # Set path for Linux
+            export PLANTUML_PATH="$(which plantuml)"
+        elif [[ "$OSTYPE" == "darwin"* ]]; then
+            # macOS installation with Homebrew
+            if command -v brew &> /dev/null; then
+                brew install plantuml
+                # Set path for macOS
+                export PLANTUML_PATH="$(which plantuml)"
+            else
+                echo "Homebrew not found. Please install homebrew first or install plantuml manually."
+                echo "Visit: https://plantuml.com/starting"
+                exit 1
+            fi
+        elif [[ "$OSTYPE" == "msys"* || "$OSTYPE" == "cygwin"* || "$OSTYPE" == "win"* ]]; then
+            # Windows installation
+            echo "For Windows, please download PlantUML jar manually from https://plantuml.com/download"
+            echo "Then set PLANTUML_PATH environment variable to the jar file path"
+            echo "Example: set PLANTUML_PATH=C:\\path\\to\\plantuml.jar"
+            exit 1
+        else
+            echo "Unsupported OS. Please install plantuml manually."
+            echo "Visit: https://plantuml.com/starting"
+            exit 1
+        fi
+    else
+        echo "PlantUML is already installed."
+        # Set path for installed PlantUML
+        export PLANTUML_PATH="$(which plantuml)"
+    fi
+    
+    # Check if Java is installed (required for PlantUML)
+    if ! command -v java &> /dev/null; then
+        echo "Java is required for PlantUML but not found. Please install Java."
+        exit 1
+    fi
+    
+    # Verify PlantUML is working by testing a simple diagram
+    echo -e "@startuml\nBob -> Alice : hello\n@enduml" > /tmp/test.puml
+    if ! plantuml /tmp/test.puml; then
+        echo "WARNING: PlantUML installation test failed. Please verify your installation."
+        exit 1
+    fi
+    echo "PlantUML test successful!"

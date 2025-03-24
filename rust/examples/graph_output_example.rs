@@ -1,25 +1,34 @@
-// We need to directly import the graph module since it's nested within terminal
-// Also add the terminal-web feature check
 #[cfg(feature = "terminal-web")]
-use mcp_agent::terminal::graph::{Graph, GraphEdge, GraphManager, GraphNode};
+use {
+    anyhow::anyhow,
+    mcp_agent::{
+        init_telemetry,
+        terminal::graph::{Graph, GraphEdge, GraphManager, GraphNode},
+        TelemetryConfig,
+    },
+    serde_json::json,
+    std::collections::HashMap,
+    std::sync::Arc,
+    tokio::time::{self, Duration},
+};
 
 #[tokio::main]
 #[cfg(feature = "terminal-web")]
-async fn main() -> Result<()> {
+async fn main() -> anyhow::Result<()> {
     // Initialize telemetry
     let telemetry_config = TelemetryConfig {
         service_name: "graph-output-example".to_string(),
-        otlp_endpoint: None,
-        jaeger_endpoint: None,
         enable_console: true,
-        enable_json: false,
-        enable_tracing: true,
-        enable_metrics: true,
-        sampling_ratio: 1.0,
-        attributes: HashMap::new(),
-        alerting_config: None,
+        log_level: "info".to_string(),
+        enable_opentelemetry: false,
+        opentelemetry_endpoint: None,
     };
-    init_telemetry(telemetry_config)?;
+
+    // Handle init_telemetry error explicitly without using the ? operator
+    if let Err(e) = init_telemetry(telemetry_config) {
+        eprintln!("Warning: Failed to initialize telemetry: {}", e);
+        // Continue execution, don't exit
+    }
 
     // Create a graph manager
     let graph_manager = Arc::new(GraphManager::new());
@@ -31,7 +40,7 @@ async fn main() -> Result<()> {
     graph_manager
         .register_graph(workflow_graph.clone())
         .await
-        .map_err(|e| anyhow::anyhow!(e))?;
+        .map_err(|e| anyhow!("{}", e))?;
 
     // Output the graph as JSON
     let graph_json = serde_json::to_string_pretty(&workflow_graph)?;
@@ -44,7 +53,7 @@ async fn main() -> Result<()> {
     graph_manager
         .register_graph(agent_graph.clone())
         .await
-        .map_err(|e| anyhow::anyhow!(e))?;
+        .map_err(|e| anyhow!("{}", e))?;
 
     // Output the agent graph as JSON
     let agent_json = serde_json::to_string_pretty(&agent_graph)?;
@@ -77,7 +86,7 @@ async fn main() -> Result<()> {
         graph_manager
             .update_node(&workflow_graph.id, node.clone())
             .await
-            .map_err(|e| anyhow::anyhow!(e))?;
+            .map_err(|e| anyhow!("{}", e))?;
         println!("Updated node: {} to status: {}", node.id, node.status);
 
         // Sleep for a moment to simulate time passing
@@ -88,7 +97,7 @@ async fn main() -> Result<()> {
     let updated_graph = graph_manager
         .get_graph(&workflow_graph.id)
         .await
-        .ok_or_else(|| anyhow::anyhow!("Updated graph not found"))?;
+        .ok_or_else(|| anyhow!("Updated graph not found"))?;
 
     // Output the updated graph
     let updated_json = serde_json::to_string_pretty(&updated_graph)?;

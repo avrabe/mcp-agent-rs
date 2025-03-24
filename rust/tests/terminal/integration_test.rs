@@ -4,7 +4,10 @@ use std::time::Duration;
 use tokio::time::sleep;
 
 use mcp_agent::error::Error;
-use mcp_agent::terminal::{config::TerminalConfig, TerminalSystem};
+use mcp_agent::terminal::{
+    config::{TerminalConfig, WebTerminalConfig},
+    TerminalSystem, TerminalType,
+};
 
 /// Test the full terminal system functionality
 #[tokio::test]
@@ -17,15 +20,13 @@ async fn test_terminal_system_integration() -> Result<(), Error> {
     // Create a console-only configuration for testing
     let config = TerminalConfig::console_only();
 
-    // Create the terminal system
-    let mut terminal = TerminalSystem::new(config)?;
-
-    // Start the terminal system
+    // Create and start the terminal system
+    let terminal = TerminalSystem::new(config);
     terminal.start().await?;
 
     // Verify the terminal types
-    assert!(terminal.is_terminal_enabled("console"));
-    assert!(!terminal.is_terminal_enabled("web"));
+    assert!(terminal.is_terminal_enabled(TerminalType::Console).await);
+    assert!(!terminal.is_terminal_enabled(TerminalType::Web).await);
 
     // Test writing to the terminal
     terminal.write("Test message\n").await?;
@@ -44,22 +45,27 @@ async fn test_dual_terminal_system() -> Result<(), Error> {
         .with_max_level(tracing::Level::DEBUG)
         .try_init();
 
-    // Create a dual terminal configuration for testing
-    let config = TerminalConfig::dual_terminal();
+    // Create a terminal with both console and web enabled
+    let config = TerminalConfig {
+        console_terminal_enabled: true,
+        web_terminal_enabled: true,
+        web_terminal_config: WebTerminalConfig::default(),
+        ..Default::default()
+    };
 
-    // Create the terminal system
-    let mut terminal = TerminalSystem::new(config)?;
-
-    // Start the terminal system
+    // Create and start the terminal system
+    let terminal = TerminalSystem::new(config);
     terminal.start().await?;
 
     // Verify the terminal types
-    assert!(terminal.is_terminal_enabled("console"));
-    assert!(terminal.is_terminal_enabled("web"));
+    assert!(terminal.is_terminal_enabled(TerminalType::Console).await);
+    assert!(terminal.is_terminal_enabled(TerminalType::Web).await);
 
     // Verify the web terminal address
-    let web_addr = terminal.web_terminal_address();
-    assert!(web_addr.is_some());
+    let web_addr_result = terminal.web_terminal_address().await;
+    assert!(web_addr_result.is_some());
+    let addr_str = web_addr_result.unwrap();
+    println!("Web terminal available at: {}", addr_str);
 
     // Test writing to the terminal
     terminal.write("Test message to dual terminals\n").await?;
@@ -78,25 +84,24 @@ async fn test_toggle_web_terminal() -> Result<(), Error> {
         .with_max_level(tracing::Level::DEBUG)
         .try_init();
 
-    // Create a console-only configuration for testing
+    // Create a console-only config initially
     let config = TerminalConfig::console_only();
 
-    // Create the terminal system
-    let mut terminal = TerminalSystem::new(config)?;
-
-    // Start with just console
+    // Create and start the terminal system
+    let terminal = TerminalSystem::new(config);
     terminal.start().await?;
-    assert!(terminal.is_terminal_enabled("console"));
-    assert!(!terminal.is_terminal_enabled("web"));
+    assert!(terminal.is_terminal_enabled(TerminalType::Console).await);
+    assert!(!terminal.is_terminal_enabled(TerminalType::Web).await);
 
     // Enable web terminal
     terminal.toggle_web_terminal(true).await?;
-    assert!(terminal.is_terminal_enabled("web"));
+    assert!(terminal.is_terminal_enabled(TerminalType::Web).await);
 
     // Verify the web terminal address
-    let web_addr = terminal.web_terminal_address();
-    assert!(web_addr.is_some());
-    println!("Web terminal available at: {}", web_addr.unwrap());
+    let web_addr_result = terminal.web_terminal_address().await;
+    assert!(web_addr_result.is_some());
+    let addr_str = web_addr_result.unwrap();
+    println!("Web terminal available at: {}", addr_str);
 
     // Test writing to both terminals
     terminal
@@ -105,7 +110,7 @@ async fn test_toggle_web_terminal() -> Result<(), Error> {
 
     // Disable web terminal
     terminal.toggle_web_terminal(false).await?;
-    assert!(!terminal.is_terminal_enabled("web"));
+    assert!(!terminal.is_terminal_enabled(TerminalType::Web).await);
 
     // Clean up
     terminal.stop().await?;
@@ -124,7 +129,7 @@ impl MockClient {
         let config = TerminalConfig::console_only();
 
         // Create and start the terminal system
-        let mut system = TerminalSystem::new(config)?;
+        let system = TerminalSystem::new(config);
         system.start().await?;
 
         Ok(Self { system })
@@ -144,7 +149,7 @@ impl MockClient {
         Ok("Simulated output".to_string())
     }
 
-    async fn close(mut self) -> Result<(), Error> {
+    async fn close(self) -> Result<(), Error> {
         self.system.stop().await
     }
 }
@@ -152,7 +157,7 @@ impl MockClient {
 /// Test sending and receiving data (simulation)
 #[tokio::test]
 async fn test_simulated_io() -> Result<(), Error> {
-    // Create a mock client
+    // Create a mock client for simulated I/O
     let client = MockClient::new().await?;
 
     // Write some data to the terminal
@@ -176,11 +181,16 @@ async fn test_simulated_io() -> Result<(), Error> {
 
 #[tokio::test]
 async fn test_error_handling() -> Result<(), Error> {
-    // Create a console-only configuration for testing
-    let config = TerminalConfig::console_only();
+    // Create a configuration that should fail to start
+    let config = TerminalConfig {
+        console_terminal_enabled: false,
+        web_terminal_enabled: false,
+        web_terminal_config: WebTerminalConfig::default(),
+        ..Default::default()
+    };
 
     // Create the terminal system
-    let mut terminal = TerminalSystem::new(config)?;
+    let terminal = TerminalSystem::new(config);
 
     // Test error handling: stop before start
     let result = terminal.stop().await;

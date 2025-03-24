@@ -61,6 +61,18 @@ pub enum Error {
 
     /// Terminal error
     TerminalError(String),
+
+    /// Generic error
+    GenericError(String),
+
+    /// Terminal not found error
+    TerminalNotFound(String),
+
+    /// No terminals available error
+    NoTerminals,
+
+    /// Command execution error
+    CommandError(String),
 }
 
 /// Result type for MCP-Agent operations
@@ -88,6 +100,10 @@ impl fmt::Display for Error {
             Error::AlreadyExists(msg) => write!(f, "Resource already exists: {}", msg),
             Error::Unexpected(msg) => write!(f, "Unexpected error: {}", msg),
             Error::TerminalError(msg) => write!(f, "Terminal error: {}", msg),
+            Error::GenericError(msg) => write!(f, "Generic error: {}", msg),
+            Error::TerminalNotFound(msg) => write!(f, "Terminal not found error: {}", msg),
+            Error::NoTerminals => write!(f, "No terminals available error"),
+            Error::CommandError(msg) => write!(f, "Command execution error: {}", msg),
         }
     }
 }
@@ -136,5 +152,18 @@ impl From<tokio::sync::oneshot::error::RecvError> for Error {
 impl From<tokio::task::JoinError> for Error {
     fn from(err: tokio::task::JoinError) -> Self {
         Error::TerminalError(format!("Task join error: {}", err))
+    }
+}
+
+// Add From implementations for &str and String
+impl From<&str> for Error {
+    fn from(msg: &str) -> Self {
+        Error::GenericError(msg.to_string())
+    }
+}
+
+impl From<String> for Error {
+    fn from(msg: String) -> Self {
+        Error::GenericError(msg)
     }
 }

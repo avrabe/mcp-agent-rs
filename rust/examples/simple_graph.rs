@@ -5,16 +5,16 @@
 
 use {
     axum::{
-        extract::WebSocketUpgrade,
+        extract::{State, WebSocketUpgrade},
         response::{Html, IntoResponse},
         routing::get,
         Router,
     },
+    mcp_agent::error::Result,
     serde::{Deserialize, Serialize},
-    std::{collections::HashMap, sync::Arc, time::Duration},
+    std::{sync::Arc, time::Duration},
     tokio::sync::RwLock,
-    tokio::time::sleep,
-    tracing::{error, info},
+    tracing::error,
     uuid::Uuid,
 };
 
@@ -105,7 +105,10 @@ impl GraphState {
     }
 }
 
-async fn ws_handler(ws: WebSocketUpgrade, state: Arc<GraphState>) -> impl IntoResponse {
+async fn ws_handler(
+    ws: WebSocketUpgrade,
+    State(state): State<Arc<GraphState>>,
+) -> impl IntoResponse {
     ws.on_upgrade(|socket| handle_socket(socket, state))
 }
 
@@ -249,94 +252,100 @@ async fn index_handler() -> impl IntoResponse {
                     .attr('class', d => `node ${d.status}`)
                     .attr('transform', d => `translate(${d.x},${d.y})`);
 
+                // Add circles to nodes
                 node.selectAll('circle')
                     .data(d => [d])
                     .join('circle')
-                    .attr('r', 10);
+                    .attr('r', 8);
 
+                // Add labels to nodes
                 node.selectAll('text')
                     .data(d => [d])
                     .join('text')
-                    .attr('dy', -15)
-                    .attr('text-anchor', 'middle')
+                    .attr('dx', 12)
+                    .attr('dy', '.35em')
                     .text(d => d.label);
             }
-
-            // Zoom behavior
-            const zoom = d3.zoom()
-                .scaleExtent([0.1, 4])
-                .on('zoom', (event) => {
-                    g.attr('transform', event.transform);
-                });
-
-            svg.call(zoom);
         }
 
-        // WebSocket connection
-        const ws = new WebSocket(`ws://${window.location.host}/ws`);
+        // Connect to WebSocket
+        function connectWebSocket() {
+            const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+            const wsUrl = `${protocol}://${window.location.host}/ws`;
+            const socket = new WebSocket(wsUrl);
 
-        ws.onmessage = (event) => {
-            const data = JSON.parse(event.data);
+            socket.onopen = () => {
+                console.log('WebSocket connection established');
+            };
+
+            socket.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                updateGraph(data);
+            };
+
+            socket.onclose = () => {
+                console.log('WebSocket connection closed');
+                // Attempt to reconnect after a delay
+                setTimeout(connectWebSocket, 3000);
+            };
+
+            socket.onerror = (error) => {
+                console.error('WebSocket error:', error);
+                socket.close();
+            };
+        }
+
+        // Update graph with new data
+        function updateGraph(data) {
             nodes = data.nodes;
             edges = data.edges;
+
+            // Update the simulation with new data
             simulation.nodes(nodes);
             simulation.force('link').links(edges);
             simulation.alpha(1).restart();
-        };
+        }
 
-        // Initialize the graph visualization
+        // Initialize the graph and connect to WebSocket
         initializeGraph();
+        connectWebSocket();
     </script>
 </body>
-</html>"#,
+</html>
+"#,
     )
 }
 
 #[tokio::main]
-async fn main() {
-    // Initialize tracing
-    tracing_subscriber::fmt::init();
-    info!("Starting simple graph visualization example");
+async fn main() -> Result<()> {
+    // Set up tracing
+    tracing_subscriber::fmt().init();
 
     // Create graph state
-    let state = Arc::new(GraphState::new());
-
-    // Simulate graph updates
-    let update_state = state.clone();
-    tokio::spawn(async move {
-        // Wait for initial setup
-        sleep(Duration::from_secs(3)).await;
-
-        // Update node 2 to completed
-        update_state
-            .update_node_status("2".to_string(), "completed".to_string())
-            .await;
-
-        // Add node 3
-        sleep(Duration::from_secs(3)).await;
-        let node3_id = update_state.add_node("Decision".to_string()).await;
-        update_state
-            .add_edge("2".to_string(), node3_id.clone())
-            .await;
-
-        // Update node 3 status
-        sleep(Duration::from_secs(3)).await;
-        update_state
-            .update_node_status(node3_id, "running".to_string())
-            .await;
-    });
+    let graph_state = Arc::new(GraphState::new());
 
     // Create router
     let app = Router::new()
         .route("/", get(index_handler))
         .route("/ws", get(ws_handler))
-        .with_state(state);
+        .with_state(graph_state);
 
-    // Start server
+    // Run server
     let addr = std::net::SocketAddr::from(([127, 0, 0, 1], 3000));
-    info!("Server listening on http://{}", addr);
-    axum::Server::bind(&addr)
-        .serve(app.into_make_service())
-        .await
-        .unwrap();
+    println!("Server running at http://{}", addr);
+
+    #[cfg(feature = "transport-ws")]
+    {
+        let server = axum_server::bind(addr);
+        server.serve(app.into_make_service()).await?;
+    }
+
+    #[cfg(not(feature = "transport-ws"))]
+    {
+        axum::Server::bind(&addr)
+            .serve(app.into_make_service())
+            .await?;
+    }
+
+    Ok(())
 }

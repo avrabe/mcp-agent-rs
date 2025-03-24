@@ -1,11 +1,10 @@
-use std::thread::sleep;
-use std::time::Duration;
+//! Minimal graph visualization example
 
 // This is a placeholder example for visualization until compilation issues in the codebase are resolved
 
 fn main() {
     // Initialize logging
-    env_logger::init();
+    tracing_subscriber::fmt::init();
 
     println!("MCP Agent Visualization Demo");
     println!("This example demonstrates a simplified version of the visualization system.");
@@ -22,7 +21,7 @@ fn main() {
     // Keep the program running for demonstration
     for i in 0..5 {
         println!("Running... ({}/5)", i + 1);
-        sleep(Duration::from_secs(1));
+        std::thread::sleep(std::time::Duration::from_secs(1));
     }
 
     println!("Done. The following implementation steps are needed:");

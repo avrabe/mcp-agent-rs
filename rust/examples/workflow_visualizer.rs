@@ -1,20 +1,24 @@
 use anyhow::Result;
+use colored::Colorize;
+use std::sync::Arc;
+use std::time::Duration;
 
 use mcp_agent::telemetry::{init_telemetry, TelemetryConfig};
+use mcp_agent::workflow::execute_workflow;
 
 // Import orchestrator code with public visibility
 mod orchestrator {
     // Re-export the MockLlmClient and OrchestratorWorkflow with public visibility
     use anyhow::Result;
     use async_trait::async_trait;
+    use chrono::Utc;
     use serde_json::json;
     use std::collections::HashMap;
     use std::sync::Arc;
     use std::time::Duration;
 
     use mcp_agent::llm::types::LlmClient;
-
-    use mcp_agent::workflow::{WorkflowEngine, WorkflowState};
+    use mcp_agent::workflow::{Workflow, WorkflowEngine, WorkflowResult, WorkflowState};
     use mcp_agent::{Completion, CompletionRequest, LlmConfig};
 
     #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -51,11 +55,59 @@ mod orchestrator {
 
     pub struct OrchestratorWorkflow {
         state: WorkflowState,
-        engine: WorkflowEngine,
+        engine: Arc<WorkflowEngine>,
         llm_client: Arc<MockLlmClient>,
         input_data: String,
         sub_workflows: HashMap<SubWorkflowType, SubWorkflow>,
         final_result: Option<String>,
+    }
+
+    #[async_trait]
+    impl Workflow for OrchestratorWorkflow {
+        async fn run(&mut self) -> Result<WorkflowResult> {
+            // Simple implementation for the example
+            tokio::time::sleep(Duration::from_secs(1)).await;
+
+            // Simulate processing the data preparation workflow
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            if let Some(workflow) = self
+                .sub_workflows
+                .get_mut(&SubWorkflowType::DataPreparation)
+            {
+                workflow.result = Some("Data prepared successfully".to_string());
+            }
+
+            // Simulate processing the analysis workflow
+            tokio::time::sleep(Duration::from_secs(2)).await;
+            if let Some(workflow) = self.sub_workflows.get_mut(&SubWorkflowType::Analysis) {
+                workflow.result = Some("Analysis completed".to_string());
+            }
+
+            // Simulate processing the summarization workflow
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            if let Some(workflow) = self.sub_workflows.get_mut(&SubWorkflowType::Summarization) {
+                workflow.result = Some("Summary generated".to_string());
+            }
+
+            self.final_result = Some("Orchestration workflow completed successfully".to_string());
+
+            Ok(WorkflowResult {
+                value: Some(serde_json::Value::String(
+                    self.final_result.clone().unwrap_or_default(),
+                )),
+                metadata: HashMap::new(),
+                start_time: Some(Utc::now() - chrono::Duration::seconds(5)),
+                end_time: Some(Utc::now()),
+            })
+        }
+
+        fn state(&self) -> &WorkflowState {
+            &self.state
+        }
+
+        fn state_mut(&mut self) -> &mut WorkflowState {
+            &mut self.state
+        }
     }
 
     impl OrchestratorWorkflow {
@@ -93,20 +145,14 @@ mod orchestrator {
 
             Self {
                 state: WorkflowState::new(Some("OrchestratorWorkflow".to_string()), Some(metadata)),
-                engine,
+                engine: Arc::new(engine),
                 llm_client,
                 input_data,
                 sub_workflows,
                 final_result: None,
             }
         }
-
-        // Rest of implementation included via include_str!
     }
-
-    // Skip including the file to avoid formatting issues
-    // include!("orchestrator_workflow/main.rs");
-    // We'll implement the necessary functions directly
 
     // Replace with public LLM client implementation with correct fields
     pub struct MockLlmClient {
@@ -174,16 +220,19 @@ async fn main() -> Result<()> {
     // Import terminal components
     #[cfg(feature = "terminal-web")]
     {
-        use mcp_agent::terminal::config::AuthConfig;
-        use mcp_agent::terminal::{initialize_visualization, TerminalConfig, TerminalSystem};
+        use mcp_agent::terminal::{
+            config::{TerminalConfig, WebTerminalConfig},
+            initialize_visualization, TerminalSystem,
+        };
+        use mcp_agent::workflow::signal::NullSignalHandler;
+        use mcp_agent::workflow::WorkflowEngine;
 
         // Create the terminal system with web visualization enabled
         let terminal_config = TerminalConfig {
-            console_enabled: true,
+            console_terminal_enabled: true,
+            web_terminal_config: WebTerminalConfig::default(),
             web_terminal_enabled: true,
-            web_terminal_host: "127.0.0.1".to_string(),
-            web_terminal_port: 8080,
-            auth_config: AuthConfig::default(),
+            ..Default::default()
         };
         let terminal_system = TerminalSystem::new(terminal_config);
 
@@ -191,7 +240,8 @@ async fn main() -> Result<()> {
         terminal_system.start().await?;
 
         // Create the workflow engine
-        let engine = WorkflowEngine::new();
+        let engine = WorkflowEngine::new(NullSignalHandler::new());
+        let engine_arc = Arc::new(engine.clone());
 
         // Create the mock LLM client
         let llm_client = Arc::new(orchestrator::MockLlmClient::new());
@@ -200,19 +250,21 @@ async fn main() -> Result<()> {
         let input_data = "This is a sample document that needs to be processed through an orchestrated workflow.".to_string();
 
         // Create the workflow
-        let workflow =
-            orchestrator::OrchestratorWorkflow::new(engine.clone(), llm_client, input_data);
+        let workflow = orchestrator::OrchestratorWorkflow::new(engine, llm_client, input_data);
 
         // Initialize visualization
-        let graph_manager =
-            initialize_visualization(&terminal_system, Some(engine.clone()), vec![], vec![], None)
-                .await;
+        let _graph_manager =
+            initialize_visualization(&terminal_system, Some(engine_arc), vec![]).await;
 
         // Print instructions
         println!("\n{}", "Workflow Visualization Demo".bold().green());
         println!(
-            "Open your browser at: {}",
-            format!("http://{}", terminal_system.web_terminal_address().unwrap()).cyan()
+            "Web terminal available at: {}",
+            format!(
+                "http://{}",
+                terminal_system.web_terminal_address().await.unwrap()
+            )
+            .cyan()
         );
         println!(
             "{}",
@@ -220,46 +272,43 @@ async fn main() -> Result<()> {
         );
         println!("{}", "The workflow will start in 5 seconds...".cyan());
 
-        // Give time to open the web interface
+        // Wait a bit for the user to open the web terminal
         tokio::time::sleep(Duration::from_secs(5)).await;
 
         // Execute the workflow
         match execute_workflow(workflow).await {
             Ok(result) => {
                 println!("\n{}", "Workflow Result:".bold().green());
-                println!("{:?}", result.output());
-                println!(
-                    "Workflow completed in {} ms",
-                    result.execution_time().as_millis()
-                );
+                if let Some(value) = result.value {
+                    println!("{}", value);
+                } else {
+                    println!("No result returned");
+                }
             }
             Err(e) => {
                 println!("\n{}", "Workflow Error:".bold().red());
-                println!("{:?}", e);
+                println!("{}", e);
             }
         }
 
-        // Keep the terminal system running to allow viewing the visualization
         println!(
-            "\n{}",
+            "{}",
             "Visualization is available in the web terminal."
                 .bold()
-                .cyan()
+                .green()
         );
         println!("{}", "Press Ctrl+C to exit...".yellow());
 
-        // Wait for Ctrl+C
-        let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+        // Wait for Ctrl+C with an mpsc channel that can be cloned safely
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<()>(1);
         let tx_clone = tx.clone();
 
         ctrlc::set_handler(move || {
             let _ = tx_clone.send(());
-        })?;
+        })
+        .expect("Error setting Ctrl+C handler");
 
-        let _ = rx.await;
-
-        // Stop the terminal system
-        terminal_system.stop().await?;
+        let _ = rx.recv().await;
     }
 
     #[cfg(not(feature = "terminal-web"))]

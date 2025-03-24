@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
-use tracing::{debug, error, info};
+use tracing::{debug, error};
 
 use self::models::SprottyStatus;
 use crate::error::{Error, Result};

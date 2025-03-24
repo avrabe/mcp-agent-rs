@@ -1,6 +1,6 @@
 use crate::mcp::agent::Agent;
 use crate::terminal::graph::providers::AgentGraphProvider;
-use crate::terminal::graph::{Graph, GraphManager};
+use crate::terminal::graph::GraphManager;
 
 use std::sync::Arc;
 use tracing::debug;

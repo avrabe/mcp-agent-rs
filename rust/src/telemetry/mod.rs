@@ -6,15 +6,22 @@
 //! - Resource monitoring and management
 //! - Alerting system for notifying when certain thresholds are reached
 
+// Standard library
 use std::collections::HashMap;
+// use std::sync::Arc;
+// use std::sync::Mutex;
+use std::time::Duration;
+
+// Crates
+use async_trait::async_trait;
+// use chrono::Utc; // Unused import
+use log::warn;
+// use std::sync::Arc; // Unused import
+// use std::sync::Mutex; // Unused import
 use tracing::span;
-use tracing_subscriber::EnvFilter;
 
-#[cfg(any(feature = "telemetry-jaeger", feature = "telemetry-otlp"))]
-use opentelemetry::sdk::Resource;
-
-#[cfg(any(feature = "telemetry-jaeger", feature = "telemetry-otlp"))]
-use tracing_opentelemetry::OpenTelemetryLayer;
+// Internal
+use crate::error::Result;
 
 /// Configuration for the telemetry system
 #[derive(Debug, Clone)]
@@ -44,10 +51,13 @@ impl Default for TelemetryConfig {
 }
 
 /// Initialize telemetry for the specified service with configuration options
-pub fn init_telemetry(config: TelemetryConfig) -> Result<(), Box<dyn std::error::Error>> {
+pub fn init_telemetry(
+    config: TelemetryConfig,
+) -> std::result::Result<(), Box<dyn std::error::Error>> {
     // Create a builder for the telemetry system
     let builder = tracing_subscriber::fmt().with_env_filter(
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(config.log_level)),
+        tracing_subscriber::EnvFilter::try_from_default_env()
+            .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(config.log_level)),
     );
 
     // Configure based on settings
@@ -138,6 +148,119 @@ pub fn span_duration(name: &'static str) -> impl Drop {
 
 /// Shutdown telemetry (placeholder for when OpenTelemetry is enabled)
 pub fn shutdown_telemetry() {
-    #[cfg(any(feature = "telemetry-jaeger", feature = "telemetry-otlp"))]
-    opentelemetry::global::shutdown_tracer_provider();
+    // #[cfg(any(feature = "telemetry-jaeger", feature = "telemetry-otlp"))]
+    // opentelemetry::global::shutdown_tracer_provider();
+}
+
+/// Telemetry trait for sending metrics and traces
+#[async_trait]
+pub trait Telemetry: Send + Sync {
+    /// Send a metric
+    async fn send_metric(
+        &self,
+        name: &str,
+        value: f64,
+        tags: Option<Vec<(&str, String)>>,
+    ) -> Result<()>;
+
+    /// Send a trace
+    async fn send_trace(
+        &self,
+        name: &str,
+        duration: Duration,
+        status: bool,
+        tags: Option<Vec<(&str, String)>>,
+    ) -> Result<()>;
+}
+
+/// A null implementation of Telemetry that does nothing when telemetry is sent
+#[derive(Debug)]
+pub struct NullTelemetry;
+
+impl Default for NullTelemetry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl NullTelemetry {
+    /// Creates a new NullTelemetry instance
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+#[async_trait]
+impl Telemetry for NullTelemetry {
+    async fn send_metric(
+        &self,
+        _name: &str,
+        _value: f64,
+        _tags: Option<Vec<(&str, String)>>,
+    ) -> Result<()> {
+        Ok(())
+    }
+
+    async fn send_trace(
+        &self,
+        _name: &str,
+        _duration: Duration,
+        _status: bool,
+        _tags: Option<Vec<(&str, String)>>,
+    ) -> Result<()> {
+        Ok(())
+    }
+}
+
+/// Default telemetry implementation which will be used when OpenTelemetry is not available
+#[derive(Debug)]
+pub struct DefaultTelemetry {
+    // pub metrics: Arc<Mutex<Option<metrics::Meter>>>,
+    // pub tracer: Arc<Mutex<Option<trace::Tracer>>>,
+}
+
+impl Default for DefaultTelemetry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl DefaultTelemetry {
+    /// Creates a new DefaultTelemetry instance
+    pub fn new() -> Self {
+        Self {
+            // metrics: Arc::new(Mutex::new(None)),
+            // tracer: Arc::new(Mutex::new(None)),
+        }
+    }
+}
+
+#[async_trait]
+impl Telemetry for DefaultTelemetry {
+    async fn send_metric(
+        &self,
+        name: &str,
+        _value: f64,
+        _tags: Option<Vec<(&str, String)>>,
+    ) -> Result<()> {
+        warn!(
+            "OpenTelemetry metrics not implemented yet. Metric: {}",
+            name
+        );
+        Ok(())
+    }
+
+    async fn send_trace(
+        &self,
+        name: &str,
+        duration: Duration,
+        status: bool,
+        _tags: Option<Vec<(&str, String)>>,
+    ) -> Result<()> {
+        warn!(
+            "OpenTelemetry tracing not implemented yet. Trace: {}, duration: {:?}, status: {}",
+            name, duration, status
+        );
+        Ok(())
+    }
 }

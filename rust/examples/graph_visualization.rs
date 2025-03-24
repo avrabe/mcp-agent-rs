@@ -15,10 +15,17 @@ use {
 };
 
 use {
-    futures::SinkExt,
+    futures::{SinkExt, StreamExt},
     serde::{Deserialize, Serialize},
-    std::{collections::HashMap, fmt, sync::Mutex},
-    tokio::sync::{broadcast, RwLock},
+    std::{
+        collections::HashMap,
+        fmt,
+        net::SocketAddr,
+        sync::{Arc, Mutex},
+    },
+    tokio::sync::{broadcast, mpsc, RwLock},
+    tokio::time::{sleep, Duration},
+    tracing::{error, info},
     uuid::Uuid,
 };
 
@@ -290,22 +297,22 @@ struct AppState {
 }
 
 #[cfg(feature = "terminal-web")]
-async fn ws_handler(
-    ws: WebSocketUpgrade,
-    State(state): State<Arc<GraphState>>,
-) -> impl IntoResponse {
+async fn ws_handler(ws: WebSocketUpgrade, State(state): State<Arc<AppState>>) -> impl IntoResponse {
     ws.on_upgrade(|socket| handle_socket(socket, state))
 }
 
 #[cfg(feature = "terminal-web")]
-async fn handle_socket(socket: WebSocket, state: Arc<GraphState>) {
+async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
     let (mut sender, mut receiver) = socket.split();
 
     // Send initial graph state
-    let graph_json = state.get_graph_json();
-    if let Err(e) = sender.send(Message::Text(graph_json)).await {
-        error!("Error sending initial graph state: {}", e);
-        return;
+    if let Some(graph) = state.graph_manager.get_graph("example-graph").await {
+        if let Ok(json) = serde_json::to_string(&graph) {
+            if let Err(e) = sender.send(Message::Text(json)).await {
+                error!("Error sending initial graph state: {}", e);
+                return;
+            }
+        }
     }
 
     // Create a channel for receiving graph updates
@@ -463,8 +470,7 @@ async fn create_sample_graph(graph_manager: Arc<GraphManager>) -> Result<()> {
         },
     ];
 
-    // Register graph
-    let graph_id = Uuid::new_v4().to_string();
+    // Create an empty graph
     let empty_graph = Graph {
         nodes: Vec::new(),
         edges: Vec::new(),
@@ -473,13 +479,16 @@ async fn create_sample_graph(graph_manager: Arc<GraphManager>) -> Result<()> {
     // Register the empty graph first
     graph_manager.register_graph(empty_graph).await?;
 
+    // Get the graph ID
+    let graph_id = "example-graph";
+
     // Add nodes and edges
     for node in nodes {
-        graph_manager.add_node(&graph_id, node).await?;
+        graph_manager.add_node(graph_id, node).await?;
     }
 
     for edge in edges {
-        graph_manager.add_edge(&graph_id, edge).await?;
+        graph_manager.add_edge(graph_id, edge).await?;
     }
 
     Ok(())
@@ -487,64 +496,58 @@ async fn create_sample_graph(graph_manager: Arc<GraphManager>) -> Result<()> {
 
 #[cfg(feature = "terminal-web")]
 async fn simulate_graph_updates(graph_manager: Arc<GraphManager>) {
-    // Get the first graph ID (if any)
-    let graph_id = {
-        let graphs = graph_manager.graphs.read().await;
-        graphs.keys().next().cloned()
-    };
+    let graph_id = "example-graph";
 
-    if let Some(graph_id) = graph_id {
-        loop {
-            sleep(Duration::from_secs(5)).await;
+    loop {
+        sleep(Duration::from_secs(5)).await;
 
-            // Update a node
-            let updated_node = GraphNode {
-                id: "node3".to_string(),
-                name: "Output".to_string(),
-                node_type: "sink".to_string(),
-                status: "active".to_string(), // Change status from pending to active
-                properties: HashMap::new(),
-            };
+        // Update a node
+        let updated_node = GraphNode {
+            id: "node3".to_string(),
+            name: "Output".to_string(),
+            node_type: "sink".to_string(),
+            status: "active".to_string(), // Change status from pending to active
+            properties: HashMap::new(),
+        };
 
-            if let Err(e) = graph_manager.update_node(&graph_id, updated_node).await {
-                error!("Error updating node: {}", e);
-            } else {
-                info!("Node updated successfully");
-            }
+        if let Err(e) = graph_manager.update_node(graph_id, updated_node).await {
+            error!("Error updating node: {}", e);
+        } else {
+            info!("Node updated successfully");
+        }
 
-            sleep(Duration::from_secs(5)).await;
+        sleep(Duration::from_secs(5)).await;
 
-            // Add a new node
-            let new_node = GraphNode {
-                id: "node4".to_string(),
-                name: "Analytics".to_string(),
-                node_type: "processor".to_string(),
-                status: "pending".to_string(),
-                properties: HashMap::new(),
-            };
+        // Add a new node
+        let new_node = GraphNode {
+            id: "node4".to_string(),
+            name: "Analytics".to_string(),
+            node_type: "processor".to_string(),
+            status: "pending".to_string(),
+            properties: HashMap::new(),
+        };
 
-            if let Err(e) = graph_manager.add_node(&graph_id, new_node).await {
-                error!("Error adding node: {}", e);
-            } else {
-                info!("Node added successfully");
-            }
+        if let Err(e) = graph_manager.add_node(graph_id, new_node).await {
+            error!("Error adding node: {}", e);
+        } else {
+            info!("Node added successfully");
+        }
 
-            sleep(Duration::from_secs(5)).await;
+        sleep(Duration::from_secs(5)).await;
 
-            // Add a new edge
-            let new_edge = GraphEdge {
-                id: "edge3".to_string(),
-                source: "node2".to_string(),
-                target: "node4".to_string(),
-                edge_type: "dataflow".to_string(),
-                properties: HashMap::new(),
-            };
+        // Add a new edge
+        let new_edge = GraphEdge {
+            id: "edge3".to_string(),
+            source: "node2".to_string(),
+            target: "node4".to_string(),
+            edge_type: "dataflow".to_string(),
+            properties: HashMap::new(),
+        };
 
-            if let Err(e) = graph_manager.add_edge(&graph_id, new_edge).await {
-                error!("Error adding edge: {}", e);
-            } else {
-                info!("Edge added successfully");
-            }
+        if let Err(e) = graph_manager.add_edge(graph_id, new_edge).await {
+            error!("Error adding edge: {}", e);
+        } else {
+            info!("Edge added successfully");
         }
     }
 }
@@ -558,13 +561,8 @@ async fn index_handler() -> impl IntoResponse {
 #[tokio::main]
 #[cfg(feature = "terminal-web")]
 async fn main() -> Result<()> {
-    // Initialize tracing
-    tracing::subscriber::set_global_default(
-        tracing_subscriber::FmtSubscriber::builder()
-            .with_max_level(tracing::Level::INFO)
-            .finish(),
-    )
-    .expect("Failed to set tracing subscriber");
+    // Initialize tracing for logging
+    tracing_subscriber::fmt::init();
 
     // Create graph manager
     let graph_manager = Arc::new(GraphManager::new());

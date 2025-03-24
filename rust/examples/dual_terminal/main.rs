@@ -3,13 +3,15 @@
 //! This example demonstrates using both console and web terminals simultaneously.
 //! It shows how terminal input and output are synchronized across both interfaces.
 
-use std::error::Error as StdError;
-use std::net::Ipv4Addr;
-use std::time::Duration;
-
-use mcp_agent::error::Result;
-use mcp_agent::terminal::config::{AuthConfig, AuthMethod, TerminalConfig};
-use mcp_agent::terminal::TerminalSystem;
+use mcp_agent::{
+    error::Result,
+    terminal::{
+        config::{AuthConfig, AuthMethod, TerminalConfig, WebTerminalConfig},
+        TerminalSystem,
+    },
+};
+use std::{net::IpAddr, str::FromStr, time::Duration};
+use tokio::signal;
 use tracing::{error, info, Level};
 use tracing_subscriber::fmt;
 
@@ -24,80 +26,75 @@ async fn main() -> Result<()> {
     info!("Starting dual terminal example");
 
     // Create a terminal configuration with both console and web enabled
-    let mut config = TerminalConfig::dual_terminal();
+    let mut config = TerminalConfig::default();
 
-    // Configure web terminal settings (using the new nested config structure)
-    config.web_terminal_config.host = std::net::IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
-    config.web_terminal_config.port = 9876;
-    config.web_terminal_config.auth_config.allow_anonymous = true;
+    // Enable console terminal
+    config.console_terminal_enabled = true;
 
-    // Configure authentication
-    config.web_terminal_config.auth_config = AuthConfig {
-        auth_method: AuthMethod::None, // No auth for easy testing
-        jwt_secret: "test-secret".to_string(),
-        token_expiration_secs: 3600,
-        username: "user".to_string(),
-        password: "password".to_string(),
-        allow_anonymous: true,
+    // Enable and configure web terminal
+    config.web_terminal_enabled = true;
+    config.web_terminal_config = WebTerminalConfig {
+        host: IpAddr::from_str("127.0.0.1").unwrap(),
+        port: 9876,
+        auth_config: AuthConfig {
+            auth_method: AuthMethod::Jwt,
+            jwt_secret: "secret-key-for-jwt-token-generation".to_string(),
+            token_expiration_secs: 3600,
+            username: "admin".to_string(),
+            password: "password".to_string(),
+            allow_anonymous: true,
+            require_authentication: false,
+        },
+        enable_visualization: true,
     };
 
     // Create the terminal system
     let terminal = TerminalSystem::new(config);
 
-    // Start the terminal system
-    info!("Starting terminal system...");
-    if let Err(e) = terminal.start().await {
-        error!("Failed to start terminal system: {}", e);
-        return Err(e);
-    }
-
     // Print welcome message
-    if let Err(e) = terminal
+    terminal
         .write("\n\n===================================\n")
-        .await
-    {
-        error!("Write error: {}", e);
-    }
-    if let Err(e) = terminal.write("🌟 MCP-Agent Dual Terminal Demo 🌟\n").await {
-        error!("Write error: {}", e);
-    }
-    if let Err(e) = terminal
+        .await?;
+    terminal
+        .write("🌟 MCP-Agent Dual Terminal Demo 🌟\n")
+        .await?;
+    terminal
         .write("===================================\n\n")
-        .await
-    {
-        error!("Write error: {}", e);
-    }
+        .await?;
 
     // Show info about the web terminal
-    if let Ok(addr) = terminal.web_terminal_address().await {
-        if let Err(e) = terminal
+    if let Some(addr) = terminal.web_terminal_address().await {
+        terminal
             .write(&format!("Web terminal available at: {}\n\n", addr))
-            .await
-        {
-            error!("Write error: {}", e);
-        }
+            .await?;
     } else {
-        if let Err(e) = terminal.write("Web terminal is not enabled\n\n").await {
-            error!("Write error: {}", e);
-        }
+        terminal.write("Web terminal is not enabled\n\n").await?;
     }
 
     // Show help
-    if let Err(e) = terminal.write("Commands:\n").await {
-        error!("Write error: {}", e);
-    }
-    if let Err(e) = terminal.write("  help - Show this help\n").await {
-        error!("Write error: {}", e);
-    }
-    if let Err(e) = terminal.write("  exit - Exit the application\n").await {
-        error!("Write error: {}", e);
-    }
-    if let Err(e) = terminal.write("  echo <message> - Echo a message\n").await {
-        error!("Write error: {}", e);
-    }
-    if let Err(e) = terminal.write("  time - Show current time\n\n").await {
-        error!("Write error: {}", e);
-    }
+    terminal.write("Commands:\n").await?;
+    terminal.write("  help - Show this help\n").await?;
+    terminal.write("  exit - Exit the application\n").await?;
+    terminal
+        .write("  echo <message> - Echo a message\n")
+        .await?;
+    terminal.write("  time - Show current time\n\n").await?;
+
+    // Spawn a task to handle Ctrl+C
+    let term_clone = terminal.clone();
+    tokio::spawn(async move {
+        match signal::ctrl_c().await {
+            Ok(()) => {
+                info!("Shutting down terminal system gracefully");
+                if let Err(e) = term_clone.stop().await {
+                    error!("Error stopping terminal system: {}", e);
+                }
+            }
+            Err(err) => {
+                error!("Error waiting for ctrl-c: {}", err);
+            }
+        }
+    });
 
     // Main application loop
     let mut running = true;
@@ -116,60 +113,39 @@ async fn main() -> Result<()> {
         // Process commands
         match input.as_str() {
             "exit" => {
-                if let Err(e) = terminal.write("Exiting...\n").await {
-                    error!("Write error: {}", e);
-                }
+                terminal.write("Exiting...\n").await?;
                 running = false;
             }
             "help" => {
-                if let Err(e) = terminal.write("Commands:\n").await {
-                    error!("Write error: {}", e);
-                }
-                if let Err(e) = terminal.write("  help - Show this help\n").await {
-                    error!("Write error: {}", e);
-                }
-                if let Err(e) = terminal.write("  exit - Exit the application\n").await {
-                    error!("Write error: {}", e);
-                }
-                if let Err(e) = terminal.write("  echo <message> - Echo a message\n").await {
-                    error!("Write error: {}", e);
-                }
-                if let Err(e) = terminal.write("  time - Show current time\n").await {
-                    error!("Write error: {}", e);
-                }
+                terminal.write("Commands:\n").await?;
+                terminal.write("  help - Show this help\n").await?;
+                terminal.write("  exit - Exit the application\n").await?;
+                terminal
+                    .write("  echo <message> - Echo a message\n")
+                    .await?;
+                terminal.write("  time - Show current time\n").await?;
             }
             "time" => {
                 let time = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
-                if let Err(e) = terminal.write(&format!("Current time: {}\n", time)).await {
-                    error!("Write error: {}", e);
-                }
+                terminal.write(&format!("Current time: {}\n", time)).await?;
             }
             cmd if cmd.starts_with("echo ") => {
                 let message = cmd.strip_prefix("echo ").unwrap_or("");
-                if let Err(e) = terminal.write(&format!("{}\n", message)).await {
-                    error!("Write error: {}", e);
-                }
+                terminal.write(&format!("{}\n", message)).await?;
             }
             "" => {
                 // Ignore empty input
             }
             _ => {
-                if let Err(e) = terminal
+                terminal
                     .write(&format!("Unknown command: {}\n", input))
-                    .await
-                {
-                    error!("Write error: {}", e);
-                }
+                    .await?;
             }
         }
     }
 
-    // Stop the terminal system
-    info!("Stopping terminal system...");
-    if let Err(e) = terminal.stop().await {
-        error!("Failed to stop terminal system: {}", e);
-        return Err(e);
-    }
+    // Wait a moment before shutdown to ensure everything completes
+    tokio::time::sleep(Duration::from_millis(500)).await;
 
     info!("Example completed successfully");
     Ok(())

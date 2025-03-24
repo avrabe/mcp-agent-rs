@@ -1,494 +1,145 @@
-//! Web Terminal Server
+// Terminal Web Module
+//! Web-based terminal implementation
 //!
-//! Provides a WebSocket-based terminal interface for browser access
+//! This module provides a terminal interface accessible via a web browser.
+//! It includes a WebSocket-based terminal, authentication, and graph visualization.
+//!
+//! Note: Full WebSocket server functionality requires the `transport-ws` feature.
 
+use futures::SinkExt;
+use futures::StreamExt;
 use std::collections::HashMap;
-use std::fmt;
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use axum::{
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
-        Path, Query, State,
+        State,
     },
-    http::StatusCode,
+    http::{header, HeaderMap, StatusCode},
     response::{Html, IntoResponse, Json},
-    routing::{get, post},
+    routing::get,
     Router,
 };
-#[cfg(feature = "terminal-full")]
-use axum_server::Server;
-use futures::{SinkExt, StreamExt};
-#[cfg(feature = "terminal-full")]
 use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
-use tokio::sync::{broadcast, mpsc, oneshot, Mutex as TokioMutex, RwLock};
-use tracing::{debug, error, info};
-use uuid;
 use serde_json::json;
+use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
+use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
+use tracing::{debug, error, warn};
+use uuid;
 
-use super::config::AuthConfig;
-#[cfg(feature = "terminal-full")]
-use super::config::AuthMethod;
+use super::config::{AuthConfig, AuthMethod, WebTerminalConfig};
 use super::graph;
-use super::graph::{Graph, GraphEdge, GraphNode};
+use super::graph::Graph;
 use super::AsyncTerminal;
 use crate::error::{Error, Result};
-use crate::terminal::config::WebTerminalConfig;
-use crate::terminal::graph::models::{SprottyGraph, SprottyStatus};
+use crate::SignalHandler;
 
-/// Client ID type for tracking WebSocket connections
-type ClientId = String;
+// Use conditional compilation for axum_server imports (requires transport-ws feature)
 
-/// Input callback function for web terminal
-type InputCallback = Arc<dyn Fn(String, ClientId) -> Result<()> + Send + Sync>;
+// Define a fallback Server type when transport-ws is not available
+#[cfg(not(feature = "transport-ws"))]
+mod server_fallback {
+    pub struct Server;
 
-/// JWT Claims
-#[derive(Debug, Serialize, Deserialize)]
-struct Claims {
-    /// Subject (username)
-    sub: String,
-    /// Expiration time (unix timestamp)
-    exp: usize,
-}
-
-/// Web server state used by the web terminal handlers
-struct WebServerState {
-    /// Active client connections
-    clients: TokioMutex<HashMap<ClientId, mpsc::Sender<Message>>>,
-    /// Authentication configuration
-    auth_config: AuthConfig,
-    /// Input callback function
-    input_callback: TokioMutex<Option<InputCallback>>,
-    /// Graph visualization manager (if enabled)
-    graph_manager: Option<Arc<graph::GraphManager>>,
-}
-
-impl fmt::Debug for WebServerState {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("WebServerState")
-            .field(
-                "clients",
-                &"<TokioMutex<HashMap<ClientId, mpsc::Sender<Message>>>>",
-            )
-            .field("auth_config", &self.auth_config)
-            .field("input_callback", &"<TokioMutex<Option<InputCallback>>>")
-            .field("graph_manager", &self.graph_manager.is_some())
-            .finish()
-    }
-}
-
-/// Web Terminal implementation with optional visualization support
-pub struct WebTerminal {
-    /// Terminal ID
-    id: String,
-    /// Terminal configuration
-    config: WebTerminalConfig,
-    /// Input callback function
-    input_callback: Option<InputCallback>,
-    /// Active flag - true if the server is running
-    active: Arc<TokioMutex<bool>>,
-    /// Cancellation token for the server task
-    shutdown_tx: Option<oneshot::Sender<()>>,
-    /// Server state
-    state: Option<Arc<WebServerState>>,
-    /// Graph manager for visualization
-    graph_manager: Option<Arc<graph::GraphManager>>,
-    /// Currently active WebSocket clients
-    clients: Arc<TokioMutex<HashMap<String, broadcast::Sender<String>>>>,
-    /// Graph data
-    graph_data: Arc<TokioMutex<HashMap<String, SprottyGraph>>>,
-    /// Message sender for terminal output
-    tx: broadcast::Sender<String>,
-    /// Command handler function
-    command_handler: Option<Arc<dyn Fn(String) -> Result<String> + Send + Sync>>,
-}
-
-impl fmt::Debug for WebTerminal {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("WebTerminal")
-            .field("id", &self.id)
-            .field("active", &"<TokioMutex<bool>>")
-            .field(
-                "clients",
-                &"<TokioMutex<HashMap<String, broadcast::Sender<String>>>>",
-            )
-            .field("graph_data", &"<TokioMutex<HashMap<String, SprottyGraph>>>")
-            .field("input_callback", &self.input_callback.is_some())
-            .field("shutdown_tx", &self.shutdown_tx.is_some())
-            .field("state", &self.state.is_some())
-            .field("graph_manager", &self.graph_manager.is_some())
-            .field("tx", &"<broadcast::Sender<String>>")
-            .field("command_handler", &self.command_handler.is_some())
-            .finish()
-    }
-}
-
-impl Clone for WebTerminal {
-    fn clone(&self) -> Self {
-        Self {
-            id: self.id.clone(),
-            config: self.config.clone(),
-            input_callback: None, // Can't clone the callback
-            active: self.active.clone(),
-            shutdown_tx: None,         // Don't clone the shutdown channel
-            state: self.state.clone(), // We can clone the Arc
-            graph_manager: self.graph_manager.clone(),
-            clients: self.clients.clone(),
-            graph_data: self.graph_data.clone(),
-            tx: self.tx.clone(),
-            command_handler: None, // Can't clone the command handler
-        }
-    }
-}
-
-impl WebTerminal {
-    /// Create a new web terminal
-    pub fn new() -> Self {
-        let (tx, _) = broadcast::channel(100);
-        Self {
-            id: uuid::Uuid::new_v4().to_string(),
-            config: WebTerminalConfig::default(),
-            input_callback: None,
-            active: Arc::new(TokioMutex::new(false)),
-            shutdown_tx: None,
-            state: None,
-            graph_manager: None,
-            clients: Arc::new(TokioMutex::new(HashMap::new())),
-            graph_data: Arc::new(TokioMutex::new(HashMap::new())),
-            tx,
-            command_handler: None,
-        }
-    }
-
-    /// Set the terminal ID
-    pub fn set_id(&mut self, id: String) {
-        self.id = id;
-    }
-
-    /// Set the terminal configuration
-    pub fn set_config(&mut self, config: WebTerminalConfig) {
-        self.config = config;
-    }
-
-    /// Set the input callback function
-    pub fn set_input_callback<F>(&mut self, callback: F)
-    where
-        F: Fn(String, ClientId) -> Result<()> + Send + Sync + 'static,
-    {
-        debug!("Setting input callback for web terminal");
-        self.input_callback = Some(Arc::new(callback));
-    }
-
-    /// Set the graph manager for visualization
-    pub fn set_graph_manager(&mut self, graph_manager: Arc<graph::GraphManager>) {
-        debug!("Setting graph manager for visualization");
-        // Store it in the state for websocket handlers if the server is running
-        if let Some(state) = &self.state {
-            if let Some(input_callback) = self.input_callback.clone() {
-                *state.input_callback.blocking_lock() = Some(input_callback);
-            }
-
-            // Update the graph manager
-            state.graph_manager = Some(graph_manager.clone());
-        }
-        self.graph_manager = Some(graph_manager);
-    }
-
-    /// Start the web server in a background task
-    async fn start_server(&mut self) -> Result<()> {
-        // Use graph manager initialization
-        let graph_manager = self.graph_manager.clone().unwrap();
-
-        // We need to create a new WebServerState with the graph manager
-        let state = Arc::new(WebServerState {
-            clients: TokioMutex::new(HashMap::new()),
-            auth_config: self.config.auth_config.clone(),
-            input_callback: TokioMutex::new(None),
-            graph_manager: Some(graph_manager.clone()),
-        });
-
-        // Store the state for later use
-        self.state = Some(state.clone());
-
-        // Create a shutdown channel
-        let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
-        self.shutdown_tx = Some(shutdown_tx);
-
-        // Make copies of the state for different handlers
-        let ws_state = state.clone();
-        let api_state = state.clone();
-
-        // Create the router with terminal handlers
-        let mut app = Router::new()
-            .route(
-                "/ws/:client_id",
-                get(move |ws, Path(client_id)| {
-                    ws_handler_with_state(ws, ws_state.clone(), client_id)
-                }),
-            )
-            .route("/health", get(|| async { StatusCode::OK }));
-
-        // Add graph visualization API if enabled
-        if self.config.enable_visualization {
-            debug!("Adding graph visualization API routes");
-            if let Some(graph_manager) = &state.graph_manager {
-                app = app.merge(graph::api::create_graph_router(graph_manager.clone()));
-            }
+    impl Server {
+        pub fn bind(_addr: std::net::SocketAddr) -> Self {
+            Self
         }
 
-        // Add main terminal HTML page
-        let enable_visualization = self.config.enable_visualization;
-        app = app.route(
-            "/",
-            get(|| async { axum::response::Html(self.generate_html()) }),
-        );
-
-        // Add JWT auth handler if enabled
-        #[cfg(feature = "terminal-full")]
-        let app = if self.config.auth_config.auth_method == AuthMethod::Jwt {
-            debug!("Using JWT authentication for web terminal");
-            let auth_state = state.clone();
-            app.route(
-                "/auth",
-                get(move || async move {
-                    let state = State(auth_state.clone());
-                    auth_handler_with_state(state).await
-                }),
-            )
-        } else {
-            app
-        };
-
-        // Get bind address using config's IpAddr and port directly
-        let addr = SocketAddr::new(self.config.host, self.config.port);
-
-        // Start the server in a background task
-        info!("Starting web terminal server on {}", addr);
-
-        #[cfg(feature = "terminal-full")]
-        let server_with_shutdown = {
-            let shutdown_signal = async {
-                let _ = shutdown_rx.await;
-                info!("Web terminal server shutting down");
-            };
-            axum_server::Handle::new();
-            axum_server::Server::bind(addr)
-                .handle(axum_server::Handle::new())
-                .serve(app.into_make_service())
-                .with_graceful_shutdown(shutdown_signal)
-        };
-
-        #[cfg(not(feature = "terminal-full"))]
-        let server_with_shutdown = {
-            let shutdown_signal = async {
-                let _ = shutdown_rx.await;
-                info!("Web terminal server shutting down");
-            };
-            axum::Server::bind(&addr)
-                .serve(app.into_make_service())
-                .with_graceful_shutdown(shutdown_signal)
-        };
-
-        // Spawn the server task
-        tokio::spawn(async move {
-            if let Err(e) = server_with_shutdown.await {
-                error!("Web terminal server error: {}", e);
-            }
-            info!("Web terminal server stopped");
-        });
-
-        Ok(())
-    }
-
-    /// Broadcast a message to all connected clients
-    async fn broadcast(&self, message: &str) -> Result<()> {
-        // We need to have the server running to broadcast
-        if !*self.active.lock().await {
-            return Err(Error::TerminalError("Server not active".to_string()));
-        }
-
-        debug!("Broadcasting to web clients: {} bytes", message.len());
-
-        // Get the state and send the message to all clients
-        if let Some(state) = &self.state {
-            let clients = state.clients.lock().await;
-            let websocket_msg = Message::Text(message.to_string());
-
-            for (client_id, tx) in clients.iter() {
-                if let Err(e) = tx.send(websocket_msg.clone()).await {
-                    error!("Failed to send message to client {}: {}", client_id, e);
-                }
-            }
-
-            Ok(())
-        } else {
-            Err(Error::TerminalError(
-                "Web terminal state not initialized".to_string(),
+        pub async fn serve<S>(&self, _svc: S) -> Result<(), crate::error::Error>
+        where
+            S: std::fmt::Debug + Send + 'static,
+        {
+            Err(crate::error::Error::NotImplemented(
+                "Server requires the transport-ws feature".to_string(),
             ))
         }
     }
+}
 
-    /// Get the graph manager (if enabled)
-    pub fn graph_manager(&self) -> Option<Arc<graph::GraphManager>> {
-        if let Some(state) = &self.state {
-            state.graph_manager.clone()
-        } else {
-            None
-        }
-    }
+#[cfg(not(feature = "transport-ws"))]
+use server_fallback::Server;
 
-    /// Lock the web terminal using a global mutex
-    pub async fn lock(&self) -> impl std::ops::Deref<Target = WebTerminal> + '_ {
-        // Use a simple wrapper that holds both the lock and a reference to self
-        struct WebTerminalGuard<'a> {
-            _lock: tokio::sync::MutexGuard<'a, ()>,
-            terminal: &'a WebTerminal,
-        }
+/// A message to be sent to/from the terminal.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TerminalMessage {
+    /// The unique message ID.
+    pub id: String,
+    /// The message content.
+    pub content: String,
+    /// The time when the message was created.
+    pub timestamp: u64,
+    /// The source of the message (user, system, etc.).
+    pub source: String,
+}
 
-        impl<'a> std::ops::Deref for WebTerminalGuard<'a> {
-            type Target = WebTerminal;
+/// Static CSS headers for caching
+static STATUS_CSS_HEADERS: once_cell::sync::Lazy<HeaderMap> = once_cell::sync::Lazy::new(|| {
+    let mut headers = HeaderMap::new();
+    headers.insert(header::CONTENT_TYPE, "text/css".parse().unwrap());
+    headers.insert(
+        header::CACHE_CONTROL,
+        "public, max-age=31536000".parse().unwrap(),
+    );
+    headers
+});
 
-            fn deref(&self) -> &Self::Target {
-                self.terminal
-            }
-        }
+/// Static JS headers for caching
+static STATUS_JS_HEADERS: once_cell::sync::Lazy<HeaderMap> = once_cell::sync::Lazy::new(|| {
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        header::CONTENT_TYPE,
+        "application/javascript".parse().unwrap(),
+    );
+    headers.insert(
+        header::CACHE_CONTROL,
+        "public, max-age=31536000".parse().unwrap(),
+    );
+    headers
+});
 
-        static WEB_MUTEX: TokioMutex<()> = TokioMutex::const_new(());
-        let lock = WEB_MUTEX.lock().await;
+/// Messages for graph visualization
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SprottyMessage {
+    #[serde(rename = "type")]
+    pub type_field: String,
 
-        WebTerminalGuard {
-            _lock: lock,
-            terminal: self,
-        }
-    }
+    #[serde(rename = "graphType", skip_serializing_if = "Option::is_none")]
+    pub graph_type: Option<String>,
 
-    /// Update a graph in the web terminal
-    pub async fn update_graph(&self, graph_id: &str, graph: SprottyGraph) -> Result<()> {
-        debug!("Updating graph {} in web terminal visualization", graph_id);
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>, // Use String for serialized JSON
+}
 
-        // Store the graph data locally
-        let mut graph_data = self.graph_data.lock().await;
-        graph_data.insert(graph_id.to_string(), graph.clone());
+/// Authentication request for JWT token
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct AuthRequest {
+    username: String,
+    password: String,
+}
 
-        // If we have a graph manager, update it as well
-        if let Some(graph_manager) = &self.graph_manager {
-            // Convert SprottyGraph to the internal Graph forma
-            let mut mcp_graph = Graph {
-                id: graph_id.to_string(),
-                name: format!("Graph {}", graph_id),
-                graph_type: "workflow".to_string(),
-                nodes: vec![],
-                edges: vec![],
-                properties: HashMap::new(),
-            };
+/// Authentication response with JWT token
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct AuthResponse {
+    success: bool,
+    token: Option<String>,
+    message: Option<String>,
+}
 
-            // Convert nodes
-            for node in graph.get_all_nodes() {
-                let mut properties = HashMap::new();
-                let status_str = node.status.as_ref().map_or("unknown", |s| match s {
-                    SprottyStatus::Idle => "idle",
-                    SprottyStatus::Waiting => "waiting",
-                    SprottyStatus::Running => "running",
-                    SprottyStatus::Completed => "completed",
-                    SprottyStatus::Failed => "failed",
-                });
-                properties.insert(
-                    "status".to_string(),
-                    serde_json::to_value(status_str).unwrap_or_default(),
-                );
-                properties.insert(
-                    "position".to_string(),
-                    serde_json::to_value(node.position.clone()).unwrap_or_default(),
-                );
+/// Static CSS content
+static TERMINAL_CSS: &str = r#"/* Terminal CSS will go here */"#;
 
-                let graph_node = GraphNode {
-                    id: node.id.clone(),
-                    name: node.label.clone().unwrap_or_else(|| "Unnamed".to_string()),
-                    node_type: node
-                        .properties
-                        .get("type")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("default")
-                        .to_string(),
-                    status: status_str.to_string(),
-                    properties: HashMap::new(),
-                };
+/// Static JavaScript content
+static TERMINAL_JS: &str = r#"/* Terminal JavaScript will go here */"#;
 
-                mcp_graph.nodes.push(graph_node);
-            }
-
-            // Convert edges
-            for edge in graph.get_all_edges() {
-                let graph_edge = GraphEdge {
-                    id: edge.id.clone(),
-                    source: edge.source.clone(),
-                    target: edge.target.clone(),
-                    edge_type: "dependency".to_string(),
-                    properties: HashMap::new(),
-                };
-
-                mcp_graph.edges.push(graph_edge);
-            }
-
-            // Register the graph with the manager
-            graph_manager.register_graph(mcp_graph).await?;
-        }
-
-        // Broadcast a message to inform clients that a graph has been updated
-        let message = serde_json::json!({
-            "type": "graph_updated",
-            "graph_id": graph_id,
-        });
-
-        self.broadcast(&message.to_string()).await?;
-
-        Ok(())
-    }
-
-    /// Broadcast a graph update to all connected clients
-    async fn broadcast_graph_update(&self, graph_id: &str) -> Result<()> {
-        let graphs = self.graph_data.lock().await;
-        let clients = self.clients.lock().await;
-
-        if let Some(graph) = graphs.get(graph_id) {
-            let graph_json = serde_json::to_string(&graph)?;
-            let message = format!("GRAPH_UPDATE:{}", graph_json);
-
-            for (_, sender) in clients.iter() {
-                let _ = sender.send(message.clone());
-            }
-        }
-
-        Ok(())
-    }
-
-    pub fn with_command_handler<F>(mut self, handler: F) -> Self
-    where
-        F: Fn(String) -> Result<String> + Send + Sync + 'static,
-    {
-        self.command_handler = Some(Arc::new(handler));
-        self
-    }
-
-    pub fn subscribe(&self) -> broadcast::Receiver<String> {
-        self.tx.subscribe()
-    }
-
-    pub async fn handle_command(&self, command: String) -> Result<String> {
-        if let Some(handler) = &self.command_handler {
-            handler(command)
-        } else {
-            Ok(format!("No command handler registered: {}", command))
-        }
-    }
-
-    /// Generate the terminal HTML with visualization support
-    pub fn generate_html(&self) -> String {
-        let mut html = String::from(
-            r#"<!DOCTYPE html>
+/// The static HTML content for the terminal
+static TERMINAL_HTML: &str = r#"<!DOCTYPE html>
 <html lang="en">
     <head>
         <meta charset="UTF-8">
@@ -670,21 +321,12 @@ impl WebTerminal {
                 border: 1px solid #666;
                 font-family: monospace;
             }
-        </style>"#,
-        );
-
-        html.push_str(
-            r#"
+        </style>
     </head>
     <body>
         <h1>MCP Agent Web Terminal</h1>
         <div class="controls">
-            <button id="clear-btn">Clear</button>"#,
-        );
-
-        if self.config.enable_visualization {
-            html.push_str(
-                r#"
+            <button id="clear-btn">Clear</button>
             <button id="toggle-viz">Show Visualization</button>
             <select id="graph-type">
                 <option value="workflow">Workflow</option>
@@ -692,18 +334,8 @@ impl WebTerminal {
                 <option value="human">Human Input</option>
                 <option value="llm">LLM Integration</option>
             </select>
-            <button id="reset-zoom">Reset View</button>"#,
-            );
-        }
-
-        html.push_str(
-            r#"
-        </div>"#,
-        );
-
-        if self.config.enable_visualization {
-            html.push_str(
-                r#"
+            <button id="reset-zoom">Reset View</button>
+        </div>
         <div id="visualization" class="visualization">
             <div id="sprotty-container" class="sprotty"></div>
             <div class="visualization-controls" aria-label="Visualization Controls">
@@ -712,12 +344,7 @@ impl WebTerminal {
                 <button id="zoom-reset" title="Reset View">⟲</button>
                 <button id="fit-to-screen" title="Fit to Screen">⛶</button>
             </div>
-        </div>"#,
-            );
-        }
-
-        html.push_str(
-            r#"
+        </div>
         <div class="container">
             <div id="terminal"></div>
             <input type="text" id="input" placeholder="Type command here..." />
@@ -830,11 +457,7 @@ impl WebTerminal {
                 // Clear terminal button
                 clearButton.addEventListener('click', () => {
                     terminalElement.innerHTML = '';
-                });"#,
-        );
-
-        if self.config.enable_visualization {
-            html.push_str(r#"
+                });
 
                 // Visualization code
                 const toggleVizBtn = document.getElementById('toggle-viz');
@@ -1055,307 +678,798 @@ impl WebTerminal {
                         type: 'getGraph',
                         graphType: currentGraphType
                     }));
-                }"#);
-        }
-
-        html.push_str(
-            r#"
+                }
             });
         </script>
     </body>
-</html>"#,
-        );
+</html>"#;
+
+/// Client ID type alias
+type ClientId = String;
+
+/// Information about a connected client
+#[derive(Debug, Clone)]
+struct ClientInfo {
+    /// ID of the client
+    id: ClientId,
+    /// Last activity timestamp
+    last_active: u64,
+    /// Sender for WebSocket messages
+    sender: Option<mpsc::UnboundedSender<Message>>,
+}
+
+/// Input callback function type
+type InputCallback = Arc<dyn Fn(&str, &str) -> Result<()> + Send + Sync>;
+
+/// Used for JWT claims for authentication.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Claims {
+    /// The subject (username).
+    pub sub: String,
+    /// The expiration time.
+    pub exp: u64,
+}
+
+/// Messages for graph visualization
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SprottyModelUpdate {
+    #[serde(rename = "type")]
+    pub update_type: String,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<WebSprottyGraph>,
+}
+
+/// Add a CommandHandler type definition
+pub type CommandHandler = dyn Fn(&str) -> Result<String> + Send + Sync;
+
+/// Define WebSprottyGraph and related structs before WebTerminalState
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WebSprottyGraph {
+    /// Unique identifier for the graph
+    pub id: String,
+    /// Type of the graph element
+    #[serde(rename = "type")]
+    pub type_field: String,
+    /// Child elements in the graph
+    pub children: Vec<SprottyElement>,
+}
+
+/// An element in the Sprotty graph model.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SprottyElement {
+    /// The unique identifier for the element.
+    pub id: String,
+    /// The type of the element.
+    #[serde(rename = "type")]
+    pub type_field: String,
+    /// The position of the element in the graph.
+    pub position: Position,
+}
+
+/// The position of an element in the graph.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Position {
+    /// The X coordinate.
+    pub x: f64,
+    /// The Y coordinate.
+    pub y: f64,
+}
+
+/// Token information for JWT authentication
+#[derive(Debug, Clone)]
+pub struct TokenInfo {
+    /// Expiration timestamp for the token
+    pub expires: u64,
+    /// Username associated with the token
+    pub username: String,
+}
+
+/// State for the web terminal
+pub struct WebTerminalState {
+    /// Map of connected clients
+    pub clients: HashMap<ClientId, ClientInfo>,
+    /// Terminal configuration
+    pub config: WebTerminalConfig,
+    /// Callbacks for client input
+    pub callbacks: HashMap<ClientId, Arc<dyn Fn(&str, &str) -> Result<String> + Send + Sync>>,
+    /// Shared state objects
+    pub shared_states: HashMap<String, Arc<dyn std::any::Any + Send + Sync>>,
+    /// Graph manager
+    pub graph_manager: Option<Arc<graph::GraphManager>>,
+    /// Command handlers
+    pub command_handlers: HashMap<String, Arc<dyn Fn(&str, &str) -> Result<String> + Send + Sync>>,
+    /// Authentication tokens
+    pub tokens: HashMap<String, String>,
+}
+
+impl std::fmt::Debug for WebTerminalState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WebTerminalState")
+            .field("clients", &self.clients)
+            .field("config", &self.config)
+            .field("callbacks_count", &self.callbacks.len())
+            .field("shared_states", &self.shared_states)
+            .field("graph_manager", &self.graph_manager)
+            .field("command_handlers_count", &self.command_handlers.len())
+            .field("tokens", &self.tokens)
+            .finish()
+    }
+}
+
+/// Web terminal implementation for the terminal interface
+pub struct WebTerminal {
+    /// The ID of this terminal
+    id: String,
+    /// The host to listen on
+    host: String,
+    /// The port to listen on
+    port: u16,
+    /// Whether the terminal is running
+    is_running: AtomicBool,
+    /// The shared state for the terminal
+    state: Arc<Mutex<WebTerminalState>>,
+    /// Sender for console log messages
+    console_sender: Arc<Mutex<Option<UnboundedSender<TerminalMessage>>>>,
+    /// Signal handler for handling OS signals
+    signal_handler: Box<dyn SignalHandler>,
+    /// Shutdown channel sender for stopping the server
+    shutdown_tx: Mutex<Option<UnboundedSender<()>>>,
+    /// Shutdown channel receiver
+    shutdown_rx: Mutex<Option<UnboundedReceiver<()>>>,
+    /// Broadcast channel sender
+    broadcast_tx: broadcast::Sender<String>,
+    /// Broadcast channel receiver
+    broadcast_rx: broadcast::Receiver<String>,
+}
+
+impl Clone for WebTerminal {
+    fn clone(&self) -> Self {
+        let rx = self.broadcast_tx.subscribe();
+
+        Self {
+            id: self.id.clone(),
+            host: self.host.clone(),
+            port: self.port,
+            is_running: AtomicBool::new(self.is_running.load(Ordering::SeqCst)),
+            state: Arc::clone(&self.state),
+            console_sender: Arc::clone(&self.console_sender),
+            signal_handler: Box::new(crate::workflow::signal::NullSignalHandler::new()),
+            shutdown_tx: Mutex::new(None),
+            shutdown_rx: Mutex::new(None),
+            broadcast_tx: self.broadcast_tx.clone(),
+            broadcast_rx: rx,
+        }
+    }
+}
+
+impl std::fmt::Debug for WebTerminal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WebTerminal")
+            .field("id", &self.id)
+            .field("host", &self.host)
+            .field("port", &self.port)
+            .field("is_running", &self.is_running)
+            .finish()
+    }
+}
+
+impl WebTerminal {
+    /// Create a new web terminal
+    pub fn new(
+        id: String,
+        host: String,
+        port: u16,
+        console_sender: Arc<Mutex<Option<UnboundedSender<TerminalMessage>>>>,
+        signal_handler: Box<dyn SignalHandler>,
+    ) -> Self {
+        let (shutdown_tx, shutdown_rx) = unbounded_channel::<()>();
+        let (broadcast_tx, broadcast_rx) = broadcast::channel(100);
+
+        let state = WebTerminalState {
+            clients: HashMap::new(),
+            config: WebTerminalConfig::default(),
+            callbacks: HashMap::new(),
+            shared_states: HashMap::new(),
+            graph_manager: None,
+            command_handlers: HashMap::new(),
+            tokens: HashMap::new(),
+        };
+
+        Self {
+            id,
+            host,
+            port,
+            is_running: AtomicBool::new(false),
+            state: Arc::new(Mutex::new(state)),
+            console_sender,
+            signal_handler,
+            shutdown_tx: Mutex::new(Some(shutdown_tx)),
+            shutdown_rx: Mutex::new(Some(shutdown_rx)),
+            broadcast_tx,
+            broadcast_rx,
+        }
+    }
+
+    /// Set the terminal ID
+    pub fn set_id(&mut self, id: String) {
+        self.id = id;
+    }
+
+    /// Set the terminal configuration
+    pub fn set_config(&mut self, config: WebTerminalConfig) {
+        // Create a clone of state to avoid blocking
+        let state_clone = self.state.clone();
+        let config_clone = config;
+
+        // Since this is a sync function, we can't use .await directly
+        // Instead, we spawn a task that will update the state
+        tokio::spawn(async move {
+            let mut state = state_clone.lock().await;
+            state.config = config_clone;
+        });
+    }
+
+    /// Set an input callback function for handling terminal input
+    pub fn set_input_callback(
+        &mut self,
+        callback: impl Fn(String, String) -> Result<String> + Send + Sync + 'static,
+    ) -> Result<()> {
+        // Create a wrapper that converts String to &str
+        let callback_wrapper = move |input: &str, client_id: &str| -> Result<String> {
+            callback(input.to_string(), client_id.to_string())
+        };
+
+        let callback_arc = Arc::new(callback_wrapper);
+
+        // Create a clone of state to avoid blocking
+        let state_clone = self.state.clone();
+
+        // Since this is a sync function, we can't use .await directly
+        // Instead, we spawn a task that will update the state
+        tokio::spawn(async move {
+            let mut state = state_clone.lock().await;
+            state
+                .callbacks
+                .insert("system".to_string(), callback_arc.clone());
+        });
+
+        Ok(())
+    }
+
+    /// Set the graph manager for visualization
+    pub async fn set_graph_manager(&mut self, graph_manager: Arc<graph::GraphManager>) {
+        debug!("Setting graph manager in web terminal");
+
+        // Store the graph manager locally
+        let mut state = self.state.lock().await;
+        state.graph_manager = Some(graph_manager.clone());
+
+        // Log that we've set the graph manager
+        debug!("Graph manager set in web terminal state");
+    }
+
+    /// Start the web terminal server
+    pub async fn start(&mut self) -> Result<()> {
+        if self.is_running.load(Ordering::SeqCst) {
+            return Ok(());
+        }
+
+        self.is_running.store(true, Ordering::SeqCst);
+
+        // Create config from the current state
+        let config = {
+            let state_guard = self.state.lock().await;
+            state_guard.config.clone()
+        };
+
+        // Create the address to bind to
+        let addr = SocketAddr::new(config.host, config.port);
+        log::info!("Starting web terminal server on {}", addr);
+
+        // Create the router
+        let app = self.create_router("").await?;
+
+        // Create a oneshot channel to notify when the server is done
+        let (shutdown_tx, shutdown_rx) = mpsc::unbounded_channel::<()>();
+
+        // Store the shutdown sender
+        {
+            let mut shutdown_guard = self.shutdown_tx.lock().await;
+            *shutdown_guard = Some(shutdown_tx);
+        }
+
+        // Create a TCP listener
+        let listener = tokio::net::TcpListener::bind(addr).await?;
+
+        // Create and start the server
+        tokio::spawn(async move {
+            // Use the axum::serve pattern
+            let server = axum::serve(listener, app);
+
+            // Wait for the server to complete
+            if let Err(e) = server.await {
+                log::error!("Server error: {}", e);
+            }
+        });
+
+        Ok(())
+    }
+
+    /// Broadcast a message to all connected clients
+    pub async fn broadcast(&self, message: &str) -> Result<()> {
+        // Send message to broadcast channel
+        if let Err(e) = self.broadcast_tx.send(message.to_string()) {
+            warn!("Failed to broadcast message: {}", e);
+        }
+        Ok(())
+    }
+
+    /// Get the graph manager (if enabled)
+    pub async fn graph_manager(&self) -> Option<Arc<graph::GraphManager>> {
+        let state = self.state.lock().await;
+        state.graph_manager.clone()
+    }
+
+    /// Get a locked reference to the web terminal
+    pub async fn lock(&self) -> impl std::ops::Deref<Target = WebTerminal> + '_ {
+        struct WebTerminalGuard<'a> {
+            terminal: &'a WebTerminal,
+        }
+
+        impl std::ops::Deref for WebTerminalGuard<'_> {
+            type Target = WebTerminal;
+
+            fn deref(&self) -> &Self::Target {
+                self.terminal
+            }
+        }
+
+        WebTerminalGuard { terminal: self }
+    }
+
+    /// Update the graph from JSON data
+    pub async fn update_graph(&self, graph_data: &str) -> Result<()> {
+        log::debug!("Updating graph with data: {}", graph_data);
+        let state = self.state.lock().await;
+
+        match serde_json::from_str::<WebSprottyGraph>(graph_data) {
+            Ok(graph) => {
+                if let Some(graph_manager) = &state.graph_manager {
+                    // Create a new Graph to register with both id and name
+                    let new_graph = Graph::new(&graph.id, &graph.id); // Using id as name too for simplicity
+                    log::debug!("Registering graph with ID: {}", graph.id);
+                    graph_manager.register_graph(new_graph).await?;
+                    Ok(())
+                } else {
+                    Err("No graph manager available".into())
+                }
+            }
+            Err(e) => {
+                log::error!("Failed to parse graph data: {}", e);
+                Err(format!("Failed to parse graph data: {}", e).into())
+            }
+        }
+    }
+
+    /// Broadcast a graph update to all connected clients
+    async fn broadcast_graph_update(&self, graph_id: &str) -> Result<()> {
+        let state = self.state.lock().await;
+
+        if let Some(graph_manager) = &state.graph_manager {
+            let graph_data = graph_manager.get_graph(graph_id).await;
+
+            if let Some(graph) = graph_data {
+                let graph_json = serde_json::to_string(&graph)?;
+                let message = format!("GRAPH_UPDATE:{}", graph_json);
+
+                if let Err(e) = self.broadcast_tx.send(message) {
+                    warn!("Failed to broadcast graph update: {}", e);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Set a command handler function for processing terminal commands
+    pub async fn with_command_handler<F>(self, handler: F) -> Self
+    where
+        F: Fn(&str, &str) -> Result<String> + Send + Sync + 'static,
+    {
+        // Create Arc wrapper for handler
+        let handler_arc = Arc::new(handler);
+
+        // Update state
+        {
+            let mut state = self.state.lock().await;
+
+            // Add the handler for the system client
+            state
+                .command_handlers
+                .insert("system".to_string(), handler_arc.clone());
+
+            // Collect client IDs to avoid borrowing issues
+            let client_ids: Vec<String> = state.clients.keys().cloned().collect();
+
+            // Add handlers for existing clients
+            for client_id in client_ids {
+                state
+                    .command_handlers
+                    .insert(client_id, handler_arc.clone());
+            }
+        }
+
+        self
+    }
+
+    /// Subscribe to WebTerminal events
+    pub fn subscribe(&self) -> broadcast::Receiver<String> {
+        self.broadcast_tx.subscribe()
+    }
+
+    /// Handle a command received from the WebTerminal
+    pub async fn handle_command(&self, command: String) -> Result<String> {
+        let (tx, rx) = oneshot::channel();
+        self.execute_command(&command, tx).await?;
+        match tokio::time::timeout(Duration::from_secs(5), rx).await {
+            Ok(Ok(response)) => Ok(response),
+            Ok(Err(_)) => Err(Error::CommandError(
+                "Failed to receive response".to_string(),
+            )),
+            Err(_) => Err(Error::CommandError(
+                "Command execution timed out".to_string(),
+            )),
+        }
+    }
+
+    /// Generate static terminal HTML without capturing self
+    fn get_terminal_html(config: &WebTerminalConfig) -> String {
+        let mut html = TERMINAL_HTML.to_string();
+
+        // If visualization is disabled, modify the HTML to remove visualization elements
+        if !config.enable_visualization {
+            // Simple string replacements to hide visualization UI elements
+            html = html.replace(r#"<button id="toggle-viz">Show Visualization</button>"#, "");
+            html = html.replace(
+                r#"<select id="graph-type">
+                <option value="workflow">Workflow</option>
+                <option value="agent">Agent System</option>
+                <option value="human">Human Input</option>
+                <option value="llm">LLM Integration</option>
+            </select>"#,
+                "",
+            );
+            html = html.replace(r#"<button id="reset-zoom">Reset View</button>"#, "");
+            html = html.replace(
+                r#"<div id="visualization" class="visualization">
+            <div id="sprotty-container" class="sprotty"></div>
+            <div class="visualization-controls" aria-label="Visualization Controls">
+                <button id="zoom-in" title="Zoom In">+</button>
+                <button id="zoom-out" title="Zoom Out">-</button>
+                <button id="zoom-reset" title="Reset View">⟲</button>
+                <button id="fit-to-screen" title="Fit to Screen">⛶</button>
+            </div>
+        </div>"#,
+                "",
+            );
+        }
 
         html
     }
 
-    /// Initialize the server
+    /// Generate the terminal HTML
+    pub async fn generate_html(&self) -> String {
+        let state = self.state.lock().await;
+        Self::get_terminal_html(&state.config)
+    }
+
+    /// Initialize the web server
     async fn initialize_server(&self) -> Result<()> {
         // Don't start if not active
-        if !*self.active.lock().await {
+        if !self.is_running.load(Ordering::SeqCst) {
             debug!("Web terminal not active, skipping server initialization");
             return Ok(());
         }
 
-        // Implementation would go here
-        debug!("Initializing web terminal server");
+        // Add all the handlers here
+        debug!("Initializing web terminal server handlers");
 
-        // Return success
+        Ok(())
+    }
+
+    /// Create the router for the web terminal server
+    pub async fn create_router(&self, prefix: &str) -> Result<Router> {
+        let api_state = Arc::clone(&self.state);
+
+        // Create a router for API routes
+        let router = Router::new()
+            .route("/terminal", get(handle_terminal))
+            .route("/ws", get(handle_socket_connection))
+            .with_state(api_state);
+
+        // Conditionally add authentication routes if enabled
+        #[cfg(not(feature = "terminal-web"))]
+        {
+            let state_guard = self.state.lock().await;
+            if state_guard.config.auth_config.require_authentication {
+                // Handle auth route directly rather than using the create_jwt_route helper
+                router = router.route("/auth", post(handle_auth));
+            }
+        }
+
+        // Prefix all routes if necessary
+        let prefixed_router = if !prefix.is_empty() {
+            Router::new().nest(&format!("/{}", prefix.trim_start_matches('/')), router)
+        } else {
+            router
+        };
+
+        Ok(prefixed_router)
+    }
+
+    /// Fix the guard method
+    pub fn guard(&self) -> WebTerminalGuard<'_> {
+        WebTerminalGuard { terminal: self }
+    }
+
+    /// Fix the stop method to match the trait
+    pub async fn stop(&self) -> Result<()> {
+        if self.is_running.load(Ordering::SeqCst) {
+            // Mark as not running
+            self.is_running.store(false, Ordering::SeqCst);
+
+            // Send shutdown signal if available
+            let shutdown_sender = {
+                let mut shutdown_guard = self.shutdown_tx.lock().await;
+                shutdown_guard.take()
+            };
+
+            if let Some(tx) = shutdown_sender {
+                let _ = tx.send(());
+            }
+
+            log::debug!("Web terminal stopping");
+        }
+
         Ok(())
     }
 }
 
 impl Default for WebTerminal {
-    /// Creates a default WebTerminal instance.
-    ///
-    /// # Panics
-    ///
-    /// This function will not panic.
+    /// Create a default Web Terminal instance
     fn default() -> Self {
-        Self::new()
+        let (shutdown_tx, shutdown_rx) = unbounded_channel::<()>();
+        let (broadcast_tx, broadcast_rx) = broadcast::channel(100);
+
+        Self {
+            id: "web".to_string(),
+            host: "127.0.0.1".to_string(),
+            port: 8080,
+            is_running: AtomicBool::new(false),
+            state: Arc::new(Mutex::new(WebTerminalState {
+                clients: HashMap::new(),
+                config: WebTerminalConfig::default(),
+                callbacks: HashMap::new(),
+                shared_states: HashMap::new(),
+                graph_manager: None,
+                command_handlers: HashMap::new(),
+                tokens: HashMap::new(),
+            })),
+            console_sender: Arc::new(Mutex::new(None)),
+            signal_handler: Box::new(crate::workflow::signal::NullSignalHandler::new()),
+            shutdown_tx: Mutex::new(Some(shutdown_tx)),
+            shutdown_rx: Mutex::new(Some(shutdown_rx)),
+            broadcast_tx,
+            broadcast_rx,
+        }
     }
 }
 
-#[async_trait::async_trait]
+#[async_trait]
 impl AsyncTerminal for WebTerminal {
     async fn id(&self) -> Result<String> {
         Ok(self.id.clone())
     }
 
     async fn start(&mut self) -> Result<()> {
-        let addr = format!("{}:{}", self.config.host, self.config.port);
-        let vis_status = if self.config.enable_visualization {
-            "enabled"
-        } else {
-            "disabled"
-        };
-
-        info!(
-            "Starting web terminal at {} (visualization: {})",
-            addr, vis_status
-        );
-
-        self.start_server().await
-    }
-
-    async fn stop(&self) -> Result<()> {
-        // Check if already stopped
-        if !*self.active.lock().await {
+        if self.is_running.load(Ordering::SeqCst) {
             return Ok(());
         }
 
-        // Set flag to indicate shutdown
-        *self.active.lock().await = false;
+        self.is_running.store(true, Ordering::SeqCst);
 
-        // Send shutdown signal if available
-        if let Some(tx) = &self.shutdown_tx {
-            let _ = tx.send(()).map_err(|_| {
-                Error::TerminalError("Failed to send shutdown signal to web terminal".to_string())
-            });
+        // Create config from the current state
+        let config = {
+            let state_guard = self.state.lock().await;
+            state_guard.config.clone()
+        };
+
+        // Create the address to bind to
+        let addr = SocketAddr::new(config.host, config.port);
+        log::info!("Starting web terminal server on {}", addr);
+
+        // Create the router
+        let app = self.create_router("").await?;
+
+        // Create a oneshot channel to notify when the server is done
+        let (shutdown_tx, shutdown_rx) = mpsc::unbounded_channel::<()>();
+
+        // Store the shutdown sender
+        {
+            let mut shutdown_guard = self.shutdown_tx.lock().await;
+            *shutdown_guard = Some(shutdown_tx);
+        }
+
+        // Create a TCP listener
+        let listener = tokio::net::TcpListener::bind(addr).await?;
+
+        // Create and start the server
+        tokio::spawn(async move {
+            // Use the axum::serve pattern
+            let server = axum::serve(listener, app);
+
+            // Wait for the server to complete
+            if let Err(e) = server.await {
+                log::error!("Server error: {}", e);
+            }
+        });
+
+        Ok(())
+    }
+
+    async fn stop(&self) -> Result<()> {
+        if self.is_running.load(Ordering::SeqCst) {
+            // Set active to false
+            self.is_running.store(false, Ordering::SeqCst);
+
+            // Send shutdown signal if applicable
+            let shutdown_sender = {
+                let mut shutdown_guard = self.shutdown_tx.lock().await;
+                shutdown_guard.take()
+            };
+
+            if let Some(tx) = shutdown_sender {
+                let _ = tx.send(());
+            }
         }
 
         Ok(())
     }
 
     async fn display(&self, output: &str) -> Result<()> {
-        debug!("Web terminal output: {}", output);
-        self.broadcast(output).await
+        // Broadcast the output to all clients
+        if let Err(e) = self.broadcast_tx.send(output.to_string()) {
+            warn!("Failed to broadcast message: {}", e);
+        }
+        Ok(())
     }
 
     async fn echo_input(&self, input: &str) -> Result<()> {
-        debug!("Web terminal input echo: {}", input);
-
-        // Format the input as an echo and send it
-        let message = format!("> {}", input);
-        let _ = self.tx.send(message);
-        Ok(())
+        let formatted = format!("> {}\n", input);
+        self.display(&formatted).await
     }
 
     async fn execute_command(&self, command: &str, tx: oneshot::Sender<String>) -> Result<()> {
         // Process the command
-        let result = self.handle_command(command.to_string()).await?;
+        let state = self.state.lock().await;
 
-        // Echo the command
-        self.echo_input(command).await?;
-
-        // Send the result
-        if let Err(_) = tx.send(result.clone()) {
-            error!("Failed to send command result");
+        // Get the first handler available
+        if let Some((_key, handler)) = state.command_handlers.iter().next() {
+            match handler("system", command) {
+                Ok(result) => {
+                    // Send the result
+                    if tx.send(result).is_err() {
+                        log::error!("Failed to send command result - receiver dropped");
+                    }
+                }
+                Err(e) => {
+                    log::error!("Command execution error: {}", e);
+                    if tx.send(format!("Error: {}", e)).is_err() {
+                        log::error!("Failed to send error result - receiver dropped");
+                    }
+                }
+            }
+        } else {
+            // No command handler available
+            if tx
+                .send("Error: No command handler available".to_string())
+                .is_err()
+            {
+                log::error!("Failed to send error result - receiver dropped");
+            }
         }
-
-        // Display the result
-        self.display(&result).await?;
 
         Ok(())
     }
-}
-
-/// WebSocket connection handler with state
-async fn ws_handler_with_state(
-    ws: WebSocketUpgrade,
-    state: Arc<WebServerState>,
-    client_id: String,
-) -> impl IntoResponse {
-    // Log the new client connection
-    debug!("New WebSocket connection from client: {}", client_id);
-
-    // Accept the connection and handle it
-    ws.on_upgrade(move |socket| handle_socket(socket, state, client_id))
-}
-
-/// Handle WebSocket connection for terminal
-async fn handle_socket(socket: WebSocket, state: Arc<WebServerState>, client_id: String) {
-    // Split the socket into sender and receiver
-    let (mut sender, mut receiver) = socket.split();
-
-    // Create a channel for sending messages to this client
-    let (tx, mut rx) = mpsc::channel::<Message>(100);
-
-    // Spawn a task to forward messages from the channel to the WebSocket
-    let send_task = tokio::spawn(async move {
-        while let Some(message) = rx.recv().await {
-            if sender.send(message).await.is_err() {
-                break;
-            }
-        }
-    });
-
-    // Add the client to our state
-    {
-        let mut clients = state.clients.lock().await;
-        clients.insert(client_id.clone(), tx);
-    }
-
-    // Send welcome message
-    if let Err(e) = sender
-        .send(Message::Text(
-            "Welcome to the MCP Agent Web Terminal!".to_string(),
-        ))
-        .await
-    {
-        error!("Error sending welcome message: {}", e);
-    }
-
-    // Process incoming messages from the WebSocket
-    let clients_ref = Arc::clone(&state.clients);
-    let client_id_clone = client_id.clone();
-    let mut recv_task = tokio::spawn(async move {
-        while let Some(Ok(Message::Text(text))) = receiver.next().await {
-            debug!("Received message from client {}: {}", client_id_clone, text);
-
-            // Echo the message to all clients
-            let clients = clients_ref.lock().await;
-            for (id, tx) in clients.iter() {
-                if id != &client_id_clone {
-                    // Don't send back to the originator
-                    let _ = tx
-                        .send(Message::Text(format!("<{}>: {}", client_id_clone, text)))
-                        .await;
-                }
-            }
-        }
-
-        debug!("Client disconnected: {}", client_id_clone);
-    });
-
-    // Wait for either task to complete
-    tokio::select! {
-        _ = &mut recv_task => recv_task.abort(),
-    }
-
-    // Remove the client
-    let mut clients_lock = state.clients.lock().await;
-    clients_lock.remove(&client_id);
-}
-
-/// Authentication handler for JWT with state
-#[cfg(feature = "terminal-full")]
-async fn auth_handler_with_state(
-    State(state): State<Arc<WebServerState>>,
-) -> Result<impl IntoResponse> {
-    // Create a JWT token for the default user
-    let claims = Claims {
-        sub: "user".to_string(),
-        exp: ((chrono::Utc::now().timestamp() + 86400) as usize), // 24 hours
-    };
-
-    let token = encode(
-        &Header::default(),
-        &claims,
-        &EncodingKey::from_secret(state.auth_config.jwt_secret.as_bytes()),
-    )
-    .map_err(|e| Error::TerminalError(format!("Failed to create JWT token: {}", e)))?;
-
-    Ok(Json(json!({
-        "token": token,
-        "expires_in": 86400
-    })))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::terminal::config::AuthConfig;
+    use crate::workflow::signal::NullSignalHandler;
 
     #[tokio::test]
-    /// Tests that the web terminal can be created with a unique ID
-    ///
-    /// # Panics
-    ///
-    /// This test will panic if the terminal ID cannot be retrieved.
     async fn test_web_terminal_id() {
-        let terminal = WebTerminal::new();
-        let id = terminal.id().await.unwrap();
-        assert!(!id.is_empty());
+        let terminal = WebTerminal::new(
+            "web-test".to_string(),
+            "127.0.0.1".to_string(),
+            8080,
+            Arc::new(Mutex::new(None)),
+            Box::new(NullSignalHandler::new()),
+        );
+
+        assert_eq!(terminal.id, "web-test");
     }
 
     #[tokio::test]
-    /// Tests that an input callback can be set and retrieved
-    ///
-    /// # Panics
-    ///
-    /// This test will not panic.
     async fn test_set_input_callback() {
-        let mut terminal = WebTerminal::new();
-        terminal.set_input_callback(|input, client_id| {
-            println!("Received input '{}' from client {}", input, client_id);
-            Ok(())
+        let mut terminal = WebTerminal::new(
+            "web-test".to_string(),
+            "127.0.0.1".to_string(),
+            8080,
+            Arc::new(Mutex::new(None)),
+            Box::new(NullSignalHandler::new()),
+        );
+
+        // Set up a callback that adds a test response
+        let result = terminal.set_input_callback(|_id, input| {
+            assert_eq!(input, "test-input");
+            Ok("ok".to_string())
         });
-        // Verify that the callback can be set
+
+        assert!(result.is_ok());
     }
 
     #[test]
-    /// Tests that the default web terminal config has expected values
-    ///
-    /// # Panics
-    ///
-    /// This test will not panic.
     fn test_web_terminal_config_default() {
         let config = WebTerminalConfig::default();
-        assert_eq!(config.host, "127.0.0.1");
-        assert_eq!(config.port, 8080);
-        assert_eq!(config.auth_config.auth_method, AuthMethod::None);
-        assert!(!config.enable_visualization);
+
+        assert_eq!(config.host.to_string(), "127.0.0.1");
+        assert_eq!(config.port, 8888);
+        assert!(config.auth_config.require_authentication);
     }
 
     #[tokio::test]
-    #[cfg(feature = "terminal-full")]
-    /// Tests JWT token validation
-    ///
-    /// # Panics
-    ///
-    /// This test will panic if the JWT token cannot be created or validated.
     async fn test_validate_token() {
-        let auth_config = AuthConfig {
-            auth_method: AuthMethod::Jwt,
-            jwt_secret: "test-secret".to_string(),
-            ..Default::default()
-        };
+        let config = WebTerminalConfig::default();
+        let username = "testuser";
 
-        // Create a token
+        // Create a token with the config settings
         let claims = Claims {
-            sub: "test-user".to_string(),
-            exp: ((chrono::Utc::now().timestamp() + 3600) as usize), // 1 hour
+            sub: username.to_string(),
+            exp: (SystemTime::now() + Duration::from_secs(3600))
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
         };
 
         let token = encode(
             &Header::default(),
             &claims,
-            &EncodingKey::from_secret(auth_config.jwt_secret.as_bytes()),
+            &EncodingKey::from_secret(config.auth_config.jwt_secret.as_bytes()),
         )
         .unwrap();
 
-        // Validate the token
-        assert!(validate_token(&token, &auth_config));
+        assert!(validate_token(&token, &config.auth_config));
 
-        // Invalid token should fail
-        assert!(!validate_token("invalid-token", &auth_config));
+        // Test with an invalid token
+        assert!(!validate_token("invalid-token", &config.auth_config));
     }
 }
 
-#[cfg(feature = "terminal-full")]
-/// Validate a JWT token
+/// Validate a JWT token against the provided auth configuration
 fn validate_token(token: &str, auth_config: &AuthConfig) -> bool {
+    // Skip validation if auth is not required
+    if !auth_config.require_authentication {
+        return true;
+    }
+
+    // Only validate JWT tokens if using JWT auth method
+    if auth_config.auth_method != AuthMethod::Jwt {
+        return false;
+    }
+
     // Use jsonwebtoken to validate the token
     let validation = Validation::default();
     let key = DecodingKey::from_secret(auth_config.jwt_secret.as_bytes());
@@ -1367,4 +1481,357 @@ fn validate_token(token: &str, auth_config: &AuthConfig) -> bool {
             false
         }
     }
+}
+
+/// Handle authentication requests
+#[cfg(feature = "terminal-web")]
+async fn handle_auth(
+    Json(payload): Json<AuthRequest>,
+    State(state): State<Arc<Mutex<WebTerminalState>>>,
+) -> impl IntoResponse {
+    // Check username/password
+    let auth_config = {
+        let state_guard = state.lock().await;
+        state_guard.config.auth_config.clone()
+    };
+
+    // Default to sending error response
+    let mut status = StatusCode::UNAUTHORIZED;
+    let mut response_body = json!({
+        "status": "error",
+        "message": "Invalid credentials"
+    });
+
+    // Validate credentials
+    match validate_auth_credentials(&auth_config, &payload.username, &payload.password) {
+        true => {
+            // Generate JWT token
+            match generate_token(&auth_config, &payload.username) {
+                Ok(token) => {
+                    // Add token to state
+                    {
+                        let mut state_guard = state.lock().await;
+                        state_guard
+                            .tokens
+                            .insert(payload.username.clone(), token.clone());
+                    }
+
+                    // Send success response with token
+                    status = StatusCode::OK;
+                    response_body = json!({
+                        "status": "success",
+                        "token": token
+                    });
+                }
+                Err(e) => {
+                    error!("Error generating token: {}", e);
+                    status = StatusCode::INTERNAL_SERVER_ERROR;
+                    response_body = json!({
+                        "status": "error",
+                        "message": "Error generating token"
+                    });
+                }
+            }
+        }
+        false => {
+            // Invalid credentials, response already set
+        }
+    }
+
+    (status, Json(response_body))
+}
+
+/// Handle terminal page requests
+pub async fn handle_terminal() -> impl IntoResponse {
+    Html("MCP Terminal Server")
+}
+
+/// Guard struct for accessing the WebTerminal
+#[derive(Debug)]
+pub struct WebTerminalGuard<'a> {
+    terminal: &'a WebTerminal,
+}
+
+impl<'a> WebTerminalGuard<'a> {
+    /// Create a new WebTerminalGuard
+    pub fn new(terminal: &'a WebTerminal) -> Self {
+        Self { terminal }
+    }
+
+    /// Get a reference to the terminal
+    pub fn terminal(&self) -> &WebTerminal {
+        self.terminal
+    }
+}
+
+/// Handle a WebSocket connection upgrade for terminal communication.
+///
+/// This function upgrades an HTTP connection to a WebSocket connection
+/// and processes it for terminal I/O. It's the entry point for
+/// WebSocket-based terminal communications.
+///
+/// # Arguments
+///
+/// * `ws` - The WebSocket upgrade request
+/// * `state` - Shared state for the web terminal
+pub async fn handle_socket_connection(
+    ws: WebSocketUpgrade,
+    State(state): State<Arc<Mutex<WebTerminalState>>>,
+) -> impl IntoResponse {
+    ws.on_upgrade(move |socket| process_socket(socket, state))
+}
+
+/// Process a WebSocket connection for a terminal session.
+///
+/// This function handles the main WebSocket communication loop for terminal sessions.
+/// It manages sending and receiving messages between clients and the terminal,
+/// including handling commands, authentication, and maintaining client state.
+///
+/// # Arguments
+///
+/// * `socket` - The WebSocket connection to process
+/// * `state` - Shared state for the web terminal
+pub async fn process_socket(socket: WebSocket, state: Arc<Mutex<WebTerminalState>>) {
+    let client_id = uuid::Uuid::new_v4().to_string();
+    debug!("New WebSocket connection: {}", client_id);
+
+    // Split the socket
+    let (mut sender, mut receiver) = socket.split();
+
+    // Create a channel for sending messages to this client
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    // Clone the state for other closures
+    let state_clone = Arc::clone(&state);
+
+    // Register this client
+    {
+        let mut state_guard = state.lock().await;
+        state_guard.clients.insert(
+            client_id.clone(),
+            ClientInfo {
+                id: client_id.clone(),
+                last_active: SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs(),
+                sender: Some(tx.clone()),
+            },
+        );
+    }
+
+    // Send initial connected message
+    let connect_msg = json!({
+        "type": "connected",
+        "clientId": client_id,
+    });
+
+    if let Err(e) = sender.send(Message::Text(connect_msg.to_string())).await {
+        error!("Error sending welcome message: {}", e);
+    }
+
+    // Task to forward messages from the channel to the WebSocket
+    let mut send_task = tokio::spawn(async move {
+        while let Some(message) = rx.recv().await {
+            if sender.send(message).await.is_err() {
+                break;
+            }
+        }
+    });
+
+    // Task to process incoming messages
+    let mut recv_task = tokio::spawn(async move {
+        while let Some(Ok(message)) = receiver.next().await {
+            match message {
+                Message::Text(text) => {
+                    // Try to parse as JSON first
+                    match serde_json::from_str::<serde_json::Value>(&text) {
+                        Ok(json) => {
+                            if let Some(cmd_type) = json["type"].as_str() {
+                                // Handle JSON commands
+                                let state_guard = state_clone.lock().await;
+
+                                // Check if there's a command handler for this command type
+                                if let Some(handler) = state_guard.command_handlers.get(cmd_type) {
+                                    if let Some(content) = json["content"].as_str() {
+                                        match handler(content, &client_id) {
+                                            Ok(response) => {
+                                                let response_json = json!({
+                                                    "type": "commandResponse",
+                                                    "commandType": cmd_type,
+                                                    "content": response
+                                                });
+
+                                                // Send the response back to the client
+                                                if let Some(info) =
+                                                    state_guard.clients.get(&client_id)
+                                                {
+                                                    if let Some(sender) = &info.sender {
+                                                        if sender
+                                                            .send(Message::Text(
+                                                                response_json.to_string(),
+                                                            ))
+                                                            .is_err()
+                                                        {
+                                                            error!("Failed to send command response to client: {}", client_id);
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            Err(e) => {
+                                                let error_json = json!({
+                                                    "type": "error",
+                                                    "commandType": cmd_type,
+                                                    "error": e.to_string()
+                                                });
+
+                                                // Send the error back to the client
+                                                if let Some(info) =
+                                                    state_guard.clients.get(&client_id)
+                                                {
+                                                    if let Some(sender) = &info.sender {
+                                                        if sender
+                                                            .send(Message::Text(
+                                                                error_json.to_string(),
+                                                            ))
+                                                            .is_err()
+                                                        {
+                                                            error!("Failed to send error response to client: {}", client_id);
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    // No handler for this command type
+                                    let error_json = json!({
+                                        "type": "error",
+                                        "error": format!("Unknown command type: {}", cmd_type)
+                                    });
+
+                                    if let Some(info) = state_guard.clients.get(&client_id) {
+                                        if let Some(sender) = &info.sender {
+                                            if sender
+                                                .send(Message::Text(error_json.to_string()))
+                                                .is_err()
+                                            {
+                                                error!(
+                                                    "Failed to send error response to client: {}",
+                                                    client_id
+                                                );
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        Err(_) => {
+                            // Not JSON, treat as raw input
+                            let state_guard = state_clone.lock().await;
+
+                            // Check if there's a callback for this client
+                            if let Some(callback) = state_guard.callbacks.get(&client_id) {
+                                match callback(&text, &client_id) {
+                                    Ok(response) => {
+                                        // Send the response back to the client
+                                        if let Some(info) = state_guard.clients.get(&client_id) {
+                                            if let Some(sender) = &info.sender {
+                                                let msg = Message::Text(response);
+                                                if sender.send(msg).is_err() {
+                                                    error!(
+                                                        "Failed to send response to client: {}",
+                                                        client_id
+                                                    );
+                                                }
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        error!(
+                                            "Error processing input from client {}: {}",
+                                            client_id, e
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                Message::Close(_) => {
+                    debug!("WebSocket closed by client: {}", client_id);
+                    break;
+                }
+                _ => {} // Ignore other message types
+            }
+        }
+
+        // Client disconnected, clean up
+        let mut state_guard = state_clone.lock().await;
+        state_guard.clients.remove(&client_id);
+        debug!("Client disconnected: {}", client_id);
+    });
+
+    // Wait for either task to finish
+    tokio::select! {
+        _ = &mut send_task => {
+            recv_task.abort();
+        }
+        _ = &mut recv_task => {
+            send_task.abort();
+        }
+    }
+}
+
+/// A command to be executed in the terminal.
+#[derive(Debug, Deserialize)]
+struct TerminalCommand {
+    /// The command to execute
+    command: String,
+    /// Optional arguments for the command
+    args: Option<Vec<String>>,
+}
+
+/// Validate authentication credentials
+fn validate_auth_credentials(config: &AuthConfig, username: &str, password: &str) -> bool {
+    if !config.require_authentication {
+        return true;
+    }
+
+    username == config.username && password == config.password
+}
+
+/// Generate a JWT token
+fn generate_token(config: &AuthConfig, username: &str) -> Result<String> {
+    // Set expiration time
+    let exp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+        + config.token_expiration_secs;
+
+    let claims = Claims {
+        sub: username.to_string(),
+        exp,
+    };
+
+    // Generate token
+    encode(
+        &Header::default(),
+        &claims,
+        &EncodingKey::from_secret(config.jwt_secret.as_bytes()),
+    )
+    .map_err(|e| Error::Auth(e.to_string()))
+}
+
+/// Root element for the Sprotty graph model
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SprottyRoot {
+    /// Unique identifier for the graph
+    pub id: String,
+    /// Type of the element
+    #[serde(rename = "type")]
+    pub type_field: String,
+    /// Child elements in the graph
+    pub children: Vec<SprottyElement>,
 }

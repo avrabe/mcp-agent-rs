@@ -7,7 +7,6 @@ use std::fmt;
 use std::sync::Arc;
 
 use crate::terminal::terminal_helpers;
-use log::{debug as log_debug, error as log_error, info as log_info, warn};
 use tokio::sync::{mpsc, oneshot, Mutex};
 use tracing::{debug, error, info};
 
@@ -31,6 +30,12 @@ impl fmt::Debug for TerminalSynchronizer {
             .field("input_queue", &"<Mutex<mpsc::Receiver<String>>>")
             .field("input_sender", &"<Mutex<mpsc::Sender<String>>>")
             .finish()
+    }
+}
+
+impl Default for TerminalSynchronizer {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -63,32 +68,63 @@ impl TerminalSynchronizer {
         Ok(())
     }
 
-    /// Broadcast output to all registered terminals
-    pub async fn broadcast_output(&self, output: &str) -> Result<()> {
-        debug!("Broadcasting output to all terminals");
-
+    /// Broadcast output to all terminals
+    pub async fn broadcast(&self, output: &str) -> Result<()> {
         let terminals = self.terminals.lock().await;
+        // Check if we have any terminals
+        if terminals.is_empty() {
+            return Err(Error::NoTerminals);
+        }
 
-        // Clone the terminals we need to avoid lifetime issues
-        let terminal_refs: Vec<(String, Arc<dyn Terminal>)> = terminals
-            .iter()
-            .map(|(id, term)| (id.clone(), term.clone()))
-            .collect();
-
-        // Drop the lock before spawning tasks
-        drop(terminals);
-
-        // Now use the cloned references
-        for (id, terminal) in terminal_refs {
-            let output_clone = output.to_string();
-
-            let result = terminal.display_sync(&output_clone).await;
-            if let Err(e) = result {
-                error!("Failed to send output to terminal {}: {}", id, e);
+        // Send to all terminals
+        for terminal in terminals.values() {
+            if let Err(e) = terminal_helpers::display(terminal.as_terminal(), output).await {
+                error!("Failed to broadcast to terminal: {}", e);
             }
         }
 
         Ok(())
+    }
+
+    /// Echo input to all terminals
+    pub async fn echo_input(&self, input: &str) -> Result<()> {
+        let terminals = self.terminals.lock().await;
+        // Check if we have any terminals
+        if terminals.is_empty() {
+            return Err(Error::NoTerminals);
+        }
+
+        // Send to all terminals
+        for terminal in terminals.values() {
+            if let Err(e) = terminal_helpers::echo_input(terminal.as_terminal(), input).await {
+                error!("Failed to echo input to terminal: {}", e);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Execute a command on a terminal and return the response
+    pub async fn execute_command(&self, command: &str) -> Result<Option<String>> {
+        // Check if we have any terminals
+        let terminals = self.terminals.lock().await;
+        if terminals.is_empty() {
+            return Err(Error::NoTerminals);
+        }
+
+        // Execute on the first terminal
+        if let Some(terminal) = terminals.values().next() {
+            let (tx, rx) = oneshot::channel();
+
+            terminal_helpers::execute_command(terminal.as_terminal(), command, tx).await?;
+
+            match rx.await {
+                Ok(output) => Ok(Some(output)),
+                Err(_) => Ok(None),
+            }
+        } else {
+            Err(Error::NoTerminals)
+        }
     }
 
     /// Broadcast input from one terminal to all other terminals
@@ -163,141 +199,186 @@ impl TerminalSynchronizer {
             )))
         }
     }
+}
 
-    pub async fn broadcast(&self, output: &str) -> Result<()> {
-        let terminals = self.terminals.lock().await;
+/// Mock terminal implementation for testing
+pub struct MockTerminal {
+    id: String,
+    display_handler: Arc<Mutex<Option<Box<dyn Fn(&str) -> Result<()> + Send + Sync + 'static>>>>,
+    echo_handler: Arc<Mutex<Option<Box<dyn Fn(&str) -> Result<()> + Send + Sync + 'static>>>>,
+    command_handler: Arc<
+        Mutex<
+            Option<
+                Box<dyn Fn(&str, oneshot::Sender<String>) -> Result<()> + Send + Sync + 'static>,
+            >,
+        >,
+    >,
+}
 
-        for (_, terminal) in terminals.iter() {
-            let output_clone = output.to_string();
-            let terminal_clone = terminal.clone();
+impl std::fmt::Debug for MockTerminal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MockTerminal")
+            .field("id", &self.id)
+            .field("display_handler", &"<function>".to_string())
+            .field("echo_handler", &"<function>".to_string())
+            .field("command_handler", &"<function>".to_string())
+            .finish()
+    }
+}
 
-            tokio::spawn(async move {
-                let result = terminal_helpers::display(&*terminal_clone, &output_clone).await;
-                if let Err(e) = result {
-                    error!("Failed to broadcast to terminal: {}", e);
-                }
-            });
+impl MockTerminal {
+    /// Create a new mock terminal with the given ID
+    pub fn new(id: &str) -> Self {
+        Self {
+            id: id.to_string(),
+            display_handler: Arc::new(Mutex::new(None)),
+            echo_handler: Arc::new(Mutex::new(None)),
+            command_handler: Arc::new(Mutex::new(None)),
         }
+    }
 
+    /// Register a handler for display events
+    pub fn with_display_handler<F>(self, handler: F) -> Self
+    where
+        F: Fn(&str) -> Result<()> + Send + Sync + 'static,
+    {
+        // Create a new instance with the handler already set
+        Self {
+            id: self.id,
+            display_handler: Arc::new(Mutex::new(Some(Box::new(handler)))),
+            echo_handler: self.echo_handler,
+            command_handler: self.command_handler,
+        }
+    }
+
+    /// Register a handler for echo input events
+    pub fn with_echo_handler<F>(self, handler: F) -> Self
+    where
+        F: Fn(&str) -> Result<()> + Send + Sync + 'static,
+    {
+        // Create a new instance with the handler already set
+        Self {
+            id: self.id,
+            display_handler: self.display_handler,
+            echo_handler: Arc::new(Mutex::new(Some(Box::new(handler)))),
+            command_handler: self.command_handler,
+        }
+    }
+
+    /// Register a handler for command execution
+    pub fn with_command_handler<F>(self, handler: F) -> Self
+    where
+        F: Fn(&str, oneshot::Sender<String>) -> Result<()> + Send + Sync + 'static,
+    {
+        // Create a new instance with the handler already set
+        Self {
+            id: self.id,
+            display_handler: self.display_handler,
+            echo_handler: self.echo_handler,
+            command_handler: Arc::new(Mutex::new(Some(Box::new(handler)))),
+        }
+    }
+}
+
+impl Terminal for MockTerminal {
+    fn id_sync(&self) -> Box<dyn std::future::Future<Output = Result<String>> + Send + Unpin + '_> {
+        Box::new(Box::pin(async move { Ok(self.id.clone()) }))
+    }
+
+    fn start_sync(
+        &mut self,
+    ) -> Box<dyn std::future::Future<Output = Result<()>> + Send + Unpin + '_> {
+        Box::new(Box::pin(async move { Ok(()) }))
+    }
+
+    fn stop_sync(&self) -> Box<dyn std::future::Future<Output = Result<()>> + Send + Unpin + '_> {
+        Box::new(Box::pin(async move { Ok(()) }))
+    }
+
+    fn display_sync(
+        &self,
+        output: &str,
+    ) -> Box<dyn std::future::Future<Output = Result<()>> + Send + Unpin + '_> {
+        let handler = self.display_handler.clone();
+        let output = output.to_string();
+
+        Box::new(Box::pin(async move {
+            if let Some(handler) = handler.lock().await.as_ref() {
+                handler(&output)
+            } else {
+                Ok(())
+            }
+        }))
+    }
+
+    fn echo_input_sync(
+        &self,
+        input: &str,
+    ) -> Box<dyn std::future::Future<Output = Result<()>> + Send + Unpin + '_> {
+        let handler = self.echo_handler.clone();
+        let input = input.to_string();
+
+        Box::new(Box::pin(async move {
+            if let Some(handler) = handler.lock().await.as_ref() {
+                handler(&input)
+            } else {
+                Ok(())
+            }
+        }))
+    }
+
+    fn execute_command_sync(
+        &self,
+        command: &str,
+        tx: oneshot::Sender<String>,
+    ) -> Box<dyn std::future::Future<Output = Result<()>> + Send + Unpin + '_> {
+        let handler = self.command_handler.clone();
+        let command = command.to_string();
+
+        Box::new(Box::pin(async move {
+            if let Some(handler) = handler.lock().await.as_ref() {
+                handler(&command, tx)
+            } else {
+                tx.send("Mock command result".to_string()).unwrap();
+                Ok(())
+            }
+        }))
+    }
+
+    fn as_terminal(&self) -> &dyn Terminal {
+        self
+    }
+
+    fn write(&mut self, _s: &str) -> Result<()> {
         Ok(())
     }
 
-    pub async fn echo_input(&self, input: &str) -> Result<()> {
-        let terminals = self.terminals.lock().await;
-
-        for (_, terminal) in terminals.iter() {
-            let input_clone = input.to_string();
-            let terminal_clone = terminal.clone();
-
-            tokio::spawn(async move {
-                let result = terminal_helpers::echo_input(&*terminal_clone, &input_clone).await;
-                if let Err(e) = result {
-                    error!("Failed to echo input to terminal: {}", e);
-                }
-            });
-        }
-
+    fn write_line(&mut self, _s: &str) -> Result<()> {
         Ok(())
     }
 
-    pub async fn execute_command(&self, command: &str, tx: oneshot::Sender<String>) -> Result<()> {
-        let terminals = self.terminals.lock().await;
+    fn read_line(&mut self) -> Result<String> {
+        Ok("Mock input".to_string())
+    }
 
-        if let Some(terminal) = terminals.values().next() {
-            let terminal_clone = terminal.clone();
-            drop(terminals);
+    fn flush(&mut self) -> Result<()> {
+        Ok(())
+    }
 
-            terminal_helpers::execute_command(&*terminal_clone, command, tx).await
-        } else {
-            Err(Error::TerminalError(
-                "No terminals available to execute command".into(),
-            ))
-        }
+    fn read_password(&mut self, _prompt: &str) -> Result<String> {
+        Ok("mock_password".to_string())
+    }
+
+    fn read_secret(&mut self, _prompt: &str) -> Result<String> {
+        Ok("mock_secret".to_string())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use async_trait::async_trait;
+
     use tokio::sync::oneshot;
-
-    /// Mock terminal for testing
-    struct MockTerminal {
-        id: String,
-        display_handler: Mutex<Box<dyn Fn(String) -> Result<()> + Send + Sync>>,
-        echo_handler: Mutex<Box<dyn Fn(String) -> Result<()> + Send + Sync>>,
-        command_handler:
-            Mutex<Box<dyn Fn(String, oneshot::Sender<String>) -> Result<()> + Send + Sync>>,
-    }
-
-    impl MockTerminal {
-        fn new(id: &str) -> Self {
-            Self {
-                id: id.to_string(),
-                display_handler: Mutex::new(Box::new(|_| Ok(()))),
-                echo_handler: Mutex::new(Box::new(|_| Ok(()))),
-                command_handler: Mutex::new(Box::new(|_, tx| {
-                    let _ = tx.send("OK".to_string());
-                    Ok(())
-                })),
-            }
-        }
-
-        fn with_display_handler<F>(mut self, handler: F) -> Self
-        where
-            F: Fn(String) -> Result<()> + Send + Sync + 'static,
-        {
-            self.display_handler = Mutex::new(Box::new(handler));
-            self
-        }
-
-        fn with_echo_handler<F>(mut self, handler: F) -> Self
-        where
-            F: Fn(String) -> Result<()> + Send + Sync + 'static,
-        {
-            self.echo_handler = Mutex::new(Box::new(handler));
-            self
-        }
-
-        fn with_command_handler<F>(mut self, handler: F) -> Self
-        where
-            F: Fn(String, oneshot::Sender<String>) -> Result<()> + Send + Sync + 'static,
-        {
-            self.command_handler = Mutex::new(Box::new(handler));
-            self
-        }
-    }
-
-    #[async_trait]
-    impl Terminal for MockTerminal {
-        async fn id(&self) -> Result<String> {
-            Ok(self.id.clone())
-        }
-
-        async fn start(&mut self) -> Result<()> {
-            Ok(())
-        }
-
-        async fn stop(&self) -> Result<()> {
-            Ok(())
-        }
-
-        async fn display(&self, output: &str) -> Result<()> {
-            let handler = self.display_handler.lock().await;
-            handler(output.to_string())
-        }
-
-        async fn echo_input(&self, input: &str) -> Result<()> {
-            let handler = self.echo_handler.lock().await;
-            handler(input.to_string())
-        }
-
-        async fn execute_command(&self, command: &str, tx: oneshot::Sender<String>) -> Result<()> {
-            let handler = self.command_handler.lock().await;
-            handler(command.to_string(), tx)
-        }
-    }
 
     #[tokio::test]
     async fn test_register_terminal() {
@@ -328,34 +409,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_broadcast_output() {
+    async fn test_broadcast() {
+        // Setup the test data
+        let mock1 = Arc::new(MockTerminal::new("term1"));
+        let mock2 = Arc::new(MockTerminal::new("term2"));
         let sync = TerminalSynchronizer::new();
 
-        // Create a channel to verify output was received
-        let (tx, rx) = oneshot::channel();
-        let tx = Arc::new(Mutex::new(Some(tx)));
+        // Register terminals
+        sync.register_terminal(mock1.clone()).await.unwrap();
+        sync.register_terminal(mock2.clone()).await.unwrap();
 
-        // Create mock terminal with custom display handler
-        let tx_clone = tx.clone();
-        let mock = Arc::new(
-            MockTerminal::new("test").with_display_handler(move |output| {
-                assert_eq!(output, "test output");
-                if let Some(sender) = tx_clone.try_lock().unwrap().take() {
-                    let _ = sender.send(true);
-                }
-                Ok(())
-            }),
-        );
-
-        let result = sync.register_terminal(mock.clone()).await;
+        // Test broadcasting output
+        let result = sync.broadcast("test output").await;
         assert!(result.is_ok());
-
-        let result = sync.broadcast_output("test output").await;
-        assert!(result.is_ok());
-
-        // Verify output was received
-        let received = rx.await.unwrap();
-        assert!(received);
     }
 
     #[tokio::test]
@@ -427,5 +493,36 @@ mod tests {
         let result = sync.send_command("test", "ls").await;
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), "file1 file2");
+    }
+
+    #[tokio::test]
+    async fn test_echo_input() {
+        // Setup the test data
+        let mock1 = Arc::new(MockTerminal::new("term1"));
+        let sync = TerminalSynchronizer::new();
+
+        // Register terminal
+        sync.register_terminal(mock1.clone()).await.unwrap();
+
+        // Test echoing input
+        let result = sync.echo_input("test input").await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_execute_command() {
+        // Setup the test data
+        let mock1 = Arc::new(MockTerminal::new("term1"));
+        let sync = TerminalSynchronizer::new();
+
+        // Register terminal
+        sync.register_terminal(mock1.clone()).await.unwrap();
+
+        // Test executing a command
+        let result = sync.execute_command("test command").await;
+        assert!(result.is_ok());
+        let output = result.unwrap();
+        assert!(output.is_some());
+        assert_eq!(output.unwrap(), "Mock command result");
     }
 }

@@ -192,30 +192,24 @@ impl WebSocketTransport {
         // Task for receiving messages from WebSocket
         let recv_task = tokio::spawn(async move {
             while let Some(msg_result) = ws_receiver.next().await {
-                match msg_result {
-                    Ok(WsMessage::Text(text)) => {
-                        match serde_json::from_str::<Response>(&text) {
-                            Ok(response) => {
-                                debug!("Received response: {:?}", response);
-                                // Look up the pending request and fulfill it with the response
-                                if let Some(sender) = {
-                                    let mut requests = pending_requests.write().await;
-                                    requests.remove(&response.id.to_string())
-                                } {
-                                    let _ = sender.send(response);
-                                } else {
-                                    warn!(
-                                        "Received response for unknown request: {:?}",
-                                        response.id
-                                    );
-                                }
-                            }
-                            Err(e) => {
-                                error!("Failed to parse WebSocket message: {}", e);
+                if let Ok(WsMessage::Text(text)) = msg_result {
+                    match serde_json::from_str::<Response>(&text) {
+                        Ok(response) => {
+                            debug!("Received response: {:?}", response);
+                            // Look up the pending request and fulfill it with the response
+                            if let Some(sender) = {
+                                let mut requests = pending_requests.write().await;
+                                requests.remove(&response.id.to_string())
+                            } {
+                                let _ = sender.send(response);
+                            } else {
+                                warn!("Received response for unknown request: {:?}", response.id);
                             }
                         }
+                        Err(e) => {
+                            error!("Failed to parse WebSocket message: {}", e);
+                        }
                     }
-                    _ => {}
                 }
             }
             connected.store(false, std::sync::atomic::Ordering::SeqCst);

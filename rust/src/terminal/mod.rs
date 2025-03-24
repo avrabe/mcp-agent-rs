@@ -13,25 +13,29 @@
 //! - Web Terminal Server: Web-based implementation
 //! - Graph visualization for workflows, agents, and LLM integration
 
+//! Terminal module for MCP Agent
+//!
+//! This module provides terminal functionality for the MCP Agent.
+
 pub mod config;
 pub mod console;
 pub mod graph;
 pub mod router;
 pub mod sync;
+pub mod terminal_helpers;
 pub mod web;
 
 use crate::error::{Error, Result};
 use crate::mcp::agent::Agent;
-use crate::terminal::graph::providers::{AsyncGraphDataProvider, GraphDataProvider};
+use crate::terminal::graph::providers::GraphDataProvider;
 use crate::workflow::engine::WorkflowEngine;
 use async_trait::async_trait;
 use std::sync::Arc;
-use tokio::sync::{oneshot, Mutex};
+use tokio::sync::oneshot;
 // Comment out missing imports for now - these would be implemented based on LLM and human input systems
 // use crate::llm::LlmProvider;
 // use crate::human_input::HumanInputProvider;
-use futures::future::BoxFuture;
-use log::{debug, error, info, warn};
+use log::{debug, error, warn};
 use std::fmt;
 use std::io::Write;
 
@@ -85,12 +89,26 @@ pub trait Terminal: Send + Sync + fmt::Debug {
         tx: oneshot::Sender<String>,
     ) -> Box<dyn std::future::Future<Output = Result<()>> + Send + Unpin + '_>;
 
+    /// Write text to the terminal without a newline
     fn write(&mut self, s: &str) -> Result<()>;
+
+    /// Write text to the terminal with a newline
     fn write_line(&mut self, s: &str) -> Result<()>;
+
+    /// Read a line of text from the terminal
     fn read_line(&mut self) -> Result<String>;
+
+    /// Flush the terminal output
     fn flush(&mut self) -> Result<()>;
+
+    /// Read a password from the terminal (hidden input)
     fn read_password(&mut self, prompt: &str) -> Result<String>;
+
+    /// Read secret input from the terminal (hidden input)
     fn read_secret(&mut self, prompt: &str) -> Result<String>;
+
+    /// Get a reference to the underlying terminal implementation as a trait object
+    fn as_terminal(&self) -> &dyn Terminal;
 }
 
 /// Async terminal trait with full async methods
@@ -117,6 +135,7 @@ pub trait AsyncTerminal: Send + Sync + fmt::Debug {
 
 /// Helper extension trait that implements Terminal for any type that implements AsyncTerminal
 pub trait TerminalExt: AsyncTerminal {
+    /// Get a reference to the terminal implementation as a trait object
     fn as_terminal(&self) -> &dyn Terminal;
 }
 
@@ -166,7 +185,7 @@ impl<T: AsyncTerminal + 'static> Terminal for T {
     fn write(&mut self, s: &str) -> Result<()> {
         // Just print to stdout for now
         print!("{}", s);
-        std::io::stdout().flush().map_err(|e| Error::from(e))?;
+        std::io::stdout().flush().map_err(Error::from)?;
         Ok(())
     }
 
@@ -183,7 +202,7 @@ impl<T: AsyncTerminal + 'static> Terminal for T {
     }
 
     fn flush(&mut self) -> Result<()> {
-        std::io::stdout().flush().map_err(|e| Error::from(e))?;
+        std::io::stdout().flush().map_err(Error::from)?;
         Ok(())
     }
 
@@ -200,44 +219,15 @@ impl<T: AsyncTerminal + 'static> Terminal for T {
     fn read_secret(&mut self, prompt: &str) -> Result<String> {
         self.read_password(prompt)
     }
-}
 
-impl<T: AsyncTerminal + 'static> TerminalExt for T {
     fn as_terminal(&self) -> &dyn Terminal {
         self
     }
 }
 
-/// Async helper functions to make working with dyn Terminal easier
-pub mod terminal_helpers {
-    use super::*;
-
-    pub async fn id(terminal: &dyn Terminal) -> Result<String> {
-        terminal.id_sync().await
-    }
-
-    pub async fn start(terminal: &mut dyn Terminal) -> Result<()> {
-        terminal.start_sync().await
-    }
-
-    pub async fn stop(terminal: &dyn Terminal) -> Result<()> {
-        terminal.stop_sync().await
-    }
-
-    pub async fn display(terminal: &dyn Terminal, output: &str) -> Result<()> {
-        terminal.display_sync(output).await
-    }
-
-    pub async fn echo_input(terminal: &dyn Terminal, input: &str) -> Result<()> {
-        terminal.echo_input_sync(input).await
-    }
-
-    pub async fn execute_command(
-        terminal: &dyn Terminal,
-        command: &str,
-        tx: oneshot::Sender<String>,
-    ) -> Result<()> {
-        terminal.execute_command_sync(command, tx).await
+impl<T: AsyncTerminal + 'static> TerminalExt for T {
+    fn as_terminal(&self) -> &dyn Terminal {
+        self
     }
 }
 

@@ -5,7 +5,6 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::fmt;
 
 use super::{Graph, GraphEdge, GraphNode};
 
@@ -525,20 +524,14 @@ pub fn convert_update_to_sprotty(update: &super::GraphUpdate) -> Option<SprottyM
                 None
             }
         }
-        super::GraphUpdateType::NodeRemoved => {
-            if let Some(node) = &update.node {
-                Some(SprottyModelUpdate::RemoveElement(node.id.clone()))
-            } else {
-                None
-            }
-        }
-        super::GraphUpdateType::EdgeRemoved => {
-            if let Some(edge) = &update.edge {
-                Some(SprottyModelUpdate::RemoveElement(edge.id.clone()))
-            } else {
-                None
-            }
-        }
+        super::GraphUpdateType::NodeRemoved => update
+            .node
+            .as_ref()
+            .map(|node| SprottyModelUpdate::RemoveElement(node.id.clone())),
+        super::GraphUpdateType::EdgeRemoved => update
+            .edge
+            .as_ref()
+            .map(|edge| SprottyModelUpdate::RemoveElement(edge.id.clone())),
     }
 }
 

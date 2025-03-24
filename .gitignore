@@ -178,3 +178,4 @@ project_contents.md
 examples/**/*.jsonl
 rust/docs/_build/
 rust/.ide_helper/
+rust/docs/source/changelog.md

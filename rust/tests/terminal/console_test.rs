@@ -6,7 +6,6 @@ use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::{Child, Command};
 use tokio::sync::{mpsc, oneshot};
-use tokio::time::sleep;
 
 use mcp_agent::error::Error;
 use mcp_agent::terminal::{config::TerminalConfig, TerminalSystem};
@@ -14,8 +13,8 @@ use mcp_agent::terminal::{config::TerminalConfig, TerminalSystem};
 /// Test the console terminal internal functionality
 #[tokio::test]
 async fn test_console_terminal_internal() -> Result<(), Error> {
-    // Initialize logging
-    let _ = tracing_subscriber::fmt()
+    // Initialize logging for tests
+    tracing_subscriber::fmt()
         .with_max_level(tracing::Level::DEBUG)
         .try_init();
 
@@ -23,7 +22,7 @@ async fn test_console_terminal_internal() -> Result<(), Error> {
     let config = TerminalConfig::console_only();
 
     // Create the terminal system
-    let mut terminal = TerminalSystem::new(config)?;
+    let terminal = TerminalSystem::new(config);
 
     // Start the terminal system
     terminal.start().await?;

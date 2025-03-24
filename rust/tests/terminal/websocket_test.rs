@@ -26,12 +26,13 @@ async fn test_websocket_connection() -> Result<(), Error> {
     let config = TerminalConfig::web_only();
 
     // Create and start the terminal system
-    let mut terminal = TerminalSystem::new(config)?;
+    let terminal = TerminalSystem::new(config);
     terminal.start().await?;
 
     // Get the WebSocket URL
     let ws_addr = terminal
         .web_terminal_address()
+        .await
         .expect("Web terminal address should be available");
     let ws_url = format!("ws://{}/ws", ws_addr);
 
@@ -110,12 +111,13 @@ async fn test_multiple_websocket_clients() -> Result<(), Error> {
     let config = TerminalConfig::web_only();
 
     // Create and start the terminal system
-    let mut terminal = TerminalSystem::new(config)?;
+    let terminal = TerminalSystem::new(config);
     terminal.start().await?;
 
     // Get the WebSocket URL
     let ws_addr = terminal
         .web_terminal_address()
+        .await
         .expect("Web terminal address should be available");
     let ws_url = format!("ws://{}/ws", ws_addr);
 
@@ -136,7 +138,7 @@ async fn test_multiple_websocket_clients() -> Result<(), Error> {
 
     // Split the WebSocket streams
     let (mut ws_sender1, mut ws_receiver1) = ws_stream1.split();
-    let (mut ws_sender2, mut ws_receiver2) = ws_stream2.split();
+    let (ws_sender2, mut ws_receiver2) = ws_stream2.split();
 
     // Create channels for received messages
     let (tx1, mut rx1) = mpsc::channel::<String>(10);

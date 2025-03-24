@@ -327,6 +327,13 @@ impl Default for DefaultSignalHandler {
 #[derive(Debug, Default)]
 pub struct NullSignalHandler;
 
+impl NullSignalHandler {
+    /// Creates a new NullSignalHandler instance which does nothing when signals are received
+    pub fn new() -> Self {
+        Self
+    }
+}
+
 #[async_trait]
 impl AsyncSignalHandler for NullSignalHandler {
     async fn signal(&self, _signal: WorkflowSignal) -> Result<()> {

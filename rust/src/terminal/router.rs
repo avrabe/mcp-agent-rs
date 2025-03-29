@@ -507,7 +507,7 @@ impl TerminalRouter {
         };
 
         // If we have a graph manager, share it with the terminal if it's a web terminal
-        if let Some(graph_manager) = &*self.graph_manager.lock().await {
+        if let Some(_graph_manager) = &*self.graph_manager.lock().await {
             if terminal_id.starts_with("web") {
                 // Web terminal-specific initialization could be done here
                 debug!("Initializing web terminal with graph manager");

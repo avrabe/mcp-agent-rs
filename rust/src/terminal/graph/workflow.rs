@@ -223,7 +223,7 @@ impl WorkflowGraphProvider {
 
     pub async fn handle_sprotty_action(
         &self,
-        action: &SprottyAction,
+        _action: &SprottyAction,
         graph_id: &str,
         graph_manager: Arc<GraphManager>,
     ) -> Result<GraphUpdate> {

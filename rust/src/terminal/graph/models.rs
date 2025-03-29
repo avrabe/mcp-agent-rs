@@ -229,20 +229,16 @@ impl ToString for SprottyStatus {
 }
 
 impl From<String> for SprottyStatus {
-    fn from(s: String) -> Self {
-        match s.to_lowercase().as_str() {
-            "idle" => Self::Idle,
-            "waiting" => Self::Waiting,
-            "running" | "in_progress" | "processing" => Self::Running,
-            "completed" | "done" | "finished" | "success" => Self::Completed,
+    fn from(status: String) -> Self {
+        match status.as_str() {
+            "running" | "active" | "in-progress" => Self::Running,
+            "waiting" | "pending" | "queued" => Self::Waiting,
+            "paused" | "suspended" => Self::Paused,
+            "completed" | "success" | "done" => Self::Completed,
             "failed" | "error" | "failure" => Self::Failed,
-            "active" => Self::Active,
-            "paused" => Self::Paused,
-            "pending" => Self::Pending,
-            "error" | "exception" => Self::Error,
             "cancelled" | "canceled" | "aborted" => Self::Cancelled,
-            "skipped" | "ignored" => Self::Skipped,
-            _ => Self::Idle, // Default to idle for unknown status
+            "exception" => Self::Error,
+            _ => Self::Idle,
         }
     }
 }
@@ -279,7 +275,7 @@ pub struct SprottyGraph {
 
 impl SprottyGraph {
     /// Create a new Sprotty graph with the given ID and title
-    pub fn new(id: String, title: String) -> Self {
+    pub fn new(id: String, _title: String) -> Self {
         let root = SprottyRoot {
             id,
             model_type: "graph".to_string(),

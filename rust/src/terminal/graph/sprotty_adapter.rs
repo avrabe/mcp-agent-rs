@@ -245,28 +245,9 @@ pub async fn process_sprotty_action(
 
             Ok(Some(action.clone()))
         }
-        SprottyAction::FitToScreen(request) => {
-            // Pass this action back to the frontend
-            debug!("Fitting to screen");
-
-            if graph_id.starts_with("workflow-") {
-                let workflow_provider =
-                    Arc::new(WorkflowGraphProvider::new(workflow_engine.clone()));
-
-                let update_result = workflow_provider
-                    .handle_sprotty_action(action, graph_id, graph_manager.clone())
-                    .await;
-
-                if let Ok(update) = update_result {
-                    if let Some(graph) = update.graph {
-                        return Ok(Some(SprottyAction::SetModel(convert_to_sprotty_model(
-                            &graph,
-                        ))));
-                    }
-                }
-            }
-
-            Ok(Some(action.clone()))
+        SprottyAction::FitToScreen(_request) => {
+            // Handle fit to screen request
+            Ok(None)
         }
         _ => Ok(None),
     }

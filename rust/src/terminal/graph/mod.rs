@@ -44,7 +44,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::{mpsc, RwLock, Mutex};
 use tracing::{debug, error};
 
 use self::models::SprottyStatus;
@@ -240,15 +240,15 @@ impl GraphManager {
         graphs.insert(graph.id.clone(), graph.clone());
 
         // Notify subscribers of the new graph
-        let _ = self.notify_update(GraphUpdate {
+        let update = GraphUpdate {
             graph_id: graph.id.clone(),
             update_type: GraphUpdateType::FullUpdate,
             graph: Some(graph),
             node: None,
             edge: None,
-        })
-        .await;
+        };
 
+        self.notify_update(update).await?;
         Ok(())
     }
 
@@ -257,7 +257,7 @@ impl GraphManager {
         let mut graphs = self.graphs.write().await;
         if graphs.remove(graph_id).is_none() {
             return Err(Error::TerminalError(format!(
-                "Graph {} not found",
+                "Graph not found: {}",
                 graph_id
             )));
         }
@@ -270,23 +270,23 @@ impl GraphManager {
         let mut graphs = self.graphs.write().await;
 
         if let Some(graph) = graphs.get_mut(graph_id) {
-            // Add the node to the graph
             graph.nodes.push(node.clone());
 
-            // Notify subscribers of the node addition
-            let _ = self.notify_update(GraphUpdate {
+            // Notify subscribers of the update
+            let update = GraphUpdate {
                 graph_id: graph_id.to_string(),
                 update_type: GraphUpdateType::NodeAdded,
-                graph: None,
+                graph: Some(graph.clone()),
                 node: Some(node),
                 edge: None,
-            })
-            .await;
+            };
 
+            drop(graphs); // Release lock before notification
+            self.notify_update(update).await?;
             Ok(())
         } else {
             Err(Error::TerminalError(format!(
-                "Graph {} not found",
+                "Graph not found: {}",
                 graph_id
             )))
         }
@@ -297,23 +297,23 @@ impl GraphManager {
         let mut graphs = self.graphs.write().await;
 
         if let Some(graph) = graphs.get_mut(graph_id) {
-            // Add the edge to the graph
-            graph.edges.push(edge.clone());
+            graph.edges.push(edge);
 
-            // Notify subscribers of the edge addition
-            let _ = self.notify_update(GraphUpdate {
+            // Notify subscribers of the update
+            let update = GraphUpdate {
                 graph_id: graph_id.to_string(),
                 update_type: GraphUpdateType::EdgeAdded,
-                graph: None,
+                graph: Some(graph.clone()),
                 node: None,
                 edge: Some(edge),
-            })
-            .await;
+            };
 
+            drop(graphs); // Release lock before notification
+            self.notify_update(update).await?;
             Ok(())
         } else {
             Err(Error::TerminalError(format!(
-                "Graph {} not found",
+                "Graph not found: {}",
                 graph_id
             )))
         }
@@ -324,33 +324,32 @@ impl GraphManager {
         let mut graphs = self.graphs.write().await;
 
         if let Some(graph) = graphs.get_mut(graph_id) {
-            // Find and update the node
-            let node_idx = graph.nodes.iter().position(|n| n.id == node.id);
+            // Find the node and update it
+            let found = graph
+                .nodes
+                .iter_mut()
+                .find(|n| n.id == node.id)
+                .ok_or_else(|| {
+                    Error::TerminalError(format!("Node not found: {} in graph {}", node.id, graph_id))
+                })?;
 
-            match node_idx {
-                Some(idx) => {
-                    graph.nodes[idx] = node.clone();
+            *found = node.clone();
 
-                    // Notify subscribers of the node update
-                    let _ = self.notify_update(GraphUpdate {
-                        graph_id: graph_id.to_string(),
-                        update_type: GraphUpdateType::NodeUpdated,
-                        graph: None,
-                        node: Some(node),
-                        edge: None,
-                    })
-                    .await;
+            // Notify subscribers of the update
+            let update = GraphUpdate {
+                graph_id: graph_id.to_string(),
+                update_type: GraphUpdateType::NodeUpdated,
+                graph: Some(graph.clone()),
+                node: Some(node),
+                edge: None,
+            };
 
-                    Ok(())
-                }
-                None => Err(Error::TerminalError(format!(
-                    "Node {} not found in graph {}",
-                    node.id, graph_id
-                ))),
-            }
+            drop(graphs); // Release lock before notification
+            self.notify_update(update).await?;
+            Ok(())
         } else {
             Err(Error::TerminalError(format!(
-                "Graph {} not found",
+                "Graph not found: {}",
                 graph_id
             )))
         }
@@ -364,92 +363,55 @@ impl GraphManager {
         let sprotty_update = match &update.update_type {
             GraphUpdateType::FullUpdate => {
                 if let Some(graph) = &update.graph {
-                    // Convert the entire graph to a Sprotty-compatible format
-                    let sprotty_model = models::convert_to_sprotty_model(graph);
-
-                    // Create the update message
-                    json!({
-                        "type": "GRAPH_UPDATE",
-                        "updateType": "full",
-                        "graphId": update.graph_id,
-                        "model": sprotty_model
-                    })
+                    let sprotty_model = convert_to_sprotty_model(graph);
+                    SprottyAction::SetModel(sprotty_model)
                 } else {
-                    json!({
-                        "type": "GRAPH_UPDATE",
-                        "updateType": "full",
-                        "graphId": update.graph_id,
-                        "error": "No graph data provided"
-                    })
+                    return Err(Error::TerminalError(
+                        "FullUpdate requires a graph".to_string(),
+                    ));
                 }
             }
-            GraphUpdateType::NodeAdded | GraphUpdateType::NodeUpdated => {
+            GraphUpdateType::NodeAdded => {
                 if let Some(node) = &update.node {
-                    // Convert the node to a Sprotty-compatible node
-                    let sprotty_node = models::convert_node_to_sprotty(node);
-                    json!({
-                        "type": "GRAPH_UPDATE",
-                        "updateType": "nodeUpdate",
-                        "graphId": update.graph_id,
-                        "node": sprotty_node
-                    })
+                    let sprotty_node = convert_node_to_sprotty(node);
+                    SprottyAction::AddNode(sprotty_node)
                 } else {
-                    json!({
-                        "type": "GRAPH_UPDATE",
-                        "updateType": "nodeUpdate",
-                        "graphId": update.graph_id,
-                        "error": "No node data provided"
-                    })
+                    return Err(Error::TerminalError(
+                        "NodeAdded requires a node".to_string(),
+                    ));
                 }
             }
-            GraphUpdateType::EdgeAdded | GraphUpdateType::EdgeUpdated => {
+            GraphUpdateType::NodeUpdated => {
+                if let Some(node) = &update.node {
+                    let sprotty_node = convert_node_to_sprotty(node);
+                    SprottyAction::UpdateNode(sprotty_node)
+                } else {
+                    return Err(Error::TerminalError(
+                        "NodeUpdated requires a node".to_string(),
+                    ));
+                }
+            }
+            GraphUpdateType::EdgeAdded => {
                 if let Some(edge) = &update.edge {
-                    // Convert the edge to a Sprotty-compatible edge
-                    let sprotty_edge = models::convert_edge_to_sprotty(edge);
-                    json!({
-                        "type": "GRAPH_UPDATE",
-                        "updateType": "edgeUpdate",
-                        "graphId": update.graph_id,
-                        "edge": sprotty_edge
-                    })
+                    let sprotty_edge = convert_edge_to_sprotty(edge);
+                    SprottyAction::AddEdge(sprotty_edge)
                 } else {
-                    json!({
-                        "type": "GRAPH_UPDATE",
-                        "updateType": "edgeUpdate",
-                        "graphId": update.graph_id,
-                        "error": "No edge data provided"
-                    })
+                    return Err(Error::TerminalError(
+                        "EdgeAdded requires an edge".to_string(),
+                    ));
                 }
-            }
-            _ => {
-                // For other update types, send a simple notification
-                json!({
-                    "type": "GRAPH_UPDATE",
-                    "updateType": update.update_type.to_string(),
-                    "graphId": update.graph_id
-                })
             }
         };
 
-        // Convert to a JSON string
-        let update_json = serde_json::to_string(&sprotty_update).unwrap_or_else(|_| {
-            "{\"type\":\"error\",\"message\":\"Failed to serialize update\"}".to_string()
-        });
-
-        // Also send the JSON string representation for web clients
-        if let Some(web_update_fn) =
-            crate::terminal::terminal_helpers::get_web_update_function().await
-        {
-            if let Err(e) = web_update_fn("graph_update", &update_json) {
-                error!("Failed to send web graph update: {}", e);
-            }
+        if channels.is_empty() {
+            // No subscribers, just return success
+            return Ok(());
         }
 
+        // Send to all subscribers
         for channel in channels.iter() {
-            // Attempt to send the update, ignoring errors from closed channels
             if let Err(e) = channel.send(update.clone()).await {
-                error!("Failed to send graph update: {}", e);
-                // We don't return an error here, as we want to try to send to all channels
+                error!("Error sending graph update: {}", e);
             }
         }
 
@@ -538,7 +500,7 @@ impl GraphManager {
     }
 
     /// Register a graph provider
-    pub fn register_provider(&self, provider: Arc<dyn GraphDataProvider + Send + Sync>) {
+    pub fn register_provider(&self, _provider: Arc<dyn GraphDataProvider + Send + Sync>) {
         debug!("Provider would be registered (not implemented)");
     }
 }
@@ -605,4 +567,10 @@ mod tests {
         let retrieved = retrieved.unwrap();
         assert_eq!(retrieved.id, "test-graph");
     }
+}
+
+struct GraphManagerState {
+    providers: Vec<Arc<dyn GraphDataProvider + Send + Sync>>,
+    _agents: Vec<Arc<Agent>>,
+    _workflow_instances: Vec<Arc<dyn std::any::Any + Send + Sync>>,
 }

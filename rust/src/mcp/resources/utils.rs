@@ -1,10 +1,4 @@
-use base64::Engine;
-use lazy_static::lazy_static;
-use mime_guess::from_path;
-use regex::Regex;
-use std::path::Path;
 
-use crate::mcp::resources::error::ResourceError;
 
 /// Determines the MIME type of a file based on its extension
 #[cfg(test)]

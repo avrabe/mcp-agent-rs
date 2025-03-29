@@ -974,7 +974,7 @@ impl WebTerminal {
         let app = self.create_router("").await?;
 
         // Create a oneshot channel to notify when the server is done
-        let (shutdown_tx, shutdown_rx) = mpsc::unbounded_channel::<()>();
+        let (shutdown_tx, _shutdown_rx) = mpsc::unbounded_channel::<()>();
 
         // Store the shutdown sender
         {
@@ -999,8 +999,8 @@ impl WebTerminal {
             info!("Web terminal server bound to {}", server_addr);
         }
 
-        // Create and start the server
-        let server_task = tokio::spawn(async move {
+        // Start server
+        let _server_task = tokio::spawn(async move {
             debug!("Web terminal server task started");
 
             // Use the axum::serve pattern

@@ -387,7 +387,7 @@ impl AgentGraphProvider {
         let agents = self.agents.read().await;
 
         // For each agent, create a node
-        for (i, agent) in agents.iter().enumerate() {
+        for (i, _agent) in agents.iter().enumerate() {
             let id = format!("agent-{}", i);
             let name = format!("Agent {}", i);
 
@@ -420,7 +420,7 @@ impl AgentGraphProvider {
         };
 
         // Create nodes for each agen
-        for (i, agent) in agents.iter().enumerate() {
+        for (i, _agent) in agents.iter().enumerate() {
             let mut properties = HashMap::new();
             properties.insert(
                 "agent_type".to_string(),
@@ -445,10 +445,10 @@ impl AgentGraphProvider {
 
     /// Updates the graph based on the provided agents
     pub async fn update_graph(&self, agents: &[Arc<Agent>]) -> Result<Graph> {
-        let nodes = Vec::new();
-        let edges = Vec::new();
+        let mut nodes = Vec::new();
+        let mut edges = Vec::new();
 
-        for (i, _agent) in agents.iter().enumerate() {
+        for (_i, _agent) in agents.iter().enumerate() {
             // ... existing code ...
         }
 
@@ -567,7 +567,7 @@ impl LlmIntegrationGraphProvider {
         graph.nodes.push(app_node);
 
         // Add nodes for each LLM provider
-        for (i, provider) in providers.iter().enumerate() {
+        for (i, _provider) in providers.iter().enumerate() {
             let provider_id = format!("provider{}", i);
             let provider_name = format!("LLM Provider {}", i);
 
@@ -653,11 +653,59 @@ impl LlmIntegrationGraphProvider {
 
     /// Updates the graph based on the provided LLM providers
     pub async fn update_graph(&self, providers: &[Arc<dyn LlmClient>]) -> Result<Graph> {
-        let nodes = Vec::new();
-        let edges = Vec::new();
+        let mut nodes = Vec::new();
+        let mut edges = Vec::new();
 
         for (i, _provider) in providers.iter().enumerate() {
-            // ... existing code ...
+            let provider_id = format!("provider{}", i);
+            let provider_name = format!("LLM Provider {}", i);
+
+            // Get provider state if available
+            let state = self.provider_states.read().await.get(&provider_id).cloned().unwrap_or_else(|| ProviderState {
+                status: "unknown".to_string(),
+                model: "unknown".to_string(),
+                last_request: None,
+                error_count: 0,
+                success_count: 0,
+            });
+
+            let mut properties = HashMap::new();
+            properties.insert(
+                "model".to_string(),
+                serde_json::to_value(state.model).unwrap_or_default(),
+            );
+            properties.insert(
+                "last_request".to_string(),
+                serde_json::to_value(state.last_request.map(|dt| dt.to_rfc3339()))
+                    .unwrap_or_default(),
+            );
+            properties.insert(
+                "error_count".to_string(),
+                serde_json::to_value(state.error_count).unwrap_or_default(),
+            );
+            properties.insert(
+                "success_count".to_string(),
+                serde_json::to_value(state.success_count).unwrap_or_default(),
+            );
+
+            let node = GraphNode {
+                id: provider_id.clone(),
+                name: provider_name,
+                node_type: "llm_provider".to_string(),
+                status: state.status,
+                properties,
+            };
+
+            nodes.push(node);
+
+            // Add edge from app to provider
+            edges.push(GraphEdge {
+                id: format!("edge{}", i),
+                source: "app".to_string(),
+                target: provider_id,
+                edge_type: "request".to_string(),
+                properties: HashMap::new(),
+            });
         }
 
         Ok(Graph {

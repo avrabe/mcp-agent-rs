@@ -89,6 +89,11 @@ pub trait Terminal: Send + Sync + fmt::Debug {
         tx: oneshot::Sender<String>,
     ) -> Box<dyn std::future::Future<Output = Result<()>> + Send + Unpin + '_>;
 
+    /// Get the terminal address (non-async wrapper)
+    fn terminal_address_sync(
+        &self,
+    ) -> Box<dyn std::future::Future<Output = Option<String>> + Send + Unpin + '_>;
+
     /// Write text to the terminal without a newline
     fn write(&mut self, s: &str) -> Result<()>;
 
@@ -111,7 +116,7 @@ pub trait Terminal: Send + Sync + fmt::Debug {
     fn as_terminal(&self) -> &dyn Terminal;
 }
 
-/// Async terminal trait with full async methods
+/// Asynchronous terminal interface
 #[async_trait]
 pub trait AsyncTerminal: Send + Sync + fmt::Debug {
     /// Return the terminal's unique identifier
@@ -131,6 +136,12 @@ pub trait AsyncTerminal: Send + Sync + fmt::Debug {
 
     /// Execute a command on the terminal
     async fn execute_command(&self, command: &str, tx: oneshot::Sender<String>) -> Result<()>;
+
+    /// Get the terminal address if it has one
+    async fn terminal_address(&self) -> Option<String> {
+        // Default implementation returns None - terminals don't have addresses by default
+        None
+    }
 }
 
 /// Helper extension trait that implements Terminal for any type that implements AsyncTerminal
@@ -141,7 +152,7 @@ pub trait TerminalExt: AsyncTerminal {
 
 impl<T: AsyncTerminal + 'static> Terminal for T {
     fn id_sync(&self) -> Box<dyn std::future::Future<Output = Result<String>> + Send + Unpin + '_> {
-        Box::new(Box::pin(async move { self.id().await }))
+        Box::new(Box::pin(self.id()))
     }
 
     fn start_sync(
@@ -182,11 +193,15 @@ impl<T: AsyncTerminal + 'static> Terminal for T {
         ))
     }
 
+    fn terminal_address_sync(
+        &self,
+    ) -> Box<dyn std::future::Future<Output = Option<String>> + Send + Unpin + '_> {
+        Box::new(Box::pin(async move { self.terminal_address().await }))
+    }
+
     fn write(&mut self, s: &str) -> Result<()> {
-        // Just print to stdout for now
-        print!("{}", s);
-        std::io::stdout().flush().map_err(Error::from)?;
-        Ok(())
+        let rt = tokio::runtime::Handle::current();
+        rt.block_on(async { self.display(s).await })
     }
 
     fn write_line(&mut self, s: &str) -> Result<()> {

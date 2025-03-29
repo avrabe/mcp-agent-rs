@@ -521,11 +521,11 @@ impl JsonRpcHandler {
         Ok(JsonRpcBatchResponse::from_responses(responses))
     }
 
-    /// Processes a raw JSON message and determines if it's a request, notification, or batch
+    /// Processes a raw JSON message according to the JSON-RPC 2.0 spec
     ///
-    /// This method attempts to parse the raw JSON data as either a request, notification,
-    /// or batch request, and routes it to the appropriate handler. If the message is a request
-    /// or batch request, a response is generated and returned as bytes.
+    /// This method handles both single requests and batch requests, providing
+    /// the appropriate response format based on the input message.
+    /// It fully implements the JSON-RPC 2.0 specification for message handling.
     ///
     /// # Parameters
     ///
@@ -533,62 +533,144 @@ impl JsonRpcHandler {
     ///
     /// # Returns
     ///
-    /// A `McpResult` containing:
-    /// - `Some(Vec<u8>)` if the message was a request/batch and a response was generated
-    /// - `None` if the message was a notification (no response)
-    ///
-    /// # Error Handling
-    ///
-    /// Returns an error if:
-    /// - The JSON data is invalid or doesn't match a request, notification, or batch format
-    /// - The request or notification handler returns an error
-    #[instrument(skip(self, json_data))]
+    /// If a response should be sent, returns the serialized response,
+    /// otherwise returns None (for notifications)
+    #[instrument(skip(self, json_data), level = "debug")]
     pub async fn process_json_message(&self, json_data: &[u8]) -> McpResult<Option<Vec<u8>>> {
-        let _guard = telemetry::span_duration("process_json_message");
+        // Try to parse as a batch first
+        match serde_json::from_slice::<Vec<serde_json::Value>>(json_data) {
+            Ok(batch) if !batch.is_empty() => {
+                debug!(
+                    "Processing JSON-RPC batch request with {} items",
+                    batch.len()
+                );
+                let mut responses = Vec::new();
+                let mut has_responses = false;
 
-        // Try to parse as a batch request first
-        if let Ok(batch_request) = serde_json::from_slice::<Vec<JsonRpcRequest>>(json_data) {
-            debug!(
-                "Detected JSON-RPC batch request with {} items",
-                batch_request.len()
-            );
+                for item in batch {
+                    match serde_json::from_value::<JsonRpcRequest>(item.clone()) {
+                        Ok(request) => {
+                            // Process the request
+                            let response = self.handle_request(request).await;
+                            match response {
+                                Ok(res) => {
+                                    responses.push(res);
+                                    has_responses = true;
+                                }
+                                Err(e) => {
+                                    // Convert error to JsonRpcResponse with error field
+                                    let error = match e {
+                                        McpError::MethodNotFound(method) => {
+                                            JsonRpcError::method_not_found(&format!(
+                                                "Method '{}' not found",
+                                                method
+                                            ))
+                                        }
+                                        McpError::InvalidParams(msg) => {
+                                            JsonRpcError::invalid_params(&msg)
+                                        }
+                                        McpError::ParseError(msg) => {
+                                            JsonRpcError::parse_error(&msg)
+                                        }
+                                        _ => JsonRpcError::internal_error(&format!("{}", e)),
+                                    };
 
-            // Process batch request
-            let batch_response = self
-                .handle_batch_request(JsonRpcBatchRequest::from_requests(batch_request))
-                .await?;
+                                    // Get the ID from the request or null if not available
+                                    let id = match serde_json::from_value::<serde_json::Value>(
+                                        item["id"].clone(),
+                                    ) {
+                                        Ok(id) => id,
+                                        Err(_) => serde_json::Value::Null,
+                                    };
 
-            // If batch response is empty (all notifications), return None
-            if batch_response.is_empty() {
-                return Ok(None);
-            }
-
-            // Otherwise, serialize and return the batch response
-            let response_data = batch_response.to_bytes()?;
-            return Ok(Some(response_data));
-        }
-
-        // Try to parse as a single request
-        match serde_json::from_slice::<JsonRpcRequest>(json_data) {
-            Ok(request) => {
-                let response = self.handle_request(request).await?;
-                let response_data = response.to_bytes()?;
-                return Ok(Some(response_data));
-            }
-            Err(_) => {
-                // Not a request, try as a notification
-                match serde_json::from_slice::<JsonRpcNotification>(json_data) {
-                    Ok(notification) => {
-                        self.handle_notification(notification).await?;
-                        return Ok(None); // Notifications don't have responses
+                                    responses.push(JsonRpcResponse::error(error, id));
+                                    has_responses = true;
+                                }
+                            }
+                        }
+                        Err(_) => {
+                            // Try to parse as notification
+                            match serde_json::from_value::<JsonRpcNotification>(item) {
+                                Ok(notification) => {
+                                    // Process notification (no response needed)
+                                    let _ = self.handle_notification(notification).await;
+                                }
+                                Err(_) => {
+                                    // Invalid request, add error response
+                                    let id = serde_json::Value::Null;
+                                    let error =
+                                        JsonRpcError::invalid_request("Invalid request format");
+                                    responses.push(JsonRpcResponse::error(error, id));
+                                    has_responses = true;
+                                }
+                            }
+                        }
                     }
-                    Err(e) => {
-                        // Not a notification either
-                        warn!("Invalid JSON-RPC message: {}", e);
-                        return Err(McpError::InvalidMessage(format!(
-                            "Invalid JSON-RPC message: {}",
-                            e
-                        )));
+                }
+
+                // Return responses if there are any
+                if has_responses {
+                    let batch_response = JsonRpcBatchResponse::from_responses(responses);
+                    match batch_response.to_bytes() {
+                        Ok(bytes) => Ok(Some(bytes)),
+                        Err(e) => Err(e),
+                    }
+                } else {
+                    // All were notifications, no response needed
+                    Ok(None)
+                }
+            }
+            _ => {
+                // Not a batch or empty batch, try to parse as single request or notification
+                if let Ok(request) = serde_json::from_slice::<JsonRpcRequest>(json_data) {
+                    // Process single request
+                    match self.handle_request(request).await {
+                        Ok(response) => match response.to_bytes() {
+                            Ok(bytes) => Ok(Some(bytes)),
+                            Err(e) => Err(e),
+                        },
+                        Err(e) => {
+                            // Create error response
+                            let error = match e {
+                                McpError::MethodNotFound(method) => JsonRpcError::method_not_found(
+                                    &format!("Method '{}' not found", method),
+                                ),
+                                McpError::InvalidParams(msg) => JsonRpcError::invalid_params(&msg),
+                                McpError::ParseError(msg) => JsonRpcError::parse_error(&msg),
+                                _ => JsonRpcError::internal_error(&format!("{}", e)),
+                            };
+
+                            // Extract ID from the failed request
+                            let id = match serde_json::from_slice::<serde_json::Value>(json_data)
+                                .and_then(|v| {
+                                    serde_json::from_value::<serde_json::Value>(v["id"].clone())
+                                }) {
+                                Ok(id) => id,
+                                Err(_) => serde_json::Value::Null,
+                            };
+
+                            let response = JsonRpcResponse::error(error, id);
+                            match response.to_bytes() {
+                                Ok(bytes) => Ok(Some(bytes)),
+                                Err(e) => Err(e),
+                            }
+                        }
+                    }
+                } else if let Ok(notification) =
+                    serde_json::from_slice::<JsonRpcNotification>(json_data)
+                {
+                    // Process single notification
+                    match self.handle_notification(notification).await {
+                        Ok(_) => Ok(None), // No response needed for notifications
+                        Err(e) => Err(e),
+                    }
+                } else {
+                    // Invalid request format
+                    let error = JsonRpcError::parse_error("Failed to parse JSON-RPC message");
+                    let response = JsonRpcResponse::error(error, serde_json::Value::Null);
+                    match response.to_bytes() {
+                        Ok(bytes) => Ok(Some(bytes)),
+                        Err(e) => Err(e),
                     }
                 }
             }

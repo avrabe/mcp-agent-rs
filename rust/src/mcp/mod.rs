@@ -14,6 +14,12 @@
 //! - **Connection management**: TCP/Stream-based connections with automatic reconnection
 //! - **Error handling**: Comprehensive error types with detailed information
 //! - **Telemetry integration**: Performance metrics and tracing
+//! - **Prompt management**: Template-based prompt creation and management
+//! - **Resource handling**: Structured data handling for context
+//! - **Tool integration**: Executable functions for model actions
+//! - **Schema validation**: JSON Schema validation for protocol messages
+//! - **Authentication**: Authorization and authentication support
+//! - **Lifecycle management**: Session initialization and termination
 //!
 //! ## Architecture
 //!
@@ -26,6 +32,12 @@
 //! - `executor`: Task execution engine for MCP operations
 //! - `jsonrpc`: JSON-RPC 2.0 implementation for the MCP protocol
 //! - `transport`: Transport layer implementations (WebSocket, HTTP)
+//! - `prompts`: Prompt template system for structured model instructions
+//! - `resources`: Structured data management for context
+//! - `tools`: Tool functionality for model actions
+//! - `schema`: Schema validation for protocol messages
+//! - `auth`: Authentication and authorization support
+//! - `lifecycle`: Session lifecycle management
 //!
 //! ## Usage Example
 //!
@@ -73,3 +85,21 @@ pub mod jsonrpc;
 
 /// Transport layer implementations for WebSocket and HTTP
 pub mod transport;
+
+/// Prompt template system for structured model instructions
+pub mod prompts;
+
+/// Resource system for handling structured data
+pub mod resources;
+
+/// Tool system for model actions
+pub mod tools;
+
+/// Schema validation for MCP protocol messages
+pub mod schema;
+
+/// Authentication and authorization for MCP protocol
+pub mod auth;
+
+/// Message lifecycle management for MCP protocol
+pub mod lifecycle;

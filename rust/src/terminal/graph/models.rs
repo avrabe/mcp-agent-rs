@@ -566,7 +566,7 @@ pub fn convert_update_to_sprotty(update: &super::GraphUpdate) -> Option<SprottyM
 }
 
 /// Convert a single node to a Sprotty node
-fn convert_node_to_sprotty(node: &GraphNode) -> SprottyNode {
+pub fn convert_node_to_sprotty(node: &GraphNode) -> SprottyNode {
     // Create a node elemen
     let mut sprotty_node = SprottyNode {
         id: node.id.clone(),
@@ -662,7 +662,7 @@ fn convert_node_to_sprotty(node: &GraphNode) -> SprottyNode {
 }
 
 /// Convert a single edge to a Sprotty edge
-fn convert_edge_to_sprotty(edge: &GraphEdge) -> SprottyEdge {
+pub fn convert_edge_to_sprotty(edge: &GraphEdge) -> SprottyEdge {
     SprottyEdge {
         id: edge.id.clone(),
         source: edge.source.clone(),

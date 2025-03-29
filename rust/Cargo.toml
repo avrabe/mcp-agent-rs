@@ -49,6 +49,9 @@ futures-util = "0.3.30"
 async-trait = "0.1.79"
 axum-server = { version = "0.6.0", features = ["tls-rustls"], optional = true }
 
+# New dependencies for MCP protocol enhancements
+jsonschema = "0.17.1"
+
 # Additional dependencies needed for examples
 rand = "0.8.5"
 serde_yaml = "0.9.31"
@@ -64,13 +67,15 @@ tungstenite = "0.21.0"
 
 # Add feature flags for OpenTelemetry
 [features]
-default = ["terminal", "terminal-web", "tracing", "transport-ws", "human-input", "llm-integration"]
+default = ["terminal", "terminal-web", "tracing", "transport-ws", "human-input", "llm-integration", "schema-validation"]
 terminal = []
 terminal-web = ["axum", "reqwest"]
 tracing = ["opentelemetry", "opentelemetry_sdk"]
 transport-ws = ["tokio-tungstenite", "axum-server"]
 human-input = []
 llm-integration = []
+# MCP protocol feature flags
+schema-validation = []
 # Additional features needed for examples
 transport-http = ["reqwest"]
 ollama = ["reqwest"]
@@ -118,8 +123,8 @@ name = "simple_workflow_runner"
 path = "examples/simple_workflow_runner.rs"
 
 [[example]]
-name = "graph_vis_example"
-path = "examples/graph_vis_example/src/main.rs"
+name = "mcp_prompts_example"
+path = "examples/mcp_prompts_example.rs"
 
 [dev-dependencies]
 criterion = { version = "0.5.1", features = ["html_reports"] }

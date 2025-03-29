@@ -2,23 +2,22 @@
 //!
 //! Provides a terminal interface via the console/stdio
 
-use std::io::Write;
-
-use log::{debug, error, info};
-use tokio::io::AsyncWriteExt;
-use tokio::io::BufReader;
+use async_trait::async_trait;
+use log::{debug, error};
+use std::fmt::Debug;
 use tokio::sync::oneshot;
 
 use crate::error::Result;
 use crate::terminal::AsyncTerminal;
 use uuid::Uuid;
 
-/// ConsoleTerminal implementation
+/// Console-based terminal implementation
 #[derive(Debug)]
 pub struct ConsoleTerminal {
     id: String,
-    stdin: BufReader<tokio::io::Stdin>,
-    stdout: tokio::io::Stdout,
+    stdin: std::io::Stdin,
+    stdout: std::io::Stdout,
+    is_running: bool,
 }
 
 impl ConsoleTerminal {
@@ -26,9 +25,24 @@ impl ConsoleTerminal {
     pub fn new(id: String) -> Self {
         Self {
             id,
-            stdin: BufReader::new(tokio::io::stdin()),
-            stdout: tokio::io::stdout(),
+            stdin: std::io::stdin(),
+            stdout: std::io::stdout(),
+            is_running: false,
         }
+    }
+
+    /// Start the console terminal
+    pub async fn start(&mut self) -> Result<()> {
+        debug!("ConsoleTerminal started");
+        self.is_running = true;
+        Ok(())
+    }
+
+    /// Stop the console terminal
+    pub async fn stop(&mut self) -> Result<()> {
+        debug!("ConsoleTerminal marked as stopped");
+        self.is_running = false;
+        Ok(())
     }
 }
 
@@ -38,89 +52,109 @@ impl Default for ConsoleTerminal {
     }
 }
 
-#[async_trait::async_trait]
+#[async_trait]
 impl AsyncTerminal for ConsoleTerminal {
+    /// Return the terminal's unique identifier
     async fn id(&self) -> Result<String> {
         Ok(self.id.clone())
     }
 
+    /// Start the console terminal
     async fn start(&mut self) -> Result<()> {
-        debug!("ConsoleTerminal started");
-        Ok(())
+        ConsoleTerminal::start(self).await
     }
 
+    /// Stop the console terminal
     async fn stop(&self) -> Result<()> {
-        debug!("ConsoleTerminal stopped");
+        // Cannot modify self directly, just return OK for now
+        debug!("Stopping console terminal (id: {})", self.id);
         Ok(())
     }
 
+    /// Display output to the terminal
     async fn display(&self, output: &str) -> Result<()> {
-        let mut stdout = tokio::io::stdout();
-        stdout.write_all(output.as_bytes()).await?;
-        stdout.write_all(b"\n").await?;
-        stdout.flush().await?;
+        debug!("Console terminal display: {}", output);
+        // Just print to stdout for now
+        println!("{}", output);
         Ok(())
     }
 
+    /// Echo input to the terminal
     async fn echo_input(&self, input: &str) -> Result<()> {
         debug!("Echo input: {}", input);
         Ok(())
     }
 
+    /// Execute a command on the terminal
     async fn execute_command(&self, command: &str, tx: oneshot::Sender<String>) -> Result<()> {
-        info!("Executing command: {}", command);
-
-        // Send a simple response
-        let response = format!("Command executed: {}", command);
-        if tx.send(response).is_err() {
-            error!("Failed to send command response");
+        debug!("Execute command: {}", command);
+        // Just echo the command back
+        if tx.send(format!("Executed: {}", command)).is_err() {
+            error!("Failed to send response");
         }
-
         Ok(())
+    }
+
+    /// Console terminals don't have network addresses
+    async fn terminal_address(&self) -> Option<String> {
+        None
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::sync::oneshot;
+
+    #[test]
+    fn test_console_terminal_new() {
+        let terminal = ConsoleTerminal::new("console".to_string());
+        assert_eq!(terminal.id, "console");
+    }
 
     #[tokio::test]
     async fn test_console_terminal_id() {
-        let terminal_id = Uuid::new_v4().to_string();
-        let terminal = ConsoleTerminal::new(terminal_id.clone());
+        let terminal = ConsoleTerminal::new("console".to_string());
         let id = terminal.id().await.unwrap();
-        assert_eq!(id, terminal_id);
+        assert_eq!(id, "console");
     }
 
     #[tokio::test]
     async fn test_console_terminal_start_stop() {
-        let mut terminal = ConsoleTerminal::new(Uuid::new_v4().to_string());
-        assert!(terminal.start().await.is_ok());
-        assert!(terminal.stop().await.is_ok());
+        let mut terminal = ConsoleTerminal::new("console".to_string());
+
+        // Start the terminal
+        let result = terminal.start().await;
+        assert!(result.is_ok());
+        assert!(terminal.is_running);
+
+        // Stop the terminal
+        let result = terminal.stop().await;
+        assert!(result.is_ok());
     }
 
     #[tokio::test]
     async fn test_console_terminal_display() {
-        let terminal = ConsoleTerminal::new(Uuid::new_v4().to_string());
+        let terminal = ConsoleTerminal::new("console".to_string());
 
-        // Redirect stdout to a buffer for testing
-        // Note: This is not a perfect test as we can't easily capture stdout in tests
-        // In a real environment, you'd use a more sophisticated testing approach
+        // Display to the terminal
         let result = terminal.display("test output\n").await;
         assert!(result.is_ok());
     }
 
     #[tokio::test]
     async fn test_console_terminal_execute_command() {
-        let terminal = ConsoleTerminal::new(Uuid::new_v4().to_string());
+        let terminal = ConsoleTerminal::new("console".to_string());
+
+        // Create a oneshot channel for the response
         let (tx, rx) = oneshot::channel();
 
-        // Execute a simple echo command
+        // Execute a command
         let result = terminal.execute_command("echo 'test command'", tx).await;
         assert!(result.is_ok());
 
-        // Check the command outpu
-        let output = rx.await.unwrap();
-        assert!(output.contains("test command"));
+        // Check the response
+        let response = rx.await.unwrap();
+        assert_eq!(response, "Executed: echo 'test command'");
     }
 }

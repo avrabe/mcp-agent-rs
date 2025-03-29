@@ -372,6 +372,12 @@ impl Terminal for MockTerminal {
     fn read_secret(&mut self, _prompt: &str) -> Result<String> {
         Ok("mock_secret".to_string())
     }
+
+    fn terminal_address_sync(
+        &self,
+    ) -> Box<dyn std::future::Future<Output = Option<String>> + Send + Unpin + '_> {
+        Box::new(Box::pin(async move { None }))
+    }
 }
 
 #[cfg(test)]

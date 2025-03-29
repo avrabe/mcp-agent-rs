@@ -4,7 +4,7 @@
 
 use log::{debug, error, info, warn};
 use std::sync::Arc;
-use tokio::sync::{oneshot, Mutex, Mutex as TokioMutex};
+use tokio::sync::{oneshot, Mutex as TokioMutex};
 use uuid::Uuid;
 
 use super::config::TerminalConfig;
@@ -44,13 +44,16 @@ impl TerminalRouter {
     /// Create a new terminal router
     pub fn new(config: TerminalConfig) -> Self {
         let synchronizer = Arc::new(TokioMutex::new(TerminalSynchronizer::new()));
+        let console_terminal = TokioMutex::new(None);
+        let web_terminal = TokioMutex::new(None);
+        let graph_manager = TokioMutex::new(None);
 
         Self {
             config,
             synchronizer,
-            console_terminal: TokioMutex::new(None),
-            web_terminal: TokioMutex::new(None),
-            graph_manager: TokioMutex::new(None),
+            console_terminal,
+            web_terminal,
+            graph_manager,
             default_terminal: "console".to_string(),
         }
     }
@@ -83,18 +86,24 @@ impl TerminalRouter {
         // Initialize web terminal if enabled
         if self.config.web_terminal_enabled {
             debug!("Initializing web terminal");
-            // Use the WebTerminalConfig directly from the config
+
+            // Get the web config
             let web_config = self.config.web_terminal_config.clone();
 
-            let mut web = WebTerminal::new(
-                "web".to_string(),
-                web_config.host.to_string(),
-                web_config.port,
-                Arc::new(Mutex::new(None)),
-                Box::new(crate::workflow::signal::NullSignalHandler::new()),
-            );
-            web.set_config(web_config);
+            // Create signal handler
+            let signal_handler = Box::new(crate::workflow::signal::NullSignalHandler::new());
 
+            // Create the web terminal
+            let mut web = WebTerminal::new(
+                web_config.clone(),
+                signal_handler,
+                None, // No server address yet
+            );
+
+            // Set the ID
+            web.set_id("web".to_string());
+
+            // Start the web terminal
             web.start().await?;
 
             // Create an Arc<dyn Terminal> from the WebTerminal
@@ -125,13 +134,25 @@ impl TerminalRouter {
                 debug!("Stopping console terminal");
                 let id = console.id_sync().await?;
 
-                // Create a mutable copy for stopping
-                let console_copy = ConsoleTerminal::default();
-                console_copy.stop_sync().await?;
+                // Stop with timeout
+                match tokio::time::timeout(tokio::time::Duration::from_secs(2), console.stop_sync())
+                    .await
+                {
+                    Ok(result) => {
+                        if let Err(e) = result {
+                            warn!("Error stopping console terminal: {:?}", e);
+                        }
+                    }
+                    Err(_) => {
+                        warn!("Timed out stopping console terminal");
+                    }
+                }
 
                 // Unregister from synchronizer
                 let synchronizer = self.synchronizer.lock().await;
-                synchronizer.unregister_terminal(&id).await?;
+                if let Err(e) = synchronizer.unregister_terminal(&id).await {
+                    warn!("Error unregistering console terminal: {:?}", e);
+                }
             }
         }
 
@@ -142,14 +163,33 @@ impl TerminalRouter {
                 debug!("Stopping web terminal");
                 let id = web.id_sync().await?;
 
-                // Manually call stop on the terminal without trying to mutate the Arc
-                terminal_helpers::stop(&*web).await?;
+                // Manually call stop on the terminal with timeout
+                match tokio::time::timeout(
+                    tokio::time::Duration::from_secs(2),
+                    terminal_helpers::stop(&*web),
+                )
+                .await
+                {
+                    Ok(result) => {
+                        if let Err(e) = result {
+                            warn!("Error stopping web terminal: {:?}", e);
+                        }
+                    }
+                    Err(_) => {
+                        warn!("Timed out stopping web terminal");
+                    }
+                }
 
-                // Unregister from synchronizer
+                // Regardless of stop success, unregister from synchronizer
                 let synchronizer = self.synchronizer.lock().await;
-                synchronizer.unregister_terminal(&id).await?;
+                if let Err(e) = synchronizer.unregister_terminal(&id).await {
+                    warn!("Error unregistering web terminal: {:?}", e);
+                }
             }
         }
+
+        // Wait a short time for cleanup
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
         info!("Terminal router stopped");
         Ok(())
@@ -162,20 +202,34 @@ impl TerminalRouter {
         if enable && web_lock.is_none() {
             debug!("Enabling web terminal");
 
-            // Create and start web terminal
-            // Use the WebTerminalConfig directly from the config
+            // Get the web terminal config
             let web_config = self.config.web_terminal_config.clone();
 
-            let mut web = WebTerminal::new(
-                "web".to_string(),
-                web_config.host.to_string(),
-                web_config.port,
-                Arc::new(Mutex::new(None)),
-                Box::new(crate::workflow::signal::NullSignalHandler::new()),
-            );
-            web.set_config(web_config);
+            // Create signal handler
+            let signal_handler = Box::new(crate::workflow::signal::NullSignalHandler::new());
 
-            web.start().await?;
+            // Create and start web terminal
+            let mut web = WebTerminal::new(
+                web_config.clone(),
+                signal_handler,
+                None, // No server address yet
+            );
+
+            // Set the ID
+            web.set_id("web".to_string());
+
+            // Start with timeout
+            match tokio::time::timeout(tokio::time::Duration::from_secs(3), web.start()).await {
+                Ok(result) => {
+                    result?;
+                    debug!("Web terminal server started successfully");
+                }
+                Err(_) => {
+                    return Err(Error::TerminalError(
+                        "Timed out while starting web terminal server".to_string(),
+                    ));
+                }
+            }
 
             // Create an Arc<dyn Terminal> from the WebTerminal
             let web_arc: Arc<dyn Terminal> = Arc::new(web);
@@ -186,6 +240,7 @@ impl TerminalRouter {
             synchronizer.register_terminal(web_arc.clone()).await?;
 
             *web_lock = Some(web_arc);
+            debug!("Web terminal enabled and registered");
         } else if !enable && web_lock.is_some() {
             debug!("Disabling web terminal");
 
@@ -193,12 +248,32 @@ impl TerminalRouter {
             if let Some(web) = web_lock.take() {
                 let id = web.id_sync().await?;
 
-                // Manually call stop on the terminal without trying to mutate the Arc
-                terminal_helpers::stop(&*web).await?;
+                // Manually call stop on the terminal with timeout
+                match tokio::time::timeout(
+                    tokio::time::Duration::from_secs(3),
+                    terminal_helpers::stop(&*web),
+                )
+                .await
+                {
+                    Ok(result) => match result {
+                        Ok(_) => debug!("Web terminal stopped successfully"),
+                        Err(e) => warn!("Error stopping web terminal: {:?}", e),
+                    },
+                    Err(_) => {
+                        warn!("Timed out while stopping web terminal");
+                        // Continue with unregistering the terminal anyway
+                    }
+                }
+
+                // Wait a short time for the terminal to fully stop
+                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
                 // Unregister from synchronizer
                 let synchronizer = self.synchronizer.lock().await;
-                synchronizer.unregister_terminal(&id).await?;
+                match synchronizer.unregister_terminal(&id).await {
+                    Ok(_) => debug!("Web terminal unregistered from synchronizer"),
+                    Err(e) => warn!("Error unregistering web terminal: {:?}", e),
+                }
             }
         }
 
@@ -250,13 +325,12 @@ impl TerminalRouter {
         }
     }
 
-    /// Get the web terminal address if enabled
+    /// Get the address of the web terminal if it's enabled
     pub async fn web_terminal_address(&self) -> Option<String> {
-        if self.is_terminal_enabled("web").await {
-            Some(format!(
-                "{}:{}",
-                self.config.web_terminal_config.host, self.config.web_terminal_config.port
-            ))
+        let web_terminal = self.web_terminal.lock().await;
+        if let Some(web_term) = web_terminal.as_ref() {
+            // Use the terminal_address_sync method to get the address
+            web_term.terminal_address_sync().await
         } else {
             None
         }
@@ -563,6 +637,47 @@ impl TerminalRouter {
         } else {
             Ok(None)
         }
+    }
+
+    /// Enable the web terminal system
+    pub async fn enable_web_terminal(&mut self) -> Result<()> {
+        info!("Enabling web terminal");
+
+        // Get the web config
+        let web_config = self.config.web_terminal_config.clone();
+
+        // Create a new web terminal and start it first
+        let mut web = WebTerminal::new(
+            web_config,
+            Box::new(crate::workflow::signal::NullSignalHandler::new()),
+            None, // No server address yet
+        );
+
+        // Set the ID
+        web.set_id("web".to_string());
+
+        // Start the web terminal before storing it
+        if let Err(e) = web.start().await {
+            return Err(Error::from(format!("Failed to start web terminal: {}", e)));
+        }
+
+        // Create an Arc wrapper for the web terminal
+        let web_arc = Arc::new(web);
+
+        // Store the web terminal
+        let mut web_term_lock = self.web_terminal.lock().await;
+        *web_term_lock = Some(web_arc);
+
+        info!("Web terminal enabled");
+
+        // Report the web terminal address if available
+        if let Some(addr) = self.web_terminal_address().await {
+            info!("Web terminal available at: {}", addr);
+        } else {
+            warn!("Web terminal address not available");
+        }
+
+        Ok(())
     }
 }
 

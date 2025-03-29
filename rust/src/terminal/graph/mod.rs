@@ -41,6 +41,7 @@
 //! ```
 
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
@@ -203,6 +204,21 @@ pub enum GraphUpdateType {
     EdgeRemoved,
 }
 
+impl std::fmt::Display for GraphUpdateType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let str_value = match self {
+            GraphUpdateType::FullUpdate => "full",
+            GraphUpdateType::NodeAdded => "nodeAdded",
+            GraphUpdateType::NodeUpdated => "nodeUpdated",
+            GraphUpdateType::NodeRemoved => "nodeRemoved",
+            GraphUpdateType::EdgeAdded => "edgeAdded",
+            GraphUpdateType::EdgeUpdated => "edgeUpdated",
+            GraphUpdateType::EdgeRemoved => "edgeRemoved",
+        };
+        write!(f, "{}", str_value)
+    }
+}
+
 impl GraphManager {
     /// Create a new graph manager
     pub fn new() -> Self {
@@ -343,6 +359,91 @@ impl GraphManager {
     /// Notify subscribers of a graph update directly
     pub async fn notify_update(&self, update: GraphUpdate) -> Result<()> {
         let channels = self.update_channels.read().await;
+
+        // Create a properly formatted Sprotty-compatible update
+        let sprotty_update = match &update.update_type {
+            GraphUpdateType::FullUpdate => {
+                if let Some(graph) = &update.graph {
+                    // Convert the entire graph to a Sprotty-compatible format
+                    let sprotty_model = models::convert_to_sprotty_model(graph);
+
+                    // Create the update message
+                    json!({
+                        "type": "GRAPH_UPDATE",
+                        "updateType": "full",
+                        "graphId": update.graph_id,
+                        "model": sprotty_model
+                    })
+                } else {
+                    json!({
+                        "type": "GRAPH_UPDATE",
+                        "updateType": "full",
+                        "graphId": update.graph_id,
+                        "error": "No graph data provided"
+                    })
+                }
+            }
+            GraphUpdateType::NodeAdded | GraphUpdateType::NodeUpdated => {
+                if let Some(node) = &update.node {
+                    // Convert the node to a Sprotty-compatible node
+                    let sprotty_node = models::convert_node_to_sprotty(node);
+                    json!({
+                        "type": "GRAPH_UPDATE",
+                        "updateType": "nodeUpdate",
+                        "graphId": update.graph_id,
+                        "node": sprotty_node
+                    })
+                } else {
+                    json!({
+                        "type": "GRAPH_UPDATE",
+                        "updateType": "nodeUpdate",
+                        "graphId": update.graph_id,
+                        "error": "No node data provided"
+                    })
+                }
+            }
+            GraphUpdateType::EdgeAdded | GraphUpdateType::EdgeUpdated => {
+                if let Some(edge) = &update.edge {
+                    // Convert the edge to a Sprotty-compatible edge
+                    let sprotty_edge = models::convert_edge_to_sprotty(edge);
+                    json!({
+                        "type": "GRAPH_UPDATE",
+                        "updateType": "edgeUpdate",
+                        "graphId": update.graph_id,
+                        "edge": sprotty_edge
+                    })
+                } else {
+                    json!({
+                        "type": "GRAPH_UPDATE",
+                        "updateType": "edgeUpdate",
+                        "graphId": update.graph_id,
+                        "error": "No edge data provided"
+                    })
+                }
+            }
+            _ => {
+                // For other update types, send a simple notification
+                json!({
+                    "type": "GRAPH_UPDATE",
+                    "updateType": update.update_type.to_string(),
+                    "graphId": update.graph_id
+                })
+            }
+        };
+
+        // Convert to a JSON string
+        let update_json = serde_json::to_string(&sprotty_update).unwrap_or_else(|_| {
+            "{\"type\":\"error\",\"message\":\"Failed to serialize update\"}".to_string()
+        });
+
+        // Also send the JSON string representation for web clients
+        if let Some(web_update_fn) =
+            crate::terminal::terminal_helpers::get_web_update_function().await
+        {
+            if let Err(e) = web_update_fn("graph_update", &update_json) {
+                error!("Failed to send web graph update: {}", e);
+            }
+        }
 
         for channel in channels.iter() {
             // Attempt to send the update, ignoring errors from closed channels

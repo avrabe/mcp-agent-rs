@@ -85,6 +85,66 @@ pub enum McpError {
     /// Deserialization error
     #[error("Deserialization error: {0}")]
     Deserialization(String),
+
+    /// Not found error
+    #[error("Not found: {0}")]
+    NotFound(String),
+
+    /// Validation error
+    #[error("Validation error: {0}")]
+    ValidationError(String),
+
+    /// IO error
+    #[error("IO error: {0}")]
+    IoError(String),
+
+    /// Serialization error
+    #[error("Serialization error: {0}")]
+    SerializationError(String),
+
+    /// Deserialization error
+    #[error("Deserialization error: {0}")]
+    DeserializationError(String),
+
+    /// Method not found error for JSON-RPC
+    #[error("Method not found: {0}")]
+    MethodNotFound(String),
+
+    /// Invalid parameters error for JSON-RPC
+    #[error("Invalid parameters: {0}")]
+    InvalidParams(String),
+
+    /// Parse error for JSON-RPC
+    #[error("Parse error: {0}")]
+    ParseError(String),
+
+    /// RPC error with code and message
+    #[error("RPC error (code: {0}): {1}")]
+    RpcError(i32, String),
+
+    /// Invalid response error
+    #[error("Invalid response: {0}")]
+    InvalidResponse(String),
+
+    /// Authentication error
+    #[error("Authentication error: {0}")]
+    AuthenticationError(String),
+
+    /// Authorization error
+    #[error("Authorization error: {0}")]
+    AuthorizationError(String),
+
+    /// Rate limit exceeded error
+    #[error("Rate limit exceeded: {0}")]
+    RateLimitExceeded(String),
+
+    /// Server error
+    #[error("Server error: {0}")]
+    ServerError(String),
+
+    /// Transport error
+    #[error("Transport error: {0}")]
+    TransportError(String),
 }
 
 // Implement FromStr for McpError to replace the custom from_str method
@@ -123,5 +183,17 @@ impl From<io::Error> for McpError {
 impl From<std::str::Utf8Error> for McpError {
     fn from(err: std::str::Utf8Error) -> Self {
         McpError::Utf8(err.to_string())
+    }
+}
+
+impl From<reqwest::Error> for McpError {
+    fn from(err: reqwest::Error) -> Self {
+        if err.is_timeout() {
+            McpError::Timeout
+        } else if err.is_connect() {
+            McpError::ConnectionFailed(err.to_string())
+        } else {
+            McpError::TransportError(err.to_string())
+        }
     }
 }

@@ -75,7 +75,7 @@ impl TerminalRouter {
 
             // Register terminal with synchronizer
             let synchronizer = self.synchronizer.lock().await;
-            let term_id = console_arc.id_sync().await?;
+            let _term_id = console_arc.id_sync().await?;
             synchronizer.register_terminal(console_arc.clone()).await?;
             drop(synchronizer);
 
@@ -111,7 +111,7 @@ impl TerminalRouter {
 
             // Register terminal with synchronizer
             let synchronizer = self.synchronizer.lock().await;
-            let term_id = web_arc.id_sync().await?;
+            let _term_id = web_arc.id_sync().await?;
             synchronizer.register_terminal(web_arc.clone()).await?;
             drop(synchronizer);
 
@@ -236,7 +236,7 @@ impl TerminalRouter {
 
             // Register with synchronizer
             let synchronizer = self.synchronizer.lock().await;
-            let term_id = web_arc.id_sync().await?;
+            let _term_id = web_arc.id_sync().await?;
             synchronizer.register_terminal(web_arc.clone()).await?;
 
             *web_lock = Some(web_arc);
@@ -286,7 +286,7 @@ impl TerminalRouter {
 
         // Write to console terminal if it exists
         {
-            let console_lock = self.console_terminal.lock().await;
+            let _console_lock = self.console_terminal.lock().await;
             if let Some(console) = &self.console_terminal.lock().await.as_ref() {
                 if let Err(e) = console.display_sync(data).await {
                     error!("Error writing to console terminal: {}", e);
@@ -296,7 +296,7 @@ impl TerminalRouter {
 
         // Write to web terminal if it exists
         {
-            let web_lock = self.web_terminal.lock().await;
+            let _web_lock = self.web_terminal.lock().await;
             if let Some(web) = &self.web_terminal.lock().await.as_ref() {
                 if let Err(e) = web.display_sync(data).await {
                     error!("Error writing to web terminal: {}", e);
@@ -678,6 +678,15 @@ impl TerminalRouter {
         }
 
         Ok(())
+    }
+
+    /// Checks if a graph manager is available
+    pub async fn has_graph_manager(&self) -> bool {
+        if let Some(_graph_manager) = &*self.graph_manager.lock().await {
+            true
+        } else {
+            false
+        }
     }
 }
 

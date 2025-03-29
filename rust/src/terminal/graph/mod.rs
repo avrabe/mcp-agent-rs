@@ -240,7 +240,7 @@ impl GraphManager {
         graphs.insert(graph.id.clone(), graph.clone());
 
         // Notify subscribers of the new graph
-        self.notify_update(GraphUpdate {
+        let _ = self.notify_update(GraphUpdate {
             graph_id: graph.id.clone(),
             update_type: GraphUpdateType::FullUpdate,
             graph: Some(graph),
@@ -274,7 +274,7 @@ impl GraphManager {
             graph.nodes.push(node.clone());
 
             // Notify subscribers of the node addition
-            self.notify_update(GraphUpdate {
+            let _ = self.notify_update(GraphUpdate {
                 graph_id: graph_id.to_string(),
                 update_type: GraphUpdateType::NodeAdded,
                 graph: None,
@@ -301,7 +301,7 @@ impl GraphManager {
             graph.edges.push(edge.clone());
 
             // Notify subscribers of the edge addition
-            self.notify_update(GraphUpdate {
+            let _ = self.notify_update(GraphUpdate {
                 graph_id: graph_id.to_string(),
                 update_type: GraphUpdateType::EdgeAdded,
                 graph: None,
@@ -332,7 +332,7 @@ impl GraphManager {
                     graph.nodes[idx] = node.clone();
 
                     // Notify subscribers of the node update
-                    self.notify_update(GraphUpdate {
+                    let _ = self.notify_update(GraphUpdate {
                         graph_id: graph_id.to_string(),
                         update_type: GraphUpdateType::NodeUpdated,
                         graph: None,

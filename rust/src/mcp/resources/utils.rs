@@ -7,12 +7,14 @@ use std::path::Path;
 use crate::mcp::resources::error::ResourceError;
 
 /// Determines the MIME type of a file based on its extension
+#[cfg(test)]
 pub fn guess_mime_type(path: impl AsRef<Path>) -> Option<String> {
     let guess = from_path(path.as_ref());
     guess.first().map(|m| m.to_string())
 }
 
 /// Validates that a URI is properly formatted
+#[cfg(test)]
 pub fn validate_uri(uri: &str) -> Result<(), ResourceError> {
     lazy_static! {
         static ref URI_REGEX: Regex =
@@ -27,6 +29,7 @@ pub fn validate_uri(uri: &str) -> Result<(), ResourceError> {
 }
 
 /// Validates that a file path does not attempt path traversal
+#[cfg(test)]
 pub fn validate_path_safety(
     base_dir: impl AsRef<Path>,
     path: impl AsRef<Path>,
@@ -63,6 +66,7 @@ pub fn validate_path_safety(
 }
 
 /// Splits a URI into scheme and path
+#[cfg(test)]
 pub fn split_uri(uri: &str) -> Result<(String, String), ResourceError> {
     lazy_static! {
         static ref SCHEME_REGEX: Regex = Regex::new(r"^([a-zA-Z0-9-]+:)(.*)$").unwrap();
@@ -78,11 +82,13 @@ pub fn split_uri(uri: &str) -> Result<(String, String), ResourceError> {
 }
 
 /// Encodes a binary payload as base64
+#[cfg(test)]
 pub fn encode_binary(data: &[u8]) -> String {
     base64::engine::general_purpose::STANDARD.encode(data)
 }
 
 /// Decodes a base64 string into binary
+#[cfg(test)]
 pub fn decode_binary(data: &str) -> Result<Vec<u8>, ResourceError> {
     base64::engine::general_purpose::STANDARD
         .decode(data)
@@ -90,6 +96,7 @@ pub fn decode_binary(data: &str) -> Result<Vec<u8>, ResourceError> {
 }
 
 /// Checks if a MIME type represents text content
+#[cfg(test)]
 pub fn is_text_mime_type(mime_type: &str) -> bool {
     mime_type.starts_with("text/")
         || mime_type == "application/json"

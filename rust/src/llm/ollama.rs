@@ -1,24 +1,30 @@
 #![cfg(feature = "ollama")]
 
-use crate::telemetry::add_metric;
-use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-use reqwest::{Client, StatusCode};
+use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 use std::collections::HashMap;
-use tracing::{debug, error, info, instrument};
+use std::sync::Arc;
+use tokio::sync::Mutex;
+use tokio::time::Duration;
+use tracing::{debug, error, instrument};
 
 use super::types::{Completion, CompletionRequest, LlmClient, LlmConfig, Message, MessageRole};
+use crate::utils::error::{McpError, McpResult};
 
 /// Client for the Ollama API
 #[derive(Debug, Clone)]
 pub struct OllamaClient {
-    /// Configuration for the client
-    config: LlmConfig,
-
-    /// HTTP client for making requests
+    /// Base URL for the Ollama API
+    base_url: String,
+    /// HTTP client
     client: Client,
+    /// Model to use
+    model: String,
+    /// System prompt
+    system_prompt: Option<String>,
+    /// Request timeout
+    timeout: Duration,
 }
 
 /// Request to the Ollama API
@@ -61,40 +67,28 @@ struct OllamaOptions {
     num_predict: Option<u32>,
 }
 
-/// Response from the Ollama API
-#[derive(Debug, Deserialize)]
+/// Response from Ollama API
+#[derive(Debug, Clone, Deserialize)]
 struct OllamaResponse {
-    /// Model used for the response
+    /// The generated text
+    response: String,
+    /// Token context
+    context: Vec<i32>,
+    /// The model used
     model: String,
-
-    /// Generated content
-    message: OllamaResponseMessage,
-
-    /// Whether the response is complete
+    /// Created timestamp
+    created_at: String,
+    /// Whether the response is finished
+    #[allow(dead_code)]
     done: bool,
-
-    /// Total number of tokens used
-    total_duration: Option<u64>,
-
-    /// Prompt evaluation duration in nanoseconds
-    prompt_eval_duration: Option<u64>,
-
-    /// Eval duration in nanoseconds
-    eval_duration: Option<u64>,
-
-    /// Number of prompt tokens
-    prompt_eval_count: Option<u32>,
-
-    /// Number of generated tokens
-    eval_count: Option<u32>,
 }
 
-/// Message in an Ollama response
-#[derive(Debug, Deserialize)]
+/// Message in Ollama API request/response
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct OllamaResponseMessage {
     /// Role of the message sender
+    #[allow(dead_code)]
     role: String,
-
     /// Content of the message
     content: String,
 }
@@ -107,7 +101,13 @@ impl OllamaClient {
             .build()
             .expect("Failed to create HTTP client");
 
-        Self { config, client }
+        Self {
+            base_url: config.api_url,
+            client,
+            model: config.model,
+            system_prompt: config.system_prompt,
+            timeout: Duration::from_secs(120),
+        }
     }
 
     /// Create a new Ollama client with default configuration
@@ -147,7 +147,7 @@ impl LlmClient for OllamaClient {
     async fn complete(&self, request: CompletionRequest) -> Result<Completion> {
         let start = std::time::Instant::now();
 
-        let api_url = format!("{}/api/chat", self.config.api_url);
+        let api_url = format!("{}/api/chat", self.base_url);
         debug!("Sending request to Ollama API: {}", api_url);
 
         let ollama_request = OllamaRequest {
@@ -174,9 +174,9 @@ impl LlmClient for OllamaClient {
         let duration = start.elapsed();
 
         // Calculate token metrics
-        let prompt_tokens = ollama_response.prompt_eval_count;
-        let completion_tokens = ollama_response.eval_count;
-        let total_tokens = prompt_tokens.zip(completion_tokens).map(|(p, c)| p + c);
+        let prompt_tokens = ollama_response.context.len() as u32;
+        let completion_tokens = ollama_response.context.len() as u32;
+        let total_tokens = prompt_tokens + completion_tokens;
 
         // Add metrics
         add_metric(
@@ -201,7 +201,7 @@ impl LlmClient for OllamaClient {
 
         // Build completion response
         let completion = Completion {
-            content: ollama_response.message.content,
+            content: ollama_response.response,
             model: Some(ollama_response.model),
             prompt_tokens,
             completion_tokens,
@@ -209,15 +209,7 @@ impl LlmClient for OllamaClient {
             metadata: Some(HashMap::from([
                 (
                     "total_duration_ns".to_string(),
-                    json!(ollama_response.total_duration),
-                ),
-                (
-                    "prompt_eval_duration_ns".to_string(),
-                    json!(ollama_response.prompt_eval_duration),
-                ),
-                (
-                    "eval_duration_ns".to_string(),
-                    json!(ollama_response.eval_duration),
+                    json!(duration.as_nanos()),
                 ),
             ])),
         };
@@ -226,7 +218,7 @@ impl LlmClient for OllamaClient {
     }
 
     async fn is_available(&self) -> Result<bool> {
-        let api_url = format!("{}/api/tags", self.config.api_url);
+        let api_url = format!("{}/api/tags", self.base_url);
         debug!("Checking Ollama availability: {}", api_url);
 
         match self.client.get(&api_url).send().await {
@@ -273,8 +265,8 @@ mod tests {
 
         assert!(!completion.content.is_empty());
         assert_eq!(completion.model, Some("mistral".to_string()));
-        assert!(completion.prompt_tokens.unwrap_or(0) > 0);
-        assert!(completion.completion_tokens.unwrap_or(0) > 0);
-        assert!(completion.total_tokens.unwrap_or(0) > 0);
+        assert!(completion.prompt_tokens > 0);
+        assert!(completion.completion_tokens > 0);
+        assert!(completion.total_tokens > 0);
     }
 }

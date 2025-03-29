@@ -32,8 +32,67 @@
 //! let readme = manager.get_resource("readme");
 //! ```
 
-// TODO: Implement resources module based on MCP specification
-// This is a placeholder file for now
+mod error;
+mod handler;
+mod models;
+mod provider;
+mod templates;
+mod utils;
+
+// Re-export the public API
+pub use error::ResourceError;
+pub use handler::{ResourcesCapabilities, ResourcesHandler};
+pub use models::{BinaryContent, Resource, ResourceContents, TextContent};
+pub use provider::{FileSystemProvider, ResourceProvider};
+pub use templates::{ResourceTemplate, TemplateParameter};
+
+use std::sync::Arc;
+
+/// Resource manager for controlling access to resource providers
+#[derive(Debug)]
+pub struct ResourceManager {
+    providers: Vec<Arc<dyn ResourceProvider>>,
+    capabilities: ResourcesCapabilities,
+}
+
+impl ResourceManager {
+    /// Creates a new resource manager with default settings
+    pub fn new() -> Self {
+        Self {
+            providers: Vec::new(),
+            capabilities: ResourcesCapabilities {
+                subscribe: true,
+                list_changed: true,
+            },
+        }
+    }
+
+    /// Registers a resource provider with the manager
+    pub fn register_provider<P: ResourceProvider + 'static>(&mut self, provider: P) {
+        self.providers.push(Arc::new(provider));
+    }
+
+    /// Returns all registered resource providers
+    pub fn providers(&self) -> &[Arc<dyn ResourceProvider>] {
+        &self.providers
+    }
+
+    /// Returns the capabilities for the resources system
+    pub fn capabilities(&self) -> &ResourcesCapabilities {
+        &self.capabilities
+    }
+
+    /// Sets the capabilities for the resources system
+    pub fn set_capabilities(&mut self, capabilities: ResourcesCapabilities) {
+        self.capabilities = capabilities;
+    }
+}
+
+impl Default for ResourceManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 /// Initializes the resources system
 pub fn initialize() -> std::result::Result<(), Box<dyn std::error::Error>> {

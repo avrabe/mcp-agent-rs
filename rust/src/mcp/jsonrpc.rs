@@ -43,6 +43,7 @@
 //! }
 //! ```
 
+use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -55,6 +56,24 @@ use crate::mcp::types::{
 };
 use crate::telemetry;
 use crate::utils::error::{McpError, McpResult};
+
+/// Trait for handling JSON-RPC method calls
+///
+/// Implementations of this trait can process JSON-RPC requests and return responses.
+/// This is useful for creating modular handlers for different MCP features.
+#[async_trait]
+pub trait JsonRpcMethod: Send + Sync {
+    /// Handle a JSON-RPC request
+    ///
+    /// # Parameters
+    ///
+    /// * `request` - The JSON-RPC request to handle
+    ///
+    /// # Returns
+    ///
+    /// A result containing a JsonRpcResponse or a JsonRpcError
+    async fn handle(&self, request: JsonRpcRequest) -> Result<JsonRpcResponse, JsonRpcError>;
+}
 
 /// Handler for JSON-RPC method calls
 ///

@@ -314,6 +314,9 @@ pub struct JsonRpcRequest {
     pub params: Option<serde_json::Value>,
     /// Unique identifier for the reques
     pub id: serde_json::Value,
+    /// Client identifier (not part of JSON-RPC spec, used for internal routing)
+    #[serde(skip_serializing, skip_deserializing)]
+    pub client_id: Option<String>,
 }
 
 impl JsonRpcRequest {
@@ -324,7 +327,14 @@ impl JsonRpcRequest {
             method: method.to_string(),
             params,
             id,
+            client_id: None,
         }
+    }
+
+    /// Set the client ID for the request
+    pub fn with_client_id(mut self, client_id: impl Into<String>) -> Self {
+        self.client_id = Some(client_id.into());
+        self
     }
 
     /// Serialize the request to JSON bytes

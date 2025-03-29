@@ -51,6 +51,10 @@ axum-server = { version = "0.6.0", features = ["tls-rustls"], optional = true }
 
 # New dependencies for MCP protocol enhancements
 jsonschema = "0.17.1"
+mime_guess = "2.0.4"
+regex = "1.10.3"
+lazy_static = "1.4.0"
+base64 = "0.21.7"
 
 # Additional dependencies needed for examples
 rand = "0.8.5"
@@ -60,14 +64,13 @@ rustls = { version = "0.22.1", optional = true }
 # Terminal system dependencies
 crossterm_cursor = "0.4.0"
 crossterm_winapi = "0.7.0"
-base64 = "0.21.7"
 
 # LLM integration dependencies
 tungstenite = "0.21.0"
 
 # Add feature flags for OpenTelemetry
 [features]
-default = ["terminal", "terminal-web", "tracing", "transport-ws", "human-input", "llm-integration", "schema-validation"]
+default = ["terminal", "terminal-web", "tracing", "transport-ws", "human-input", "llm-integration", "schema-validation", "resources"]
 terminal = []
 terminal-web = ["axum", "reqwest"]
 tracing = ["opentelemetry", "opentelemetry_sdk"]
@@ -76,6 +79,7 @@ human-input = []
 llm-integration = []
 # MCP protocol feature flags
 schema-validation = []
+resources = []
 # Additional features needed for examples
 transport-http = ["reqwest"]
 ollama = ["reqwest"]
@@ -125,6 +129,10 @@ path = "examples/simple_workflow_runner.rs"
 [[example]]
 name = "mcp_prompts_example"
 path = "examples/mcp_prompts_example.rs"
+
+[[example]]
+name = "mcp_resources_example"
+path = "examples/mcp_resources_example.rs"
 
 [dev-dependencies]
 criterion = { version = "0.5.1", features = ["html_reports"] }

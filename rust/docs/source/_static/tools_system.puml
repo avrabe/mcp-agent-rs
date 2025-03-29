@@ -1,0 +1,48 @@
+@startuml
+!theme plain
+
+package "Tools System" {
+    interface "ToolsProvider" as ToolsProviderIface
+    class "BasicToolProvider" as BasicProvider
+    class "Tool" as Tool
+    class "ToolResult" as ToolResult
+    class "ToolsHandler" as Handler
+    class "ListToolsResponse" as ListResponse
+    class "CallToolParams" as CallParams
+    
+    enum "ToolResultContent" as ToolResultContent {
+        Text
+        Image
+        Audio
+        Resource
+    }
+}
+
+ToolsProviderIface <|.. BasicProvider
+Handler --> ToolsProviderIface : uses
+BasicProvider o-- Tool : contains
+ToolResult o-- ToolResultContent : contains
+Handler -- ListResponse : returns
+Handler -- CallParams : processes
+
+note right of BasicProvider
+  Implements the ToolsProvider interface
+  with registration and invocation of tools
+endnote
+
+note right of ToolsProviderIface
+  Async trait for listing tools and
+  calling tools by name with JSON arguments
+endnote
+
+note top of Tool
+  Defines a tool with name, description,
+  and JSON Schema for input validation
+endnote
+
+note bottom of ToolResult
+  Represents the result of a tool execution
+  with different content types and error status
+endnote
+
+@enduml 

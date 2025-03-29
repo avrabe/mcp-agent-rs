@@ -26,7 +26,7 @@ The MCP-Agent architecture consists of the following major components:
 
 .. arch:: Agent System
    :id: ARCH-002
-   :status: partial
+   :status: implemented
    :tags: core;patterns
    :links: REQ-002;REQ-003
    
@@ -82,7 +82,7 @@ The MCP-Agent architecture consists of the following major components:
 
 .. arch:: LLM Client
    :id: ARCH-009
-   :status: partial
+   :status: implemented
    :tags: integration;ai
    :links: REQ-011
    
@@ -90,11 +90,33 @@ The MCP-Agent architecture consists of the following major components:
 
 .. arch:: Terminal System
    :id: ARCH-010
-   :status: open
+   :status: implemented
    :tags: interface;terminal
    :links: REQ-026;REQ-027;REQ-028;REQ-029;REQ-030
    
    Provides a unified terminal interface layer supporting both console and web-based terminals with synchronized I/O, configurable activation, and secure remote access.
+
+.. arch:: Tools System
+   :id: ARCH-011
+   :status: implemented
+   :tags: core;tools;extensions
+   :links: REQ-035;REQ-036
+   
+   Provides a system for defining, registering, and invoking tools that can be used by language models to perform various actions.
+
+.. uml:: _static/tools_system.puml
+   :alt: Tools System
+
+.. arch:: Resources System
+   :id: ARCH-012
+   :status: implemented
+   :tags: core;resources;data
+   :links: REQ-037;REQ-038
+   
+   Provides structured management of external data sources, templates, and content that can be accessed by language models.
+
+.. uml:: _static/resources_system.puml
+   :alt: Resources System
 
 .. arch:: Terminal System
    :id: ARCH-013
@@ -112,7 +134,7 @@ Graph Visualization System
 
 .. arch:: Graph Visualization System
    :id: ARCH-016
-   :status: open
+   :status: implemented
    :tags: ui;visualization
    :links: REQ-026;REQ-027;REQ-028;REQ-029;REQ-030;REQ-031;REQ-032;REQ-033;REQ-034
    
@@ -120,7 +142,7 @@ Graph Visualization System
 
 .. arch:: Graph Data Providers
    :id: ARCH-017
-   :status: open
+   :status: implemented
    :tags: visualization;data
    :links: REQ-026;REQ-027;REQ-028;REQ-029;ARCH-016
    
@@ -128,7 +150,7 @@ Graph Visualization System
 
 .. arch:: Graph Manager
    :id: ARCH-018
-   :status: open
+   :status: implemented
    :tags: visualization;state
    :links: REQ-031;ARCH-016;ARCH-017
    
@@ -136,7 +158,7 @@ Graph Visualization System
 
 .. arch:: Graph Visualization API
    :id: ARCH-019
-   :status: open
+   :status: implemented
    :tags: visualization;api
    :links: REQ-033;ARCH-016;ARCH-018
    
@@ -144,7 +166,7 @@ Graph Visualization System
 
 .. arch:: Sprotty Integration
    :id: ARCH-020
-   :status: open
+   :status: implemented
    :tags: visualization;frontend
    :links: REQ-034;ARCH-016;ARCH-019
    
@@ -471,6 +493,37 @@ Architecture-Requirements Traceability
    :filter: type == "arch"
    :columns: id;title;status;links
    :style: table
+
+MCP Primitives
+=============
+
+The MCP-Agent implements several core primitives defined in the Model Context Protocol specification. These primitives provide standardized interfaces for language models to interact with various capabilities of the system.
+
+Tools System
+-----------
+
+The Tools System enables language models to perform actions through a standardized interface. It consists of the following key components:
+
+1. **Tools Provider Interface**: Defines a trait for implementing tool providers that can register and execute tools.
+2. **Basic Tool Provider**: A concrete implementation of the ToolsProvider trait that handles registration and invocation of tools.
+3. **Tool Model**: Represents a tool with a name, description, and JSON Schema for validating input parameters.
+4. **Tool Results**: Provides structured output from tool execution with support for various content types including text, images, audio, and resources.
+5. **JSON-RPC Handler**: Integrates tools with the MCP protocol's JSON-RPC interface, allowing clients to discover and call tools.
+
+The Tools System allows the registration of custom tools with proper validation of input parameters through JSON Schema. It supports various return types and proper error handling during tool execution.
+
+Resources System
+--------------
+
+The Resources System provides structured access to content and data sources. Its key components include:
+
+1. **Resource Provider Interface**: Defines a trait for implementing resource providers that can manage various types of resources.
+2. **File System Provider**: A concrete implementation that manages resources stored in the file system.
+3. **Resource Model**: Represents a resource with metadata and versioned content.
+4. **Template System**: Supports parameterized resource templates that can be instantiated with specific values.
+5. **JSON-RPC Handler**: Integrates resources with the MCP protocol's JSON-RPC interface.
+
+The Resources System supports various content types (text, binary), resource versioning, and template-based content generation. It provides a unified interface for language models to access and manipulate external data sources.
 
 Conclusion
 ==========

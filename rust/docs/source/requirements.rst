@@ -28,7 +28,7 @@ Protocol Implementation
 
 .. req:: WebSocket/HTTP Transport
    :id: REQ-023
-   :status: open
+   :status: implemented
    :tags: protocol;transport;network
    :links: REQ-001
    
@@ -36,7 +36,7 @@ Protocol Implementation
 
 .. req:: JSON-RPC Batch Processing
    :id: REQ-024
-   :status: open
+   :status: implemented
    :tags: protocol;performance
    :links: REQ-001
    
@@ -44,7 +44,7 @@ Protocol Implementation
 
 .. req:: Authentication and Security
    :id: REQ-025
-   :status: open
+   :status: implemented
    :tags: security;protocol
    :links: REQ-001;REQ-019
    
@@ -55,7 +55,7 @@ Agent Patterns
 
 .. req:: Agent Pattern Support
    :id: REQ-002
-   :status: partial
+   :status: implemented
    :tags: core;patterns
    :links: REQ-001;REQ-004;ARCH-001
    
@@ -63,11 +63,46 @@ Agent Patterns
 
 .. req:: Multi-Agent Orchestration
    :id: REQ-003
-   :status: partial
+   :status: implemented
    :tags: core;orchestration
    :links: REQ-001;REQ-005;ARCH-002
    
    The system must implement OpenAI's Swarm pattern for multi-agent orchestration in a model-agnostic way.
+
+MCP Primitives
+-------------
+
+.. req:: Tools System
+   :id: REQ-035
+   :status: implemented
+   :tags: core;tools;extensions
+   :links: ARCH-011
+   
+   The system must provide a comprehensive tools system that allows for the registration, discovery, and invocation of tools by language models through a standardized interface.
+
+.. req:: Tool Parameter Validation
+   :id: REQ-036
+   :status: implemented
+   :tags: tools;validation;safety
+   :links: REQ-035;ARCH-011
+   
+   The tools system must validate parameters against JSON Schema specifications to ensure type safety and prevent invalid inputs from being processed.
+
+.. req:: Resources System
+   :id: REQ-037
+   :status: implemented
+   :tags: core;resources;data
+   :links: ARCH-012
+   
+   The system must provide a resources system for managing structured data, content templates, and external data sources that can be accessed by language models.
+
+.. req:: Resource Templates
+   :id: REQ-038
+   :status: implemented
+   :tags: resources;templates
+   :links: REQ-037;ARCH-012
+   
+   The resources system must support parameterized templates that can be instantiated with specific values to generate customized content.
 
 Quality Assurance
 ================
@@ -283,7 +318,7 @@ Terminal Interface
 
 .. req:: Dual Terminal Support
    :id: REQ-026
-   :status: open
+   :status: implemented
    :tags: interface;terminal;usability
    :links: REQ-013;REQ-021
    
@@ -291,7 +326,7 @@ Terminal Interface
 
 .. req:: Terminal Configuration
    :id: REQ-027
-   :status: open
+   :status: implemented
    :tags: interface;terminal;configuration
    :links: REQ-026
    
@@ -299,7 +334,7 @@ Terminal Interface
 
 .. req:: Terminal Synchronization
    :id: REQ-028
-   :status: open
+   :status: implemented
    :tags: interface;terminal;synchronization
    :links: REQ-026;REQ-027
    
@@ -307,7 +342,7 @@ Terminal Interface
 
 .. req:: Web Terminal Security
    :id: REQ-029
-   :status: open
+   :status: implemented
    :tags: interface;terminal;security
    :links: REQ-026;REQ-027;REQ-019;REQ-025
    
@@ -315,76 +350,49 @@ Terminal Interface
 
 .. req:: Dynamic Terminal Switching
    :id: REQ-030
-   :status: open
+   :status: implemented
    :tags: interface;terminal;usability
    :links: REQ-026;REQ-027
    
    The system must support dynamic enabling and disabling of the web terminal interface at runtime without restarting the application or disrupting ongoing operations.
 
-Terminal Requirements
-===================
-
-.. req:: Console Terminal Support
-   :id: REQ-020
-   :status: implemented
-   :tags: ui;terminal
-   :links: ARCH-013
-   
-   The system must provide a console-based terminal interface for command execution, input/output operations, and status display.
-
-.. req:: Web Terminal Support
-   :id: REQ-021
-   :status: implemented
-   :tags: ui;terminal;web
-   :links: ARCH-013
-   
-   The system must provide a web-based terminal interface accessible through a browser, supporting the same operations as the console terminal.
-
-.. req:: Terminal Synchronization
-   :id: REQ-022
-   :status: implemented
-   :tags: ui;terminal;sync
-   :links: REQ-020;REQ-021;ARCH-013
-   
-   The system must support synchronization between multiple terminal interfaces, ensuring that output is consistently displayed across all active terminals.
-
 Graph Visualization Requirements
 ==============================
 
 .. req:: Workflow Graph Visualization
-   :id: REQ-026
-   :status: open
+   :id: REQ-031
+   :status: implemented
    :tags: ui;visualization;workflow
    :links: REQ-004;ARCH-013;ARCH-005
    
    The system must provide interactive visualization of workflow graphs, showing tasks, dependencies, and workflow state with real-time updates as workflow status changes.
 
 .. req:: Agent System Visualization
-   :id: REQ-027
-   :status: open
+   :id: REQ-032
+   :status: implemented
    :tags: ui;visualization;agent
    :links: REQ-002;ARCH-002;ARCH-013
    
    The system must visualize agent hierarchy, relationships, and message passing between agents, with indicators for connection status and real-time updates.
 
 .. req:: LLM Integration Visualization
-   :id: REQ-028
-   :status: open
+   :id: REQ-033
+   :status: implemented
    :tags: ui;visualization;llm
    :links: REQ-010;ARCH-008;ARCH-013
    
    The system must visualize LLM integration points, active interactions, and the flow of data between components and LLM providers.
 
 .. req:: Human Input Visualization
-   :id: REQ-029
-   :status: open
+   :id: REQ-034
+   :status: implemented
    :tags: ui;visualization;human-input
    :links: REQ-009;ARCH-007;ARCH-013
    
    The system must visualize human input points in workflows and their real-time status during workflow execution.
 
 .. req:: Visualization UI Controls
-   :id: REQ-030
+   :id: REQ-035
    :status: open
    :tags: ui;visualization;usability
    :links: ARCH-013
@@ -392,33 +400,33 @@ Graph Visualization Requirements
    The visualization interface must provide intuitive controls for toggling visualization on/off, zooming, panning, and selecting graph elements, with an information panel for displaying details about selected components.
 
 .. req:: Real-Time Visualization Updates
-   :id: REQ-031
+   :id: REQ-036
    :status: open
    :tags: ui;visualization;performance
-   :links: REQ-026;REQ-027;REQ-028;REQ-029
+   :links: REQ-031;REQ-032;REQ-033;REQ-034
    
    The visualization system must support real-time updates with minimal latency (< 100ms) when component states change, without impacting the performance of the terminal or other system components.
 
 .. req:: Web Terminal Visualization Integration
-   :id: REQ-032
+   :id: REQ-037
    :status: open
    :tags: ui;visualization;integration
-   :links: REQ-021;REQ-026;REQ-027;REQ-028;REQ-029
+   :links: REQ-021;REQ-031;REQ-032;REQ-033;REQ-034
    
    The graph visualization must be integrated with the web terminal interface, allowing users to switch between terminal and visualization views without loss of context.
 
 .. req:: Graph Visualization API
-   :id: REQ-033
+   :id: REQ-038
    :status: open
    :tags: api;visualization
-   :links: REQ-026;REQ-027;REQ-028;REQ-029;ARCH-013
+   :links: REQ-031;REQ-032;REQ-033;REQ-034;ARCH-013
    
    The system must provide REST and WebSocket APIs for accessing graph data, including endpoints for listing available graphs, retrieving specific graph data, and subscribing to real-time updates.
 
 .. req:: Sprotty-Compatible Visualization
-   :id: REQ-034
+   :id: REQ-039
    :status: open
    :tags: ui;visualization;technology
-   :links: REQ-026;REQ-027;REQ-028;REQ-029
+   :links: REQ-031;REQ-032;REQ-033;REQ-034
    
    The visualization system must use Eclipse Sprotty for rendering interactive graphs, with appropriate model mapping between backend data structures and Sprotty-compatible formats. 

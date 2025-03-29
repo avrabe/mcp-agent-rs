@@ -1,0 +1,59 @@
+@startuml
+!theme plain
+
+package "Resources System" {
+    interface "ResourceProvider" as ProviderIface
+    class "FileSystemProvider" as FSProvider
+    class "Resource" as Resource
+    class "ResourcesHandler" as Handler
+    class "ResourcesCapabilities" as Capabilities
+    
+    class "ResourceManager" as Manager
+    
+    class "ResourceTemplate" as Template
+    class "TemplateParameter" as TemplateParam
+    
+    enum "ResourceContents" as Contents {
+        Text
+        Binary
+    }
+    
+    class "TextContent" as Text
+    class "BinaryContent" as Binary
+}
+
+ProviderIface <|.. FSProvider
+Handler --> Manager : uses
+Manager o-- ProviderIface : contains
+Resource o-- Contents : contains
+Contents <|-- Text
+Contents <|-- Binary
+Template o-- TemplateParam : contains
+Handler -- Capabilities : has
+
+note right of FSProvider
+  Implements the ResourceProvider interface
+  to manage resources stored in the file system
+endnote
+
+note right of ProviderIface
+  Interface for resource management with
+  CRUD operations and search capabilities
+endnote
+
+note top of Resource
+  Represents a resource with metadata
+  and versioned content
+endnote
+
+note top of Template
+  Defines parameterized content that can be
+  instantiated with specific parameter values
+endnote
+
+note bottom of Manager
+  Central manager that coordinates access
+  to multiple resource providers
+endnote
+
+@enduml 

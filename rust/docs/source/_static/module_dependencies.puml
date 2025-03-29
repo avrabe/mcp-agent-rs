@@ -11,6 +11,43 @@ package "src" {
         [connection.rs] as connection
         [agent.rs] as mcpagent
         [executor.rs] as mcpexecutor
+        [schema.rs] as schema
+        [lifecycle.rs] as lifecycle
+        [auth.rs] as auth
+        
+        package "tools" {
+            [models.rs] as toolmodels
+            [handler.rs] as toolhandler
+            [provider.rs] as toolprovider
+            
+            toolhandler --> toolmodels
+            toolprovider --> toolhandler
+            toolprovider --> toolmodels
+        }
+        
+        package "resources" {
+            [models.rs] as resourcemodels
+            [handler.rs] as resourcehandler
+            [provider.rs] as resourceprovider
+            [templates.rs] as resourcetemplates
+            [utils.rs] as resourceutils
+            [error.rs] as resourceerror
+            
+            resourcehandler --> resourcemodels
+            resourceprovider --> resourcemodels
+            resourceprovider --> resourceerror
+            resourcetemplates --> resourcemodels
+            resourceutils --> resourceerror
+        }
+        
+        package "prompts" {
+            [interactive.rs] as promptinteractive
+        }
+        
+        package "transport" {
+            [http.rs] as transporthttp
+            [websocket.rs] as transportws
+        }
         
         mcpprotocol --> mcptypes
         jsonrpc --> mcptypes
@@ -19,6 +56,49 @@ package "src" {
         mcpagent --> mcptypes
         mcpagent --> connection
         mcpexecutor --> mcpagent
+        
+        tools --> mcptypes
+        tools --> jsonrpc
+        
+        resources --> mcptypes
+        resources --> jsonrpc
+    }
+    
+    package "terminal" {
+        [mod.rs] as terminalmod
+        [router.rs] as terminalrouter
+        [web.rs] as web
+        [console.rs] as console
+        [sync.rs] as sync
+        [config.rs] as terminalconfig
+        
+        package "graph" {
+            [mod.rs] as graphmod
+            [api.rs] as graphapi
+            [models.rs] as graphmodels
+            [providers.rs] as graphproviders
+            [workflow.rs] as graphworkflow
+            [sprotty_adapter.rs] as sprotty
+            [events.rs] as graphevents
+            [agent.rs] as graphagent
+            
+            graphmod --> graphmodels
+            graphapi --> graphmodels
+            graphproviders --> graphmodels
+            graphproviders --> graphevents
+            graphworkflow --> graphmodels
+            sprotty --> graphmodels
+            graphagent --> graphmodels
+        }
+        
+        terminalrouter --> terminalmod
+        web --> terminalmod
+        console --> terminalmod
+        sync --> terminalmod
+        sync --> console
+        sync --> web
+        
+        graph --> terminalmod
     }
     
     package "workflow" {
@@ -62,6 +142,7 @@ package "src" {
     lib --> llm
     lib --> telemetry
     lib --> utils
+    lib --> terminal
     
     workflow --> mcp
     workflow --> telemetry
@@ -75,6 +156,10 @@ package "src" {
     
     mcp --> telemetry
     mcp --> utils
+    
+    terminal --> mcp
+    terminal --> telemetry
+    terminal --> utils
 }
 
 @enduml

@@ -9,6 +9,12 @@ package "MCP-Agent Framework" {
         [Human Input] as human
     }
     
+    package "MCP Primitives" {
+        [Tools System] as tools
+        [Resources System] as resources
+        [Prompts System] as prompts
+    }
+    
     package "Infrastructure" {
         [Telemetry] as telemetry
         [Error Handling] as error
@@ -19,12 +25,21 @@ package "MCP-Agent Framework" {
         [LLM Client] as llm
         [External APIs] as external
     }
+    
+    package "Terminal System" {
+        [Console Terminal] as console
+        [Web Terminal] as web
+        [Terminal Router] as router
+        [Graph Visualization] as graph
+    }
 }
 
 [Applications] as app
 
 app --> workflow
 app --> agent
+app --> tools
+app --> resources
 
 workflow --> agent
 workflow --> human
@@ -33,6 +48,12 @@ workflow --> llm
 agent --> mcpproto
 agent --> telemetry
 
+tools --> mcpproto
+tools --> error
+
+resources --> mcpproto
+resources --> error
+
 mcpproto --> error
 mcpproto --> telemetry
 
@@ -40,5 +61,14 @@ llm --> external
 llm --> telemetry
 
 human --> telemetry
+
+router --> console
+router --> web
+router --> graph
+
+web --> graph
+console --> telemetry
+web --> telemetry
+graph --> telemetry
 
 @enduml

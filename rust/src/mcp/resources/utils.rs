@@ -1,3 +1,10 @@
+use std::path::Path;
+use regex::Regex;
+use crate::mcp::resources::ResourceError;
+use lazy_static::lazy_static;
+use mime_guess::from_path;
+use base64::Engine;
+
 /// Determines the MIME type of a file based on its extension
 #[cfg(test)]
 pub fn guess_mime_type(path: impl AsRef<Path>) -> Option<String> {

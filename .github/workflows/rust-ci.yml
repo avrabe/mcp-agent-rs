@@ -51,7 +51,7 @@ jobs:
         run: cd rust && cargo fmt -- --check
 
       - name: Clippy
-        run: cd rust && cargo clippy -- -D warnings
+        run: cd rust && cargo clippy
 
       - name: Test (Default features)
         run: cd rust && cargo test

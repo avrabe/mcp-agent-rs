@@ -35,7 +35,11 @@ impl WorkflowState {
         }
     }
 
-    /// Record an error in the workflow state
+    /// Records an error in the workflow state
+    ///
+    /// # Panics
+    ///
+    /// Panics if the current timestamp cannot be converted to a JSON Number
     pub fn record_error(&mut self, error_type: &str, message: &str) {
         let mut error_map = HashMap::new();
         error_map.insert(

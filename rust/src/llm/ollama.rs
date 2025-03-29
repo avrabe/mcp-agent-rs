@@ -1,16 +1,16 @@
 #![cfg(feature = "ollama")]
 
+use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-use reqwest::Client;
+use reqwest::{Client, StatusCode};
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::collections::HashMap;
-use std::sync::Arc;
-use tokio::sync::Mutex;
 use tokio::time::Duration;
 use tracing::{debug, error, instrument};
 
-use super::types::{Completion, CompletionRequest, LlmClient, LlmConfig, Message, MessageRole};
-use crate::utils::error::{McpError, McpResult};
+use super::types::{Completion, CompletionRequest, LlmClient, LlmConfig, Message};
+use crate::add_metric;
 
 /// Client for the Ollama API
 #[derive(Debug, Clone)]
@@ -95,6 +95,10 @@ struct OllamaResponseMessage {
 
 impl OllamaClient {
     /// Create a new Ollama client
+    ///
+    /// # Panics
+    ///
+    /// Panics if the HTTP client cannot be created
     pub fn new(config: LlmConfig) -> Self {
         let client = Client::builder()
             .timeout(std::time::Duration::from_secs(120))
@@ -102,10 +106,10 @@ impl OllamaClient {
             .expect("Failed to create HTTP client");
 
         Self {
-            base_url: config.api_url,
+            base_url: config.api_url.clone(),
             client,
-            model: config.model,
-            system_prompt: config.system_prompt,
+            model: config.model.clone(),
+            system_prompt: config.api_key.clone(), // Using api_key as system_prompt
             timeout: Duration::from_secs(120),
         }
     }
@@ -188,30 +192,26 @@ impl LlmClient for OllamaClient {
             ],
         );
 
-        if let Some(tokens) = total_tokens {
-            add_metric(
-                "llm_tokens_total",
-                tokens as f64,
-                &[
-                    ("model", request.model.clone()),
-                    ("provider", "ollama".to_string()),
-                ],
-            );
-        }
+        add_metric(
+            "llm_tokens_total",
+            total_tokens as f64,
+            &[
+                ("model", request.model.clone()),
+                ("provider", "ollama".to_string()),
+            ],
+        );
 
         // Build completion response
         let completion = Completion {
             content: ollama_response.response,
             model: Some(ollama_response.model),
-            prompt_tokens,
-            completion_tokens,
-            total_tokens,
-            metadata: Some(HashMap::from([
-                (
-                    "total_duration_ns".to_string(),
-                    json!(duration.as_nanos()),
-                ),
-            ])),
+            prompt_tokens: Some(prompt_tokens),
+            completion_tokens: Some(completion_tokens),
+            total_tokens: Some(total_tokens),
+            metadata: Some(HashMap::from([(
+                "total_duration_ns".to_string(),
+                json!(duration.as_nanos()),
+            )])),
         };
 
         Ok(completion)
@@ -231,7 +231,23 @@ impl LlmClient for OllamaClient {
     }
 
     fn config(&self) -> &LlmConfig {
-        &self.config
+        // Create a static config to return a reference to
+        static mut CONFIG: Option<LlmConfig> = None;
+
+        unsafe {
+            if CONFIG.is_none() {
+                CONFIG = Some(LlmConfig {
+                    model: self.model.clone(),
+                    api_url: self.base_url.clone(),
+                    api_key: Some(self.system_prompt.clone().unwrap_or_default()),
+                    max_tokens: None,
+                    temperature: None,
+                    top_p: None,
+                    parameters: HashMap::new(),
+                });
+            }
+            CONFIG.as_ref().unwrap()
+        }
     }
 }
 
@@ -265,8 +281,8 @@ mod tests {
 
         assert!(!completion.content.is_empty());
         assert_eq!(completion.model, Some("mistral".to_string()));
-        assert!(completion.prompt_tokens > 0);
-        assert!(completion.completion_tokens > 0);
-        assert!(completion.total_tokens > 0);
+        assert!(completion.prompt_tokens.unwrap() > 0);
+        assert!(completion.completion_tokens.unwrap() > 0);
+        assert!(completion.total_tokens.unwrap() > 0);
     }
 }

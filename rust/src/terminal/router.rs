@@ -682,11 +682,7 @@ impl TerminalRouter {
 
     /// Checks if a graph manager is available
     pub async fn has_graph_manager(&self) -> bool {
-        if let Some(_graph_manager) = &*self.graph_manager.lock().await {
-            true
-        } else {
-            false
-        }
+        matches!(&*self.graph_manager.lock().await, Some(_graph_manager))
     }
 }
 
@@ -708,8 +704,8 @@ pub async fn initialize_terminal(config: TerminalConfig) -> Result<Arc<TerminalR
 
     // Create an Arc and set it as the global instance
     let router_arc = Arc::new(router);
-    if let Err(_) = TERMINAL_ROUTER.set(router_arc.clone()) {
-        error!("Failed to set global terminal router instance, it was already set");
+    if TERMINAL_ROUTER.set(router_arc.clone()).is_err() {
+        warn!("Terminal router already initialized");
     }
 
     // Return the router instance

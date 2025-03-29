@@ -48,7 +48,7 @@ pub use console::ConsoleTerminal;
 /// Terminal router
 pub use router::TerminalRouter;
 
-/// Terminal synchronization
+// Terminal synchronization
 // pub use sync::{SyncTerminal, TerminalHandle};
 
 /// Web terminal
@@ -255,11 +255,11 @@ pub enum TerminalType {
     Web,
 }
 
-impl ToString for TerminalType {
-    fn to_string(&self) -> String {
+impl fmt::Display for TerminalType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            TerminalType::Console => "console".to_string(),
-            TerminalType::Web => "web".to_string(),
+            TerminalType::Console => write!(f, "console"),
+            TerminalType::Web => write!(f, "web"),
         }
     }
 }

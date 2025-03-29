@@ -595,7 +595,11 @@ impl JsonRpcError {
         Self::new(-32603, message, None)
     }
 
-    /// Server error (-32000 to -32099)
+    /// Creates a new server error response
+    ///
+    /// # Panics
+    ///
+    /// Panics if the error code is not between -32099 and -32000
     pub fn server_error(code: i32, message: &str, data: Option<serde_json::Value>) -> Self {
         assert!(
             (-32099..=-32000).contains(&code),

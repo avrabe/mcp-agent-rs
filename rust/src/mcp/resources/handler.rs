@@ -104,19 +104,25 @@ impl ResourcesHandler {
         params: ResourceSubscribeParams,
     ) -> Result<(), ResourceError> {
         if !self.capabilities.subscribe {
-            return Err(ResourceError::CapabilityNotSupported("subscribe".to_string()));
+            return Err(ResourceError::CapabilityNotSupported(
+                "subscribe".to_string(),
+            ));
         }
-        
+
         // Update client subscriptions
         let mut subscriptions = self.subscriptions.write().await;
-        let client_subscriptions = subscriptions.entry(client_id.to_string()).or_insert_with(HashSet::new);
+        let client_subscriptions = subscriptions
+            .entry(client_id.to_string())
+            .or_insert_with(HashSet::new);
         client_subscriptions.insert(params.uri.clone());
-        
+
         // Update resource subscribers
         let mut subscribers = self.subscribers.write().await;
-        let resource_subscribers = subscribers.entry(params.uri.clone()).or_insert_with(HashSet::new);
+        let resource_subscribers = subscribers
+            .entry(params.uri.clone())
+            .or_insert_with(HashSet::new);
         resource_subscribers.insert(client_id.to_string());
-        
+
         Ok(())
     }
 
@@ -127,21 +133,23 @@ impl ResourcesHandler {
         params: ResourceUnsubscribeParams,
     ) -> Result<(), ResourceError> {
         if !self.capabilities.subscribe {
-            return Err(ResourceError::CapabilityNotSupported("subscribe".to_string()));
+            return Err(ResourceError::CapabilityNotSupported(
+                "subscribe".to_string(),
+            ));
         }
-        
+
         // Update client subscriptions
         let mut subscriptions = self.subscriptions.write().await;
         if let Some(client_subscriptions) = subscriptions.get_mut(client_id) {
             client_subscriptions.remove(&params.uri);
         }
-        
+
         // Update resource subscribers
         let mut subscribers = self.subscribers.write().await;
         if let Some(resource_subscribers) = subscribers.get_mut(&params.uri) {
             resource_subscribers.remove(client_id);
         }
-        
+
         Ok(())
     }
 

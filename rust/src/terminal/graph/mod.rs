@@ -330,7 +330,10 @@ impl GraphManager {
                 .iter_mut()
                 .find(|n| n.id == node.id)
                 .ok_or_else(|| {
-                    Error::TerminalError(format!("Node not found: {} in graph {}", node.id, graph_id))
+                    Error::TerminalError(format!(
+                        "Node not found: {} in graph {}",
+                        node.id, graph_id
+                    ))
                 })?;
 
             *found = node.clone();

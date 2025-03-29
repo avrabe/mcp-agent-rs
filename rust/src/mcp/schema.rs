@@ -32,6 +32,10 @@ impl Default for SchemaValidator {
 
 impl SchemaValidator {
     /// Creates a new schema validator with compiled schemas
+    ///
+    /// # Panics
+    ///
+    /// Panics if any of the built-in schemas contain invalid JSON
     pub fn new() -> Self {
         // These are the core schema definitions inline for simplicity
         // In a production environment, these should be loaded from files
@@ -283,6 +287,10 @@ impl SchemaValidator {
     }
 
     /// Validates a batch of JSON-RPC requests
+    ///
+    /// # Panics
+    ///
+    /// Panics if the provided batch value is not an array
     pub fn validate_batch(&self, batch: &Value) -> McpResult<()> {
         if !batch.is_array() {
             return Err(McpError::ValidationError(

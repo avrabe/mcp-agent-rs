@@ -50,6 +50,10 @@ pub struct AuthToken {
 
 impl AuthToken {
     /// Creates a new authentication token
+    ///
+    /// # Panics
+    ///
+    /// Panics if the system time cannot be determined
     pub fn new(token: String, token_type: AuthMethod, expires_in: Option<Duration>) -> Self {
         let expires_at = expires_in.map(|duration| {
             SystemTime::now()
@@ -77,6 +81,10 @@ impl AuthToken {
     }
 
     /// Checks if the token is expired
+    ///
+    /// # Panics
+    ///
+    /// Panics if the system time cannot be determined
     pub fn is_expired(&self) -> bool {
         if let Some(expires_at) = self.expires_at {
             let now = SystemTime::now()

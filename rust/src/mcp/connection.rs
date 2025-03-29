@@ -81,6 +81,11 @@ impl ConnectionManager {
         self.connections.len()
     }
 
+    /// Checks if there are no connections
+    pub fn is_empty(&self) -> bool {
+        self.connections.is_empty()
+    }
+
     /// Get a list of all connection IDs
     #[instrument(skip(self))]
     pub fn keys(&self) -> impl Iterator<Item = &String> {

@@ -331,7 +331,11 @@ warn!("Exit notification received for unknown session: {}", session_id);
         Ok(())
     }
 
-    /// Creates a client-side initialize request
+    /// Creates an initialize request
+    ///
+    /// # Panics
+    ///
+    /// Panics if the client_info cannot be serialized to JSON
     pub fn create_initialize_request(client_info: ClientInfo) -> JsonRpcRequest {
         let params = InitializeParams {
             client: client_info,

@@ -5,6 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::fmt;
 
 use super::{Graph, GraphEdge, GraphNode};
 
@@ -210,20 +211,20 @@ pub enum SprottyStatus {
     Skipped,
 }
 
-impl ToString for SprottyStatus {
-    fn to_string(&self) -> String {
+impl fmt::Display for SprottyStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            SprottyStatus::Idle => "idle".to_string(),
-            SprottyStatus::Waiting => "waiting".to_string(),
-            SprottyStatus::Running => "running".to_string(),
-            SprottyStatus::Completed => "completed".to_string(),
-            SprottyStatus::Failed => "failed".to_string(),
-            SprottyStatus::Active => "active".to_string(),
-            SprottyStatus::Paused => "paused".to_string(),
-            SprottyStatus::Pending => "pending".to_string(),
-            SprottyStatus::Error => "error".to_string(),
-            SprottyStatus::Cancelled => "cancelled".to_string(),
-            SprottyStatus::Skipped => "skipped".to_string(),
+            SprottyStatus::Idle => write!(f, "idle"),
+            SprottyStatus::Waiting => write!(f, "waiting"),
+            SprottyStatus::Running => write!(f, "running"),
+            SprottyStatus::Completed => write!(f, "completed"),
+            SprottyStatus::Failed => write!(f, "failed"),
+            SprottyStatus::Active => write!(f, "active"),
+            SprottyStatus::Paused => write!(f, "paused"),
+            SprottyStatus::Pending => write!(f, "pending"),
+            SprottyStatus::Error => write!(f, "error"),
+            SprottyStatus::Cancelled => write!(f, "cancelled"),
+            SprottyStatus::Skipped => write!(f, "skipped"),
         }
     }
 }

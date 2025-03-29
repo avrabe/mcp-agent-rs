@@ -145,6 +145,10 @@ pub enum McpError {
     /// Transport error
     #[error("Transport error: {0}")]
     TransportError(String),
+
+    /// Network error
+    #[error("Network error: {0}")]
+    NetworkError(String),
 }
 
 // Implement FromStr for McpError to replace the custom from_str method
@@ -186,14 +190,9 @@ impl From<std::str::Utf8Error> for McpError {
     }
 }
 
+#[cfg(feature = "transport-http")]
 impl From<reqwest::Error> for McpError {
     fn from(err: reqwest::Error) -> Self {
-        if err.is_timeout() {
-            McpError::Timeout
-        } else if err.is_connect() {
-            McpError::ConnectionFailed(err.to_string())
-        } else {
-            McpError::TransportError(err.to_string())
-        }
+        McpError::NetworkError(format!("HTTP request error: {}", err))
     }
 }

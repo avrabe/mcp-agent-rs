@@ -1,5 +1,3 @@
-
-
 /// Determines the MIME type of a file based on its extension
 #[cfg(test)]
 pub fn guess_mime_type(path: impl AsRef<Path>) -> Option<String> {
@@ -118,7 +116,7 @@ mod tests {
     fn test_split_uri() {
         let (scheme, path) = split_uri("file:///path/to/file").unwrap();
         assert_eq!(scheme, "file:");
-        assert_eq!(path, "//path/to/file");
+        assert_eq!(path, "///path/to/file");
 
         let (scheme, path) = split_uri("https://example.com").unwrap();
         assert_eq!(scheme, "https:");

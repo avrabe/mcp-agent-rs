@@ -344,7 +344,11 @@ impl AsyncioExecutor {
         is_running
     }
 
-    /// Get the number of currently running tasks
+    /// Returns the number of tasks currently running
+    ///
+    /// # Panics
+    ///
+    /// Panics if the tasks mutex is poisoned
     pub fn running_task_count(&self) -> usize {
         let tasks = self.tasks.lock().unwrap();
         let count = tasks.len();

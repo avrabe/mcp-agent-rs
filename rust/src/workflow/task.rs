@@ -103,58 +103,56 @@ impl<T: 'static + Send> WorkflowTask<T> {
         let func = self.func;
 
         // Execute with retry logic
-        loop {
-            attempt += 1;
-            debug!(
-                "Executing task (attempt {}/{}): {}",
-                attempt, max_attempts, name
-            );
+        attempt += 1;
+        debug!(
+            "Executing task (attempt {}/{}): {}",
+            attempt, max_attempts, name
+        );
 
-            // Apply timeout if specified
-            let result = if let Some(timeout_duration) = timeout_duration {
-                match tokio::time::timeout(timeout_duration, func).await {
-                    Ok(result) => result,
-                    Err(_) => {
-                        error!("Task timed out after {:?}: {}", timeout_duration, name);
-                        return Err(anyhow::anyhow!("Task timed out: {}", name));
-                    }
+        // Apply timeout if specified
+        let result = if let Some(timeout_duration) = timeout_duration {
+            match tokio::time::timeout(timeout_duration, func).await {
+                Ok(result) => result,
+                Err(_) => {
+                    error!("Task timed out after {:?}: {}", timeout_duration, name);
+                    return Err(anyhow::anyhow!("Task timed out: {}", name));
                 }
-            } else {
-                func.await
-            };
+            }
+        } else {
+            func.await
+        };
 
-            match result {
-                Ok(value) => {
-                    debug!("Task completed successfully: {}", name);
-                    return Ok(value);
-                }
-                Err(err) => {
-                    // If we've reached the max attempts or it's the last attempt, return the error
-                    if attempt >= max_attempts {
-                        error!(
-                            "Task failed after {} attempts: {}, error: {}",
-                            attempt, name, err
-                        );
-                        return Err(err);
-                    }
-
-                    // Otherwise, retry after a delay
-                    let base_delay = self.retry_config.initial_interval_ms as f64
-                        * self
-                            .retry_config
-                            .backoff_coefficient
-                            .powi(attempt as i32 - 1);
-                    let delay_ms = base_delay.min(self.retry_config.max_interval_ms as f64) as u64;
-
-                    warn!(
-                        "Task failed, retrying in {}ms: {}, error: {}",
-                        delay_ms, name, err
+        match result {
+            Ok(value) => {
+                debug!("Task completed successfully: {}", name);
+                Ok(value)
+            }
+            Err(err) => {
+                // If we've reached the max attempts or it's the last attempt, return the error
+                if attempt >= max_attempts {
+                    error!(
+                        "Task failed after {} attempts: {}, error: {}",
+                        attempt, name, err
                     );
-
-                    tokio::time::sleep(Duration::from_millis(delay_ms)).await;
-                    // Can't retry with the same future since it's consumed
-                    return Err(anyhow::anyhow!("Task {} failed: {}", name, err));
+                    return Err(err);
                 }
+
+                // Otherwise, retry after a delay
+                let base_delay = self.retry_config.initial_interval_ms as f64
+                    * self
+                        .retry_config
+                        .backoff_coefficient
+                        .powi(attempt as i32 - 1);
+                let delay_ms = base_delay.min(self.retry_config.max_interval_ms as f64) as u64;
+
+                warn!(
+                    "Task failed, retrying in {}ms: {}, error: {}",
+                    delay_ms, name, err
+                );
+
+                tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+                // Can't retry with the same future since it's consumed
+                Err(anyhow::anyhow!("Task {} failed: {}", name, err))
             }
         }
     }

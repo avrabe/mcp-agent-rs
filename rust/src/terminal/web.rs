@@ -9,10 +9,9 @@
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::net::SocketAddr;
-use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use async_trait::async_trait;
 use axum::{
@@ -24,9 +23,7 @@ use axum::{
 use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
-use tokio::sync::{broadcast, mpsc, oneshot, Mutex, RwLock};
-use tokio::time::timeout;
-use uuid::Uuid;
+use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
 
 use crate::error::{Error, Result};
 use crate::terminal::config::WebTerminalConfig;

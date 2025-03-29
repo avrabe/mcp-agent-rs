@@ -448,7 +448,7 @@ impl AgentGraphProvider {
         let nodes = Vec::new();
         let edges = Vec::new();
 
-        for (_i, _agent) in agents.iter().enumerate() {
+        for _agent in agents.iter() {
             // ... existing code ...
         }
 
@@ -625,7 +625,11 @@ impl LlmIntegrationGraphProvider {
         Ok(graph)
     }
 
-    /// Create an event handler for this provider
+    /// Creates an event handler for LLM provider
+    ///
+    /// # Panics
+    ///
+    /// Panics if the graph manager is not initialized
     pub async fn create_event_handler(&self, provider_id: &str) -> Arc<LlmProviderEventHandler> {
         if let Some(manager) = self.graph_manager.read().await.as_ref() {
             Arc::new(LlmProviderEventHandler::new(
@@ -661,13 +665,19 @@ impl LlmIntegrationGraphProvider {
             let provider_name = format!("LLM Provider {}", i);
 
             // Get provider state if available
-            let state = self.provider_states.read().await.get(&provider_id).cloned().unwrap_or_else(|| ProviderState {
-                status: "unknown".to_string(),
-                model: "unknown".to_string(),
-                last_request: None,
-                error_count: 0,
-                success_count: 0,
-            });
+            let state = self
+                .provider_states
+                .read()
+                .await
+                .get(&provider_id)
+                .cloned()
+                .unwrap_or_else(|| ProviderState {
+                    status: "unknown".to_string(),
+                    model: "unknown".to_string(),
+                    last_request: None,
+                    error_count: 0,
+                    success_count: 0,
+                });
 
             let mut properties = HashMap::new();
             properties.insert(
@@ -866,7 +876,11 @@ impl HumanInputGraphProvider {
         Ok(graph)
     }
 
-    /// Create an event handler for this input point
+    /// Creates an event handler for human input
+    ///
+    /// # Panics
+    ///
+    /// Panics if the graph manager is not initialized
     pub async fn create_event_handler(&self, input_id: &str) -> Arc<HumanInputEventHandler> {
         if let Some(manager) = self.graph_manager.read().await.as_ref() {
             Arc::new(HumanInputEventHandler::new(

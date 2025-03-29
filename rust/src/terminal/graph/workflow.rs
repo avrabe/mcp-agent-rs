@@ -214,15 +214,11 @@ impl WorkflowGraphProvider {
 
     /// Handle a change in the workflow state
     pub async fn handle_state_change(&self, workflow_state: &WorkflowState) -> Result<()> {
-        debug!("Handling workflow state change");
-
-        // Get the workflow ID
-        let workflow_id = workflow_state.get_id();
-
-        // Create or update the graph for this workflow
-        self.update_graph_from_workflow(workflow_id, workflow_state.clone())
-            .await?;
-
+        if let Some(manager) = self.graph_manager.read().await.as_ref() {
+            let graph = self.update_graph(workflow_state).await?;
+            let graph_id = graph.id.clone();
+            manager.update_graph(&graph_id, graph).await?;
+        }
         Ok(())
     }
 
@@ -233,25 +229,28 @@ impl WorkflowGraphProvider {
         graph_id: &str,
         graph_manager: Arc<GraphManager>,
     ) -> Result<GraphUpdate> {
-        // Extract workflow ID from graph ID
-        let workflow_id = if graph_id.starts_with("workflow-") {
-            &graph_id[9..]
-        } else {
-            graph_id
+        // Setup tracking if not already done
+        if self.graph_manager.read().await.is_none() {
+            *self.graph_manager.write().await = Some(graph_manager.clone());
+        }
+
+        // Always use the current workflow state to create a new graph
+        let workflow_state_result = self.workflow_engine.state().await;
+
+        // Create empty graph as fallback
+        let graph = match workflow_state_result {
+            Ok(state) => self.update_graph(&state).await?,
+            Err(_) => Graph {
+                id: graph_id.to_string(),
+                name: "Empty Workflow".to_string(),
+                graph_type: "workflow".to_string(),
+                nodes: Vec::new(),
+                edges: Vec::new(),
+                properties: HashMap::new(),
+            },
         };
 
-        // Get the workflow with this ID
-        let workflow_state = self.workflow_engine.get_workflow(workflow_id).await?;
-
-        // Update the graph
-        let graph = self
-            .create_graph_from_workflow(
-                workflow_id.to_string(),
-                workflow_state.clone(),
-                Some(workflow_state.clone()),
-            )
-            .await?;
-
+        // Return a graph update
         Ok(GraphUpdate {
             graph_id: graph_id.to_string(),
             update_type: GraphUpdateType::FullUpdate,

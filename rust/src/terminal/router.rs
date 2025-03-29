@@ -13,7 +13,7 @@ use super::graph::GraphManager;
 use super::sync::TerminalSynchronizer;
 use super::terminal_helpers;
 use super::web::WebTerminal;
-use super::{AsyncTerminal, Terminal};
+use super::Terminal;
 use crate::error::{Error, Result};
 use crate::mcp::agent::Agent;
 use crate::workflow::engine::WorkflowEngine;

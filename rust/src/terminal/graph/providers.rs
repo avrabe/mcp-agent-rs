@@ -445,8 +445,8 @@ impl AgentGraphProvider {
 
     /// Updates the graph based on the provided agents
     pub async fn update_graph(&self, agents: &[Arc<Agent>]) -> Result<Graph> {
-        let mut nodes = Vec::new();
-        let mut edges = Vec::new();
+        let nodes = Vec::new();
+        let edges = Vec::new();
 
         for (_i, _agent) in agents.iter().enumerate() {
             // ... existing code ...

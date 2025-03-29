@@ -44,7 +44,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{mpsc, RwLock, Mutex};
+use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, error};
 
 use self::models::SprottyStatus;
@@ -61,7 +61,7 @@ pub mod sprotty_adapter;
 
 // Internal modules
 mod agent;
-mod workflow;
+pub mod workflow;
 
 // Re-export key components from submodules
 pub use api::create_graph_router;
@@ -297,7 +297,7 @@ impl GraphManager {
         let mut graphs = self.graphs.write().await;
 
         if let Some(graph) = graphs.get_mut(graph_id) {
-            graph.edges.push(edge);
+            graph.edges.push(edge.clone());
 
             // Notify subscribers of the update
             let update = GraphUpdate {
@@ -363,55 +363,92 @@ impl GraphManager {
         let sprotty_update = match &update.update_type {
             GraphUpdateType::FullUpdate => {
                 if let Some(graph) = &update.graph {
-                    let sprotty_model = convert_to_sprotty_model(graph);
-                    SprottyAction::SetModel(sprotty_model)
+                    // Convert the entire graph to a Sprotty-compatible format
+                    let sprotty_model = models::convert_to_sprotty_model(graph);
+
+                    // Create the update message
+                    json!({
+                        "type": "GRAPH_UPDATE",
+                        "updateType": "full",
+                        "graphId": update.graph_id,
+                        "model": sprotty_model
+                    })
                 } else {
-                    return Err(Error::TerminalError(
-                        "FullUpdate requires a graph".to_string(),
-                    ));
+                    json!({
+                        "type": "GRAPH_UPDATE",
+                        "updateType": "full",
+                        "graphId": update.graph_id,
+                        "error": "No graph data provided"
+                    })
                 }
             }
-            GraphUpdateType::NodeAdded => {
+            GraphUpdateType::NodeAdded | GraphUpdateType::NodeUpdated => {
                 if let Some(node) = &update.node {
-                    let sprotty_node = convert_node_to_sprotty(node);
-                    SprottyAction::AddNode(sprotty_node)
+                    // Convert the node to a Sprotty-compatible node
+                    let sprotty_node = models::convert_node_to_sprotty(node);
+                    json!({
+                        "type": "GRAPH_UPDATE",
+                        "updateType": "nodeUpdate",
+                        "graphId": update.graph_id,
+                        "node": sprotty_node
+                    })
                 } else {
-                    return Err(Error::TerminalError(
-                        "NodeAdded requires a node".to_string(),
-                    ));
+                    json!({
+                        "type": "GRAPH_UPDATE",
+                        "updateType": "nodeUpdate",
+                        "graphId": update.graph_id,
+                        "error": "No node data provided"
+                    })
                 }
             }
-            GraphUpdateType::NodeUpdated => {
-                if let Some(node) = &update.node {
-                    let sprotty_node = convert_node_to_sprotty(node);
-                    SprottyAction::UpdateNode(sprotty_node)
-                } else {
-                    return Err(Error::TerminalError(
-                        "NodeUpdated requires a node".to_string(),
-                    ));
-                }
-            }
-            GraphUpdateType::EdgeAdded => {
+            GraphUpdateType::EdgeAdded | GraphUpdateType::EdgeUpdated => {
                 if let Some(edge) = &update.edge {
-                    let sprotty_edge = convert_edge_to_sprotty(edge);
-                    SprottyAction::AddEdge(sprotty_edge)
+                    // Convert the edge to a Sprotty-compatible edge
+                    let sprotty_edge = models::convert_edge_to_sprotty(edge);
+                    json!({
+                        "type": "GRAPH_UPDATE",
+                        "updateType": "edgeUpdate",
+                        "graphId": update.graph_id,
+                        "edge": sprotty_edge
+                    })
                 } else {
-                    return Err(Error::TerminalError(
-                        "EdgeAdded requires an edge".to_string(),
-                    ));
+                    json!({
+                        "type": "GRAPH_UPDATE",
+                        "updateType": "edgeUpdate",
+                        "graphId": update.graph_id,
+                        "error": "No edge data provided"
+                    })
                 }
+            }
+            _ => {
+                // For other update types, send a simple notification
+                json!({
+                    "type": "GRAPH_UPDATE",
+                    "updateType": update.update_type.to_string(),
+                    "graphId": update.graph_id
+                })
             }
         };
 
-        if channels.is_empty() {
-            // No subscribers, just return success
-            return Ok(());
+        // Convert to a JSON string
+        let update_json = serde_json::to_string(&sprotty_update).unwrap_or_else(|_| {
+            "{\"type\":\"error\",\"message\":\"Failed to serialize update\"}".to_string()
+        });
+
+        // Also send the JSON string representation for web clients
+        if let Some(web_update_fn) =
+            crate::terminal::terminal_helpers::get_web_update_function().await
+        {
+            if let Err(e) = web_update_fn("graph_update", &update_json) {
+                error!("Failed to send web graph update: {}", e);
+            }
         }
 
-        // Send to all subscribers
         for channel in channels.iter() {
+            // Attempt to send the update, ignoring errors from closed channels
             if let Err(e) = channel.send(update.clone()).await {
-                error!("Error sending graph update: {}", e);
+                error!("Failed to send graph update: {}", e);
+                // We don't return an error here, as we want to try to send to all channels
             }
         }
 
@@ -524,7 +561,7 @@ impl Default for GraphManager {
 #[cfg(feature = "terminal-web")]
 pub async fn initialize_visualization(
     workflow_engine: Option<Arc<WorkflowEngine>>,
-    agents: Vec<Arc<Agent>>,
+    _agents: Vec<Arc<Agent>>,
 ) -> Result<Arc<GraphManager>> {
     // Create a new graph manager
     let graph_manager = Arc::new(GraphManager::new());

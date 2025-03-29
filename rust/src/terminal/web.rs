@@ -6,14 +6,13 @@
 //!
 //! Note: Full WebSocket server functionality requires the `transport-ws` feature.
 
-use futures::SinkExt;
-use futures::StreamExt;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use axum::{
@@ -25,7 +24,9 @@ use axum::{
 use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
-use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
+use tokio::sync::{broadcast, mpsc, oneshot, Mutex, RwLock};
+use tokio::time::timeout;
+use uuid::Uuid;
 
 use crate::error::{Error, Result};
 use crate::terminal::config::WebTerminalConfig;
@@ -999,7 +1000,7 @@ impl WebTerminal {
             info!("Web terminal server bound to {}", server_addr);
         }
 
-        // Start server
+        // Create and start the server
         let _server_task = tokio::spawn(async move {
             debug!("Web terminal server task started");
 

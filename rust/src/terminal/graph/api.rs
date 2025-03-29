@@ -21,6 +21,8 @@ use tracing::{debug, error, warn};
 use super::models::{convert_to_sprotty_model, convert_update_to_sprotty};
 use super::sprotty_adapter::{process_sprotty_action, SprottyAction};
 use super::{GraphManager, GraphUpdate};
+use crate::workflow::engine::WorkflowEngine;
+use crate::workflow::signal::NullSignalHandler;
 
 /// State for the graph API
 #[derive(Debug, Clone)]
@@ -164,7 +166,14 @@ async fn handle_graph_socket(socket: WebSocket, graph_manager: Arc<GraphManager>
                         // Process Sprotty action
                         debug!("Received Sprotty action: {:?}", action);
 
-                        match process_sprotty_action(action, graph_manager.clone()).await {
+                        match process_sprotty_action(
+                            &action,
+                            "default",
+                            graph_manager.clone(),
+                            Arc::new(WorkflowEngine::new(NullSignalHandler)),
+                        )
+                        .await
+                        {
                             Ok(Some(response_action)) => {
                                 if let Ok(json) = serde_json::to_string(&response_action) {
                                     if let Err(e) = sender_for_recv.send(Message::Text(json)).await

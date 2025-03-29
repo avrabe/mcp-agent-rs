@@ -5,21 +5,40 @@
 
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use tracing::{debug, error};
+use tracing::debug;
 
-use super::models::{SprottyElement, SprottyRoot};
+use super::models::{convert_to_sprotty_model, SprottyElement, SprottyRoot};
 use super::workflow::WorkflowGraphProvider;
-use crate::error::Error;
+use crate::error::Result;
+use crate::terminal::graph::GraphManager;
 use crate::workflow::engine::WorkflowEngine;
-use crate::workflow::signal::NullSignalHandler;
 
 /// Sprotty action types for frontend communication
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "kind", content = "arguments")]
 pub enum SprottyAction {
     /// Request to load a model
     #[serde(rename = "loadModel")]
     LoadModel(LoadModelRequest),
+
+    /// Request to select a node
+    #[serde(rename = "selectNode")]
+    SelectNode(String),
+
+    /// Request to select an edge
+    #[serde(rename = "selectEdge")]
+    SelectEdge(String),
+
+    /// Request to layout a model
+    #[serde(rename = "layout")]
+    Layout(LayoutRequest),
+
+    /// Request to fit model to screen
+    #[serde(rename = "fitToScreen")]
+    FitToScreen(FitToScreenRequest),
+
+    /// Request to center a model
+    #[serde(rename = "center")]
+    Center,
 
     /// Response with a loaded model
     #[serde(rename = "setModel")]
@@ -36,14 +55,6 @@ pub enum SprottyAction {
     /// Request to center a model
     #[serde(rename = "centerElements")]
     CenterElements(CenterElementsRequest),
-
-    /// Request to fit model to screen
-    #[serde(rename = "fitToScreen")]
-    FitToScreen(FitToScreenRequest),
-
-    /// Request to layout model
-    #[serde(rename = "layout")]
-    Layout(LayoutRequest),
 
     /// Action to select an element
     #[serde(rename = "selectElement")]
@@ -163,164 +174,141 @@ pub fn convert_update_to_action(update: &super::models::SprottyModelUpdate) -> S
 }
 
 /// Process a Sprotty action from the frontend
+#[allow(clippy::too_many_lines)]
 pub async fn process_sprotty_action(
-    action: SprottyAction,
-    graph_manager: Arc<super::GraphManager>,
-) -> Result<Option<SprottyAction>, Error> {
-    match &action {
+    action: &SprottyAction,
+    graph_id: &str,
+    graph_manager: Arc<GraphManager>,
+    workflow_engine: Arc<WorkflowEngine>,
+) -> Result<Option<SprottyAction>> {
+    match action {
         SprottyAction::LoadModel(request) => {
             // Load the requested model
             debug!("Loading model: {}", request.model_id);
 
-            // Extract model ID - this is the graph ID
-            let graph_id = &request.model_id;
-
-            // Check if this is a workflow graph
             if graph_id.starts_with("workflow-") {
                 // Get the workflow provider and let it handle this action
-                let workflow_provider = Arc::new(WorkflowGraphProvider::new(
-                    "default-workflow".to_string(),
-                    Arc::new(WorkflowEngine::new(NullSignalHandler)),
-                ));
+                let workflow_provider =
+                    Arc::new(WorkflowGraphProvider::new(workflow_engine.clone()));
 
-                if let Some(response) = workflow_provider
-                    .handle_sprotty_action(&action, graph_id, graph_manager.clone())
-                    .await?
-                {
-                    return Ok(Some(response));
+                // Convert Option<Error> to Result<GraphUpdate, Error>
+                let update_result = workflow_provider
+                    .handle_sprotty_action(action, graph_id, graph_manager.clone())
+                    .await;
+
+                if let Ok(update) = update_result {
+                    if let Some(graph) = update.graph {
+                        return Ok(Some(SprottyAction::SetModel(convert_to_sprotty_model(
+                            &graph,
+                        ))));
+                    }
                 }
             }
 
-            // Standard handling
+            // Try to load the graph directly from the manager
             if let Some(graph) = graph_manager.get_graph(graph_id).await {
-                // Convert the graph to a Sprotty model
-                let sprotty_model = super::models::convert_to_sprotty_model(&graph);
-
-                // Apply any specified options
-                if let Some(options) = &request.options {
-                    // Handle layout option
-                    if let Some(layout) = &options.layout {
-                        debug!("Applying layout: {}", layout);
-                        // Here we would apply the layout algorithm, but for now we just pass the model
-                    }
-
-                    // Handle fit to screen option
-                    if let Some(fit) = options.fit_to_screen {
-                        if fit {
-                            debug!("Fitting model to screen");
-                            // This will be handled by the frontend, just log
-                        }
-                    }
-                }
-
-                Ok(Some(SprottyAction::SetModel(sprotty_model)))
-            } else {
-                error!("Graph not found: {}", graph_id);
-                Ok(Some(SprottyAction::Error(ErrorResponse {
-                    message: format!("Graph not found: {}", graph_id),
-                })))
-            }
-        }
-        SprottyAction::SelectElement(request) => {
-            // Handle element selection - in a real implementation, this might update
-            // some UI state or trigger other actions
-            debug!("Selected element: {}", request.element_id);
-
-            // Extract the graph ID from the element ID
-            // Element IDs should be in the format "graph-id:element-id"
-            let parts: Vec<&str> = request.element_id.split(':').collect();
-            if parts.len() >= 2 {
-                let graph_id = parts[0];
-
-                // Check if this is a workflow graph
-                if graph_id.starts_with("workflow-") {
-                    // Get the workflow provider and let it handle this action
-                    let workflow_provider = Arc::new(WorkflowGraphProvider::new(
-                        "test-workflow".to_string(),
-                        Arc::new(WorkflowEngine::new(NullSignalHandler)),
-                    ));
-
-                    if let Some(response) = workflow_provider
-                        .handle_sprotty_action(&action, graph_id, graph_manager.clone())
-                        .await?
-                    {
-                        return Ok(Some(response));
-                    }
-                }
+                return Ok(Some(SprottyAction::SetModel(convert_to_sprotty_model(
+                    &graph,
+                ))));
             }
 
-            Ok(None)
-        }
-        SprottyAction::CenterElements(request) => {
-            // This operation requires frontend action, so we pass it through
-            debug!("Centering elements: {:?}", request.element_ids);
-
-            // Check if we can determine the graph ID from any element ID
-            if let Some(element_id) = request.element_ids.first() {
-                let parts: Vec<&str> = element_id.split(':').collect();
-                if parts.len() >= 2 {
-                    let graph_id = parts[0];
-
-                    // Check if this is a workflow graph
-                    if graph_id.starts_with("workflow-") {
-                        // Get the workflow provider and let it handle this action
-                        let workflow_provider = Arc::new(WorkflowGraphProvider::new(
-                            "event-workflow".to_string(),
-                            Arc::new(WorkflowEngine::new(NullSignalHandler)),
-                        ));
-
-                        if let Some(response) = workflow_provider
-                            .handle_sprotty_action(&action, graph_id, graph_manager.clone())
-                            .await?
-                        {
-                            return Ok(Some(response));
-                        }
-                    }
-                }
-            }
-
-            Ok(Some(action))
-        }
-        SprottyAction::FitToScreen(_) => {
-            // Pass this action back to the frontend
-            debug!("Fitting to screen");
-            Ok(Some(action))
+            Ok(Some(action.clone()))
         }
         SprottyAction::Layout(request) => {
             // This operation needs both backend and frontend coordination
             debug!("Applying layout: {:?}", request.algorithm);
 
-            // Check if we're given a model ID
             if let Some(metadata) = &request.algorithm {
                 // Check if the metadata contains a graph ID
-                if metadata.contains(":") {
-                    let parts: Vec<&str> = metadata.split(':').collect();
-                    let graph_id = parts[0];
+                debug!("Layout with algorithm: {}", metadata);
 
-                    // Check if this is a workflow graph
-                    if graph_id.starts_with("workflow-") {
-                        // Get the workflow provider and let it handle this action
-                        let workflow_provider = Arc::new(WorkflowGraphProvider::new(
-                            "layout-workflow".to_string(),
-                            Arc::new(WorkflowEngine::new(NullSignalHandler)),
-                        ));
+                if graph_id.starts_with("workflow-") {
+                    // Get the workflow provider and let it handle this action
+                    let workflow_provider =
+                        Arc::new(WorkflowGraphProvider::new(workflow_engine.clone()));
 
-                        if let Some(response) = workflow_provider
-                            .handle_sprotty_action(&action, graph_id, graph_manager.clone())
-                            .await?
-                        {
-                            return Ok(Some(response));
+                    let update_result = workflow_provider
+                        .handle_sprotty_action(action, graph_id, graph_manager.clone())
+                        .await;
+
+                    if let Ok(update) = update_result {
+                        if let Some(graph) = update.graph {
+                            return Ok(Some(SprottyAction::SetModel(convert_to_sprotty_model(
+                                &graph,
+                            ))));
                         }
+                    }
+                }
+
+                // Additional layout logic can be added here
+            }
+
+            Ok(Some(action.clone()))
+        }
+        SprottyAction::FitToScreen(request) => {
+            // Pass this action back to the frontend
+            debug!("Fitting to screen");
+
+            if graph_id.starts_with("workflow-") {
+                let workflow_provider =
+                    Arc::new(WorkflowGraphProvider::new(workflow_engine.clone()));
+
+                let update_result = workflow_provider
+                    .handle_sprotty_action(action, graph_id, graph_manager.clone())
+                    .await;
+
+                if let Ok(update) = update_result {
+                    if let Some(graph) = update.graph {
+                        return Ok(Some(SprottyAction::SetModel(convert_to_sprotty_model(
+                            &graph,
+                        ))));
                     }
                 }
             }
 
-            Ok(Some(action))
+            Ok(Some(action.clone()))
         }
-        _ => {
-            // For other actions, we just ignore them for now
-            debug!("Ignoring action: {:?}", action);
-            Ok(None)
-        }
+        _ => Ok(None),
+    }
+}
+
+/// Adapter for handling Sprotty frontend actions and updating the graph
+#[derive(Debug)]
+pub struct SprottyAdapter {
+    /// The workflow engine instance
+    workflow_engine: Arc<WorkflowEngine>,
+}
+
+impl SprottyAdapter {
+    /// Creates a new SprottyAdapter instance
+    pub fn new(workflow_engine: Arc<WorkflowEngine>) -> Self {
+        Self { workflow_engine }
+    }
+
+    /// Handles Sprotty action requests and returns appropriate responses
+    pub async fn handle_action(
+        &self,
+        action: &SprottyAction,
+        graph_id: &str,
+        graph_manager: Arc<GraphManager>,
+    ) -> Result<Option<SprottyAction>> {
+        process_sprotty_action(
+            action,
+            graph_id,
+            graph_manager,
+            self.workflow_engine.clone(),
+        )
+        .await
+    }
+
+    /// Processes Sprotty actions and performs appropriate operations
+    pub async fn handle_sprotty_action(
+        &self,
+        _action: &SprottyAction,
+        _graph_id: &str,
+        _graph_manager: Arc<GraphManager>,
+    ) -> Option<SprottyAction> {
+        // This implementation has been moved to workflow.rs
+        None
     }
 }

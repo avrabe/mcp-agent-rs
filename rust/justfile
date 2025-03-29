@@ -66,7 +66,8 @@ run-simple-client:
 
 # Run workflow visualizer example
 run-workflow-vis:
-    cargo run --example workflow_visualizer
+    @echo "Running Workflow Visualizer Example with terminal-web feature..."
+    cargo run --features terminal-web --example workflow_visualizer
 
 # Run dual terminal example (requires terminal-full feature)
 run-dual-terminal:
@@ -74,7 +75,13 @@ run-dual-terminal:
 
 # Run graph visualization example
 run-graph-vis:
-    cargo run --example graph_visualization
+    @echo "Running Graph Vis Example with terminal-web feature..."
+    cargo run --features terminal-web --example graph_vis_example
+
+# Run web terminal demo
+run-web:
+    @echo "Running Web Terminal Demo..."
+    cargo run --bin mcp-agent --features terminal-web -- --web-terminal
 
 # ----------------- Test Commands -----------------
 
@@ -160,18 +167,8 @@ check-minimal: fmt check-minimal-lib
 
 # Build all examples to ensure they compile
 check-examples:
-    #!/usr/bin/env bash
-    set -e
-    echo "Checking basic examples..."
-    # Instead of trying to build the examples (which might fail due to dependencies),
-    # we'll just check them for compilation errors
-    cargo check --example simple_client
-    cargo check --example simple_workflow_runner
-    cargo check --example basic_workflow
-    cargo check --example dependency_workflow
-    cargo check --example graph_visualization
-    
-    echo "All example checks completed!"
+    @echo "Checking examples with terminal-web feature..."
+    cargo check --examples --features terminal-web
 
 # Run code coverage tests (only on working code)
 coverage-working: fix-jsonrpc-for-testing

@@ -16,6 +16,8 @@ use mcp_agent::terminal::{
 #[cfg(feature = "terminal-web")]
 use std::collections::HashMap;
 #[cfg(feature = "terminal-web")]
+use std::sync::Arc;
+#[cfg(feature = "terminal-web")]
 use std::time::Duration;
 #[cfg(feature = "terminal-web")]
 use tokio::time::sleep;
@@ -62,7 +64,14 @@ async fn main() -> Result<()> {
     println!("Open this URL in your browser to see the visualization.");
 
     // Initialize visualization and get the graph manager
-    let graph_manager = initialize_visualization(&terminal, None, vec![]).await;
+    let graph_manager = initialize_visualization(
+        &terminal,
+        None,
+        vec![],
+        Vec::<Arc<dyn std::any::Any + Send + Sync>>::new(),
+        None::<Arc<dyn std::any::Any + Send + Sync>>,
+    )
+    .await;
 
     // Create a workflow graph
     let graph = Graph {

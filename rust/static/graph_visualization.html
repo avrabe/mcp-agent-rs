@@ -55,36 +55,11 @@
         border: none;
         cursor: pointer;
       }
-      .node {
-        fill: #69b3a2;
-        stroke: #333;
-        stroke-width: 1.5px;
-      }
-      .node.active {
-        fill: #ff7f0e;
-      }
-      .node.completed {
-        fill: #2ca02c;
-      }
-      .node.pending {
-        fill: #d62728;
-      }
-      .link {
-        stroke: #999;
-        stroke-width: 1.5px;
-        stroke-opacity: 0.6;
-      }
-      .node-label {
-        font-size: 12px;
-        text-anchor: middle;
-        pointer-events: none;
-      }
     </style>
-    <script src="https://d3js.org/d3.v7.min.js"></script>
   </head>
   <body>
     <h1 style="text-align: center; padding: 10px; margin: 0">
-      Graph Visualization Example
+      Graph Visualization
     </h1>
     <div class="container">
       <div class="graph-panel" id="graph-container"></div>
@@ -107,129 +82,7 @@
       let socket;
       let graphData = { nodes: [], edges: [] };
 
-      // Initialize D3 visualization
-      const width = document.getElementById("graph-container").clientWidth;
-      const height = document.getElementById("graph-container").clientHeight;
-
-      const svg = d3
-        .select("#graph-container")
-        .append("svg")
-        .attr("width", "100%")
-        .attr("height", "100%")
-        .attr("viewBox", [0, 0, width, height]);
-
-      const g = svg.append("g");
-
-      // Zoom behavior
-      const zoom = d3
-        .zoom()
-        .scaleExtent([0.1, 4])
-        .on("zoom", (event) => {
-          g.attr("transform", event.transform);
-        });
-
-      svg.call(zoom);
-
-      // Force simulation
-      const simulation = d3
-        .forceSimulation()
-        .force(
-          "link",
-          d3
-            .forceLink()
-            .id((d) => d.id)
-            .distance(100)
-        )
-        .force("charge", d3.forceManyBody().strength(-300))
-        .force("center", d3.forceCenter(width / 2, height / 2))
-        .on("tick", ticked);
-
-      let link = g.append("g").attr("class", "links").selectAll("line");
-
-      let node = g.append("g").attr("class", "nodes").selectAll("circle");
-
-      let label = g.append("g").attr("class", "labels").selectAll("text");
-
-      function ticked() {
-        link
-          .attr("x1", (d) => d.source.x)
-          .attr("y1", (d) => d.source.y)
-          .attr("x2", (d) => d.target.x)
-          .attr("y2", (d) => d.target.y);
-
-        node.attr("cx", (d) => d.x).attr("cy", (d) => d.y);
-
-        label.attr("x", (d) => d.x).attr("y", (d) => d.y + 25);
-      }
-
-      function updateGraph(data) {
-        // Parse the data if it's a string
-        if (typeof data === "string") {
-          try {
-            data = JSON.parse(data);
-          } catch (e) {
-            console.error("Error parsing graph data:", e);
-            return;
-          }
-        }
-
-        // Update links
-        link = link.data(data.edges, (d) => d.id);
-        link.exit().remove();
-        const linkEnter = link.enter().append("line").attr("class", "link");
-        link = linkEnter.merge(link);
-
-        // Update nodes
-        node = node.data(data.nodes, (d) => d.id);
-        node.exit().remove();
-        const nodeEnter = node
-          .enter()
-          .append("circle")
-          .attr("class", (d) => `node ${d.status}`)
-          .attr("r", 15)
-          .call(
-            d3
-              .drag()
-              .on("start", dragstarted)
-              .on("drag", dragged)
-              .on("end", dragended)
-          );
-        node = nodeEnter.merge(node);
-
-        // Update labels
-        label = label.data(data.nodes, (d) => d.id);
-        label.exit().remove();
-        const labelEnter = label
-          .enter()
-          .append("text")
-          .attr("class", "node-label")
-          .text((d) => d.name);
-        label = labelEnter.merge(label);
-
-        // Update simulation
-        simulation.nodes(data.nodes);
-        simulation.force("link").links(data.edges);
-        simulation.alpha(1).restart();
-      }
-
-      function dragstarted(event, d) {
-        if (!event.active) simulation.alphaTarget(0.3).restart();
-        d.fx = d.x;
-        d.fy = d.y;
-      }
-
-      function dragged(event, d) {
-        d.fx = event.x;
-        d.fy = event.y;
-      }
-
-      function dragended(event, d) {
-        if (!event.active) simulation.alphaTarget(0);
-        d.fx = null;
-        d.fy = null;
-      }
-
-      // WebSocket connection
+      // Initialize WebSocket connection
       function connectWebSocket() {
         const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
         const wsUrl = `${protocol}//${window.location.host}/ws`;
@@ -345,15 +198,6 @@
 
       // Connect WebSocket when page loads
       window.addEventListener("load", connectWebSocket);
-
-      // Resize handler for the graph
-      window.addEventListener("resize", function () {
-        const width = document.getElementById("graph-container").clientWidth;
-        const height = document.getElementById("graph-container").clientHeight;
-        svg.attr("viewBox", [0, 0, width, height]);
-        simulation.force("center", d3.forceCenter(width / 2, height / 2));
-        simulation.alpha(0.3).restart();
-      });
     </script>
   </body>
 </html>

@@ -307,9 +307,8 @@ pub async fn initialize_visualization(
     terminal_system: &TerminalSystem,
     workflow_engine: Option<Arc<WorkflowEngine>>,
     agents: Vec<Arc<Agent>>,
-    // Comment out missing imports for now - these would be implemented based on LLM and human input systems
-    // llm_providers: Vec<Arc<dyn LlmProvider>>,
-    // human_input_provider: Option<Arc<dyn HumanInputProvider>>,
+    llm_providers: Vec<Arc<dyn std::any::Any + Send + Sync>>,
+    human_input_provider: Option<Arc<dyn std::any::Any + Send + Sync>>,
 ) -> Arc<GraphManager> {
     let graph_manager = Arc::new(GraphManager::new());
 
@@ -349,21 +348,37 @@ pub async fn initialize_visualization(
     }
 
     // Initialize LLM integration visualization if providers are available
-    // if !llm_providers.is_empty() {
-    //     let llm_provider = Arc::new(graph::providers::LlmIntegrationGraphProvider::new());
-    //
-    //     for provider in llm_providers {
-    //         llm_provider.add_llm_provider(provider).await;
-    //     }
-    //
-    //     llm_provider.setup_tracking(graph_manager.clone()).await.ok();
-    // }
+    if !llm_providers.is_empty() {
+        let llm_provider = Arc::new(graph::providers::LlmIntegrationGraphProvider::new());
+
+        for provider in llm_providers {
+            llm_provider.add_llm_provider(provider).await;
+        }
+
+        // Call setup_tracking on the Arc-wrapped provider
+        match llm_provider
+            .setup_tracking_boxed(graph_manager.clone())
+            .await
+        {
+            Ok(_) => debug!("LLM provider setup tracking successfully"),
+            Err(e) => error!("Failed to setup tracking for LLM provider: {}", e),
+        }
+    }
 
     // Initialize human input visualization if provider is available
-    // if let Some(provider) = human_input_provider {
-    //     let human_provider = Arc::new(graph::providers::HumanInputGraphProvider::new(Some(provider)));
-    //     human_provider.setup_tracking(graph_manager.clone()).await.ok();
-    // }
+    if let Some(provider) = human_input_provider {
+        let human_provider = Arc::new(graph::providers::HumanInputGraphProvider::new());
+        human_provider.set_provider(provider).await;
+
+        // Call setup_tracking on the Arc-wrapped provider
+        match human_provider
+            .setup_tracking_boxed(graph_manager.clone())
+            .await
+        {
+            Ok(_) => debug!("Human input provider setup tracking successfully"),
+            Err(e) => error!("Failed to setup tracking for human input provider: {}", e),
+        }
+    }
 
     // Register the graph manager with the web terminal
     if let Err(e) = terminal_system

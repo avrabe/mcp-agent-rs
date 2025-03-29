@@ -1,8 +1,44 @@
 //! Graph visualization module for the terminal system.
 //!
-//! This module provides functionality to visualize workflow graphs, agent relationships,
-//! LLM integration points, and human input components. It integrates with the web terminal
-//! to provide an interactive visualization that can be toggled on/off.
+//! This module provides functionality for visualizing various aspects of the system
+//! as interactive graphs. It supports multiple types of visualizations:
+//!
+//! - Workflow graphs: Shows the current state of workflows and their transitions
+//! - Agent graphs: Displays agent interactions and their current states
+//! - LLM Integration graphs: Visualizes LLM provider states and connections
+//! - Human Input graphs: Shows human input points and their states
+//!
+//! The module is built around the following components:
+//!
+//! - `GraphManager`: Central manager for all graph providers and visualizations
+//! - `GraphProvider`: Trait for implementing different types of graph visualizations
+//! - `Graph`: Core data structure for representing graph data
+//! - `GraphNode`: Represents nodes in the graph
+//! - `GraphEdge`: Represents connections between nodes
+//! - Event Handlers: Handle real-time updates and state changes
+//!
+//! # Example
+//!
+//! ```rust
+//! use crate::terminal::graph::{GraphManager, WorkflowGraphProvider, AgentGraphProvider};
+//!
+//! async fn setup_graph_visualization() -> Result<()> {
+//!     // Create the graph manager
+//!     let manager = GraphManager::new();
+//!
+//!     // Register providers
+//!     let workflow_provider = WorkflowGraphProvider::new();
+//!     let agent_provider = AgentGraphProvider::new();
+//!
+//!     manager.register_provider("workflow", workflow_provider).await?;
+//!     manager.register_provider("agent", agent_provider).await?;
+//!
+//!     // Get all graphs
+//!     let graphs = manager.get_all_graphs().await?;
+//!
+//!     Ok(())
+//! }
+//! ```
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -16,6 +52,7 @@ use crate::mcp::agent::Agent;
 use crate::workflow::engine::WorkflowEngine;
 
 pub mod api;
+pub mod events;
 pub mod models;
 pub mod providers;
 pub mod sprotty_adapter;
@@ -27,6 +64,7 @@ mod workflow;
 
 // Re-export key components from submodules
 pub use api::create_graph_router;
+pub use events::{HumanInputEventHandler, LlmProviderEventHandler};
 pub use models::{
     convert_to_sprotty_model, SprottyEdge, SprottyGraph, SprottyGraphLayout, SprottyNode,
     SprottyRoot, TaskNode,

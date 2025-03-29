@@ -78,38 +78,48 @@ terminal-full = ["terminal-web", "rustls"]
 
 # Terminal system examples
 [[example]]
-name = "dual_terminal"
-path = "examples/dual_terminal/main.rs"
-required-features = ["terminal-full"]
+name = "fan_out_fan_in_workflow"
+path = "examples/fan_out_fan_in_workflow/main.rs"
 
 [[example]]
-name = "workflow_visualizer"
-path = "examples/workflow_visualizer.rs"
+name = "retry_workflow"
+path = "examples/retry_workflow/main.rs"
 
 [[example]]
-name = "simple_workflow_runner"
-path = "examples/simple_workflow_runner.rs"
-
-[[example]]
-name = "basic_workflow"
-path = "examples/basic_workflow.rs"
+name = "event_driven_workflow"
+path = "examples/event_driven_workflow/main.rs"
 
 [[example]]
 name = "dependency_workflow"
 path = "examples/dependency_workflow.rs"
 
 [[example]]
-name = "graph_visualization"
-path = "examples/graph_visualization.rs"
-# This standalone example doesn't require terminal-web feature
+name = "state_machine_workflow"
+path = "examples/state_machine_workflow/main.rs"
 
 [[example]]
-name = "simple_graph"
-path = "examples/simple_graph.rs"
-required-features = ["terminal-web"]
-rand = "0.8.5"
-serde_yaml = "0.9.31"
-rustls = { version = "0.22.1", optional = true }
+name = "saga_workflow"
+path = "examples/saga_workflow/main.rs"
+
+[[example]]
+name = "orchestrator_workflow"
+path = "examples/orchestrator_workflow/main.rs"
+
+[[example]]
+name = "workflow_visualizer"
+path = "examples/workflow_visualizer.rs"
+
+[[example]]
+name = "visualize_workflow"
+path = "examples/visualize_workflow.rs"
+
+[[example]]
+name = "simple_workflow_runner"
+path = "examples/simple_workflow_runner.rs"
+
+[[example]]
+name = "graph_vis_example"
+path = "examples/graph_vis_example/src/main.rs"
 
 [dev-dependencies]
 criterion = { version = "0.5.1", features = ["html_reports"] }

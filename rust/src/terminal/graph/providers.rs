@@ -7,18 +7,21 @@
 //! - LLM Integration
 
 use crate::error::{Error, Result};
+use crate::llm::types::LlmClient;
+use crate::mcp::agent::Agent;
+use crate::terminal::graph::events::{HumanInputEventHandler, LlmProviderEventHandler};
 use crate::terminal::graph::{Graph, GraphEdge, GraphManager, GraphNode};
 use crate::workflow::engine::WorkflowEngine;
 use crate::workflow::state::WorkflowState;
 
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::debug;
 
-use crate::mcp::agent::Agent;
 // Comment out these imports for now - these would be implemented based on LLM and human input systems
 // use crate::llm::LlmProvider;
 // use crate::human_input::HumanInputProvider;
@@ -439,6 +442,25 @@ impl AgentGraphProvider {
 
         Ok(graph)
     }
+
+    /// Updates the graph based on the provided agents
+    pub async fn update_graph(&self, agents: &[Arc<Agent>]) -> Result<Graph> {
+        let nodes = Vec::new();
+        let edges = Vec::new();
+
+        for (i, _agent) in agents.iter().enumerate() {
+            // ... existing code ...
+        }
+
+        Ok(Graph {
+            id: "agent-graph".to_string(),
+            name: "Agent Graph".to_string(),
+            graph_type: "agent".to_string(),
+            nodes,
+            edges,
+            properties: HashMap::new(),
+        })
+    }
 }
 
 #[async_trait]
@@ -465,130 +487,34 @@ impl Clone for AgentGraphProvider {
     }
 }
 
-/// Human input graph provider
-#[derive(Debug)]
-pub struct HumanInputGraphProvider {
-    /// Graph representation
-    graph: RwLock<Option<Arc<RwLock<Graph>>>>,
-    /// Graph manager
-    graph_manager: RwLock<Option<Arc<GraphManager>>>,
-    /// Human input provider
-    human_input_provider: RwLock<Option<Arc<dyn std::any::Any + Send + Sync>>>,
-}
-
-impl Default for HumanInputGraphProvider {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl HumanInputGraphProvider {
-    /// Create a new human input graph provider
-    pub fn new() -> Self {
-        Self {
-            graph: RwLock::new(None),
-            graph_manager: RwLock::new(None),
-            human_input_provider: RwLock::new(None),
-        }
-    }
-
-    /// Create a graph from the current human input state
-    async fn create_graph_from_human_input(&self) -> Result<Graph> {
-        let mut graph = Graph {
-            id: "human_input-graph".to_string(),
-            name: "Human Input Points".to_string(),
-            graph_type: "human_input".to_string(),
-            nodes: Vec::new(),
-            edges: Vec::new(),
-            properties: HashMap::new(),
-        };
-
-        // If we have a human input provider, create a sample graph
-        // if let Some(_provider) = &self.human_input_provider {
-        // TODO: Get actual human input points when API is available
-        // For now, create a sample visualization
-
-        let app_node = GraphNode {
-            id: "app".to_string(),
-            name: "Application".to_string(),
-            node_type: "application".to_string(),
-            status: "active".to_string(),
-            properties: HashMap::new(),
-        };
-
-        let input1 = GraphNode {
-            id: "input1".to_string(),
-            name: "Text Input".to_string(),
-            node_type: "human_input".to_string(),
-            status: "waiting".to_string(),
-            properties: HashMap::new(),
-        };
-
-        let input2 = GraphNode {
-            id: "input2".to_string(),
-            name: "Confirmation".to_string(),
-            node_type: "human_input".to_string(),
-            status: "pending".to_string(),
-            properties: HashMap::new(),
-        };
-
-        graph.nodes.push(app_node);
-        graph.nodes.push(input1.clone());
-        graph.nodes.push(input2.clone());
-
-        graph.edges.push(GraphEdge {
-            id: "edge1".to_string(),
-            source: "app".to_string(),
-            target: "input1".to_string(),
-            edge_type: "request".to_string(),
-            properties: HashMap::new(),
-        });
-
-        graph.edges.push(GraphEdge {
-            id: "edge2".to_string(),
-            source: "app".to_string(),
-            target: "input2".to_string(),
-            edge_type: "request".to_string(),
-            properties: HashMap::new(),
-        });
-        // }
-
-        Ok(graph)
-    }
-}
-
-#[async_trait]
-impl AsyncGraphDataProvider for HumanInputGraphProvider {
-    async fn generate_graph(&self) -> Result<Graph> {
-        self.create_graph_from_human_input().await
-    }
-
-    async fn setup_tracking(&self, graph_manager: Arc<GraphManager>) -> Result<()> {
-        // Store graph manager reference
-        *self.graph_manager.write().await = Some(graph_manager.clone());
-        Ok(())
-    }
-}
-
-impl Clone for HumanInputGraphProvider {
-    fn clone(&self) -> Self {
-        Self {
-            graph: RwLock::new(None),
-            graph_manager: RwLock::new(None),
-            human_input_provider: RwLock::new(None),
-        }
-    }
-}
-
 /// LLM integration graph provider
 #[derive(Debug)]
 pub struct LlmIntegrationGraphProvider {
+    /// Provider name
+    name: String,
     /// Graph representation
     graph: RwLock<Option<Arc<RwLock<Graph>>>>,
     /// Graph manager
     graph_manager: RwLock<Option<Arc<GraphManager>>>,
     /// LLM providers
     llm_providers: RwLock<Vec<Arc<dyn std::any::Any + Send + Sync>>>,
+    /// Provider states
+    provider_states: RwLock<HashMap<String, ProviderState>>,
+}
+
+/// Represents the state of an LLM provider
+#[derive(Debug, Clone)]
+pub struct ProviderState {
+    /// The model name used by the provider
+    pub model: String,
+    /// The timestamp of the last request made to the provider
+    pub last_request: Option<DateTime<Utc>>,
+    /// The number of errors encountered with this provider
+    pub error_count: u32,
+    /// The number of successful requests made to this provider
+    pub success_count: u32,
+    /// The current status of the provider
+    pub status: String,
 }
 
 impl Default for LlmIntegrationGraphProvider {
@@ -601,9 +527,11 @@ impl LlmIntegrationGraphProvider {
     /// Create a new LLM integration graph provider
     pub fn new() -> Self {
         Self {
+            name: "LLM Integration Provider".to_string(),
             graph: RwLock::new(None),
             graph_manager: RwLock::new(None),
             llm_providers: RwLock::new(Vec::new()),
+            provider_states: RwLock::new(HashMap::new()),
         }
     }
 
@@ -616,6 +544,8 @@ impl LlmIntegrationGraphProvider {
     /// Create a graph from the current LLM integration state
     async fn create_graph_from_llm_integration(&self) -> Result<Graph> {
         let providers = self.llm_providers.read().await;
+        let states = self.provider_states.read().await;
+
         let mut graph = Graph {
             id: "llm_integration-graph".to_string(),
             name: "LLM Integration".to_string(),
@@ -625,6 +555,7 @@ impl LlmIntegrationGraphProvider {
             properties: HashMap::new(),
         };
 
+        // Add central application node
         let app_node = GraphNode {
             id: "app".to_string(),
             name: "Application".to_string(),
@@ -636,36 +567,107 @@ impl LlmIntegrationGraphProvider {
         graph.nodes.push(app_node);
 
         // Add nodes for each LLM provider
-        let mut provider_idx = 1;
-        for _provider in providers.iter() {
-            // TODO: Get actual provider info
-            // For now, create a sample visualization
+        for (i, provider) in providers.iter().enumerate() {
+            let provider_id = format!("provider{}", i);
+            let provider_name = format!("LLM Provider {}", i);
 
-            let provider_id = format!("provider{}", provider_idx);
-            let provider_name = format!("LLM Provider {}", provider_idx);
+            // Get provider state if available
+            let state = states
+                .get(&provider_id)
+                .cloned()
+                .unwrap_or_else(|| ProviderState {
+                    status: "unknown".to_string(),
+                    model: "unknown".to_string(),
+                    last_request: None,
+                    error_count: 0,
+                    success_count: 0,
+                });
+
+            let mut properties = HashMap::new();
+            properties.insert(
+                "model".to_string(),
+                serde_json::to_value(state.model).unwrap_or_default(),
+            );
+            properties.insert(
+                "last_request".to_string(),
+                serde_json::to_value(state.last_request.map(|dt| dt.to_rfc3339()))
+                    .unwrap_or_default(),
+            );
+            properties.insert(
+                "error_count".to_string(),
+                serde_json::to_value(state.error_count).unwrap_or_default(),
+            );
+            properties.insert(
+                "success_count".to_string(),
+                serde_json::to_value(state.success_count).unwrap_or_default(),
+            );
 
             let node = GraphNode {
                 id: provider_id.clone(),
                 name: provider_name,
                 node_type: "llm_provider".to_string(),
-                status: "active".to_string(),
-                properties: HashMap::new(),
+                status: state.status,
+                properties,
             };
 
             graph.nodes.push(node);
 
+            // Add edge from app to provider
             graph.edges.push(GraphEdge {
-                id: format!("edge{}", provider_idx),
+                id: format!("edge{}", i),
                 source: "app".to_string(),
                 target: provider_id,
                 edge_type: "request".to_string(),
                 properties: HashMap::new(),
             });
-
-            provider_idx += 1;
         }
 
         Ok(graph)
+    }
+
+    /// Create an event handler for this provider
+    pub async fn create_event_handler(&self, provider_id: &str) -> Arc<LlmProviderEventHandler> {
+        if let Some(manager) = self.graph_manager.read().await.as_ref() {
+            Arc::new(LlmProviderEventHandler::new(
+                manager.clone(),
+                provider_id.to_string(),
+            ))
+        } else {
+            panic!("Graph manager not initialized");
+        }
+    }
+
+    /// Update provider state and notify through event handler
+    pub async fn update_provider_state(
+        &self,
+        provider_id: &str,
+        state: ProviderState,
+    ) -> Result<()> {
+        let mut states = self.provider_states.write().await;
+        states.insert(provider_id.to_string(), state.clone());
+
+        // Create and use event handler to notify about the change
+        let handler = self.create_event_handler(provider_id).await;
+        handler.handle_state_change(state).await
+    }
+
+    /// Updates the graph based on the provided LLM providers
+    pub async fn update_graph(&self, providers: &[Arc<dyn LlmClient>]) -> Result<Graph> {
+        let nodes = Vec::new();
+        let edges = Vec::new();
+
+        for (i, _provider) in providers.iter().enumerate() {
+            // ... existing code ...
+        }
+
+        Ok(Graph {
+            id: "llm-graph".to_string(),
+            name: "LLM Integration Graph".to_string(),
+            graph_type: "llm".to_string(),
+            nodes,
+            edges,
+            properties: HashMap::new(),
+        })
     }
 }
 
@@ -676,7 +678,6 @@ impl AsyncGraphDataProvider for LlmIntegrationGraphProvider {
     }
 
     async fn setup_tracking(&self, graph_manager: Arc<GraphManager>) -> Result<()> {
-        // Store graph manager reference
         *self.graph_manager.write().await = Some(graph_manager.clone());
         Ok(())
     }
@@ -685,9 +686,181 @@ impl AsyncGraphDataProvider for LlmIntegrationGraphProvider {
 impl Clone for LlmIntegrationGraphProvider {
     fn clone(&self) -> Self {
         Self {
+            name: self.name.clone(),
             graph: RwLock::new(None),
             graph_manager: RwLock::new(None),
             llm_providers: RwLock::new(Vec::new()),
+            provider_states: RwLock::new(HashMap::new()),
+        }
+    }
+}
+
+/// Human input graph provider
+#[derive(Debug)]
+pub struct HumanInputGraphProvider {
+    /// Provider name
+    name: String,
+    /// Graph representation
+    graph: RwLock<Option<Arc<RwLock<Graph>>>>,
+    /// Graph manager
+    graph_manager: RwLock<Option<Arc<GraphManager>>>,
+    /// Human input provider
+    human_input_provider: RwLock<Option<Arc<dyn std::any::Any + Send + Sync>>>,
+    /// Input states
+    input_states: RwLock<HashMap<String, InputState>>,
+}
+
+/// Represents the state of a human input
+#[derive(Debug, Clone)]
+pub struct InputState {
+    /// The timeout for this input, if any
+    pub timeout: Option<DateTime<Utc>>,
+    /// Whether this input is required
+    pub required: bool,
+    /// The timestamp of the last input received
+    pub last_input: Option<DateTime<Utc>>,
+    /// A description of what input is needed
+    pub description: Option<String>,
+    /// The current status of the input
+    pub status: String,
+}
+
+impl Default for HumanInputGraphProvider {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl HumanInputGraphProvider {
+    /// Create a new human input graph provider
+    pub fn new() -> Self {
+        Self {
+            name: "Human Input Provider".to_string(),
+            graph: RwLock::new(None),
+            graph_manager: RwLock::new(None),
+            human_input_provider: RwLock::new(None),
+            input_states: RwLock::new(HashMap::new()),
+        }
+    }
+
+    /// Set the human input provider
+    pub async fn set_provider(&self, provider: Arc<dyn std::any::Any + Send + Sync>) {
+        *self.human_input_provider.write().await = Some(provider);
+    }
+
+    /// Create a graph from the current human input state
+    async fn create_graph_from_human_input(&self) -> Result<Graph> {
+        let states = self.input_states.read().await;
+
+        let mut graph = Graph {
+            id: "human_input-graph".to_string(),
+            name: "Human Input Points".to_string(),
+            graph_type: "human_input".to_string(),
+            nodes: Vec::new(),
+            edges: Vec::new(),
+            properties: HashMap::new(),
+        };
+
+        // Add central application node
+        let app_node = GraphNode {
+            id: "app".to_string(),
+            name: "Application".to_string(),
+            node_type: "application".to_string(),
+            status: "active".to_string(),
+            properties: HashMap::new(),
+        };
+
+        graph.nodes.push(app_node);
+
+        // Add nodes for each input point
+        for (input_id, state) in states.iter() {
+            let mut properties = HashMap::new();
+            properties.insert(
+                "timeout".to_string(),
+                serde_json::to_value(state.timeout).unwrap_or_default(),
+            );
+            properties.insert(
+                "required".to_string(),
+                serde_json::to_value(state.required).unwrap_or_default(),
+            );
+            properties.insert(
+                "last_input".to_string(),
+                serde_json::to_value(state.last_input.map(|dt| dt.to_rfc3339()))
+                    .unwrap_or_default(),
+            );
+            if let Some(desc) = &state.description {
+                properties.insert(
+                    "description".to_string(),
+                    serde_json::to_value(desc).unwrap_or_default(),
+                );
+            }
+
+            let node = GraphNode {
+                id: input_id.clone(),
+                name: format!("Input: {}", input_id),
+                node_type: "human_input".to_string(),
+                status: state.status.clone(),
+                properties,
+            };
+
+            graph.nodes.push(node);
+
+            // Add edge from app to input point
+            graph.edges.push(GraphEdge {
+                id: format!("edge-{}", input_id),
+                source: "app".to_string(),
+                target: input_id.clone(),
+                edge_type: "request".to_string(),
+                properties: HashMap::new(),
+            });
+        }
+
+        Ok(graph)
+    }
+
+    /// Create an event handler for this input point
+    pub async fn create_event_handler(&self, input_id: &str) -> Arc<HumanInputEventHandler> {
+        if let Some(manager) = self.graph_manager.read().await.as_ref() {
+            Arc::new(HumanInputEventHandler::new(
+                manager.clone(),
+                input_id.to_string(),
+            ))
+        } else {
+            panic!("Graph manager not initialized");
+        }
+    }
+
+    /// Update input state and notify through event handler
+    pub async fn update_input_state(&self, input_id: &str, state: InputState) -> Result<()> {
+        let mut states = self.input_states.write().await;
+        states.insert(input_id.to_string(), state.clone());
+
+        // Create and use event handler to notify about the change
+        let handler = self.create_event_handler(input_id).await;
+        handler.handle_state_change(state).await
+    }
+}
+
+#[async_trait]
+impl AsyncGraphDataProvider for HumanInputGraphProvider {
+    async fn generate_graph(&self) -> Result<Graph> {
+        self.create_graph_from_human_input().await
+    }
+
+    async fn setup_tracking(&self, graph_manager: Arc<GraphManager>) -> Result<()> {
+        *self.graph_manager.write().await = Some(graph_manager.clone());
+        Ok(())
+    }
+}
+
+impl Clone for HumanInputGraphProvider {
+    fn clone(&self) -> Self {
+        Self {
+            name: self.name.clone(),
+            graph: RwLock::new(None),
+            graph_manager: RwLock::new(None),
+            human_input_provider: RwLock::new(None),
+            input_states: RwLock::new(HashMap::new()),
         }
     }
 }
@@ -709,6 +882,7 @@ async fn register_graph_with_manager(graph_manager: Arc<GraphManager>, graph: Gr
 mod tests {
     use super::*;
     use crate::workflow::signal::NullSignalHandler;
+    use chrono::Utc;
 
     #[tokio::test]
     async fn test_create_workflow_graph() {
@@ -737,5 +911,108 @@ mod tests {
         let provider = LlmIntegrationGraphProvider::new();
         let graph = provider.generate_graph().await.unwrap();
         assert_eq!(graph.graph_type, "llm_integration");
+    }
+
+    #[tokio::test]
+    async fn test_llm_provider_state_updates() {
+        let provider = LlmIntegrationGraphProvider::new();
+        let graph_manager = Arc::new(GraphManager::new());
+        provider
+            .setup_tracking(graph_manager.clone())
+            .await
+            .unwrap();
+
+        let provider_id = "test-provider";
+        let state = ProviderState {
+            status: "active".to_string(),
+            model: "test-model".to_string(),
+            last_request: Some(Utc::now()),
+            error_count: 0,
+            success_count: 1,
+        };
+
+        assert!(provider
+            .update_provider_state(provider_id, state)
+            .await
+            .is_ok());
+
+        // Verify the state was updated
+        let states = provider.provider_states.read().await;
+        assert!(states.contains_key(provider_id));
+        assert_eq!(states.get(provider_id).unwrap().status, "active");
+    }
+
+    #[tokio::test]
+    async fn test_human_input_state_updates() {
+        let provider = HumanInputGraphProvider::new();
+        let graph_manager = Arc::new(GraphManager::new());
+        provider
+            .setup_tracking(graph_manager.clone())
+            .await
+            .unwrap();
+
+        let input_id = "test-input";
+        let state = InputState {
+            status: "waiting".to_string(),
+            last_input: Some(Utc::now()),
+            timeout: Some(Utc::now() + chrono::Duration::seconds(30)),
+            description: Some("Test input".to_string()),
+            required: true,
+        };
+
+        assert!(provider.update_input_state(input_id, state).await.is_ok());
+
+        // Verify the state was updated
+        let states = provider.input_states.read().await;
+        assert!(states.contains_key(input_id));
+        assert_eq!(states.get(input_id).unwrap().status, "waiting");
+    }
+
+    #[tokio::test]
+    async fn test_provider_event_handlers() {
+        let provider = LlmIntegrationGraphProvider::new();
+        let graph_manager = Arc::new(GraphManager::new());
+        provider
+            .setup_tracking(graph_manager.clone())
+            .await
+            .unwrap();
+
+        let provider_id = "test-provider";
+        let handler = provider.create_event_handler(provider_id).await;
+
+        let state = ProviderState {
+            status: "active".to_string(),
+            model: "test-model".to_string(),
+            last_request: Some(Utc::now()),
+            error_count: 0,
+            success_count: 1,
+        };
+
+        assert!(handler.handle_state_change(state).await.is_ok());
+        assert!(handler.handle_error("test error").await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_human_input_event_handlers() {
+        let provider = HumanInputGraphProvider::new();
+        let graph_manager = Arc::new(GraphManager::new());
+        provider
+            .setup_tracking(graph_manager.clone())
+            .await
+            .unwrap();
+
+        let input_id = "test-input";
+        let handler = provider.create_event_handler(input_id).await;
+
+        let state = InputState {
+            status: "waiting".to_string(),
+            last_input: Some(Utc::now()),
+            timeout: Some(Utc::now() + chrono::Duration::seconds(30)),
+            description: Some("Test input".to_string()),
+            required: true,
+        };
+
+        assert!(handler.handle_state_change(state).await.is_ok());
+        assert!(handler.handle_timeout().await.is_ok());
     }
 }

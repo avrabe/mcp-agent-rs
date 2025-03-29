@@ -33,12 +33,12 @@ use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
 use tracing::{debug, error, warn};
 use uuid;
 
-use super::config::{AuthConfig, AuthMethod, WebTerminalConfig};
-use super::graph;
-use super::graph::Graph;
-use super::AsyncTerminal;
 use crate::error::{Error, Result};
-use crate::SignalHandler;
+use crate::terminal::config::{AuthConfig, AuthMethod, WebTerminalConfig};
+use crate::terminal::graph;
+use crate::terminal::graph::Graph;
+use crate::terminal::{AsyncTerminal, Terminal};
+use crate::workflow::signal::SignalHandler;
 
 // Use conditional compilation for axum_server imports (requires transport-ws feature)
 
@@ -1233,6 +1233,55 @@ impl WebTerminal {
         }
 
         Ok(())
+    }
+
+    // Implementation of basic Terminal interface sync methods
+    fn write(&mut self, s: &str) -> Result<()> {
+        // Convert to async using tokio::spawn and return a result
+        let message = s.to_string();
+        let broadcast_tx = self.broadcast_tx.clone();
+
+        tokio::spawn(async move {
+            if let Err(e) = broadcast_tx.send(message) {
+                error!("Failed to broadcast message: {}", e);
+            }
+        });
+
+        Ok(())
+    }
+
+    fn write_line(&mut self, s: &str) -> Result<()> {
+        // Add a newline and write
+        let message = format!("{}\n", s);
+        self.write(&message)
+    }
+
+    fn read_line(&mut self) -> Result<String> {
+        // This is a synchronous method but our interaction is async
+        // For now, return a placeholder and warn that this is not fully implemented
+        warn!("read_line called synchronously on WebTerminal, returning empty string");
+        Ok(String::new())
+    }
+
+    fn flush(&mut self) -> Result<()> {
+        // WebSocket-based output doesn't need flushing, so this is a no-op
+        Ok(())
+    }
+
+    fn read_password(&mut self, prompt: &str) -> Result<String> {
+        // Similar to read_line, this isn't really supported in a synchronous way
+        warn!("read_password called synchronously on WebTerminal with prompt '{}', returning empty string", prompt);
+        Ok(String::new())
+    }
+
+    fn read_secret(&mut self, prompt: &str) -> Result<String> {
+        // Similar to read_password
+        warn!("read_secret called synchronously on WebTerminal with prompt '{}', returning empty string", prompt);
+        Ok(String::new())
+    }
+
+    fn as_terminal(&self) -> &dyn Terminal {
+        self
     }
 }
 

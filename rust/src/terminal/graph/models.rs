@@ -196,6 +196,18 @@ pub enum SprottyStatus {
     Completed,
     /// Node has failed
     Failed,
+    /// Node is active (synonym for Running)
+    Active,
+    /// Node is paused
+    Paused,
+    /// Node is pending (similar to waiting)
+    Pending,
+    /// Node has an error (similar to failed)
+    Error,
+    /// Node is cancelled
+    Cancelled,
+    /// Node is skipped
+    Skipped,
 }
 
 impl ToString for SprottyStatus {
@@ -206,18 +218,30 @@ impl ToString for SprottyStatus {
             SprottyStatus::Running => "running".to_string(),
             SprottyStatus::Completed => "completed".to_string(),
             SprottyStatus::Failed => "failed".to_string(),
+            SprottyStatus::Active => "active".to_string(),
+            SprottyStatus::Paused => "paused".to_string(),
+            SprottyStatus::Pending => "pending".to_string(),
+            SprottyStatus::Error => "error".to_string(),
+            SprottyStatus::Cancelled => "cancelled".to_string(),
+            SprottyStatus::Skipped => "skipped".to_string(),
         }
     }
 }
 
 impl From<String> for SprottyStatus {
     fn from(s: String) -> Self {
-        match s.as_str() {
+        match s.to_lowercase().as_str() {
             "idle" => Self::Idle,
             "waiting" => Self::Waiting,
-            "running" => Self::Running,
-            "completed" => Self::Completed,
-            "failed" => Self::Failed,
+            "running" | "in_progress" | "processing" => Self::Running,
+            "completed" | "done" | "finished" | "success" => Self::Completed,
+            "failed" | "error" | "failure" => Self::Failed,
+            "active" => Self::Active,
+            "paused" => Self::Paused,
+            "pending" => Self::Pending,
+            "error" | "exception" => Self::Error,
+            "cancelled" | "canceled" | "aborted" => Self::Cancelled,
+            "skipped" | "ignored" => Self::Skipped,
             _ => Self::Idle, // Default to idle for unknown status
         }
     }
@@ -225,12 +249,18 @@ impl From<String> for SprottyStatus {
 
 impl From<&str> for SprottyStatus {
     fn from(s: &str) -> Self {
-        match s {
+        match s.to_lowercase().as_str() {
             "idle" => Self::Idle,
             "waiting" => Self::Waiting,
-            "running" => Self::Running,
-            "completed" => Self::Completed,
-            "failed" => Self::Failed,
+            "running" | "in_progress" | "processing" => Self::Running,
+            "completed" | "done" | "finished" | "success" => Self::Completed,
+            "failed" | "failure" => Self::Failed,
+            "active" => Self::Active,
+            "paused" => Self::Paused,
+            "pending" => Self::Pending,
+            "error" | "exception" => Self::Error,
+            "cancelled" | "canceled" | "aborted" => Self::Cancelled,
+            "skipped" | "ignored" => Self::Skipped,
             _ => Self::Idle, // Default to idle for unknown status
         }
     }
@@ -356,28 +386,28 @@ impl SprottyGraph {
 
     /// Get all nodes in the graph
     pub fn get_all_nodes(&self) -> Vec<&SprottyNode> {
-        let mut nodes = Vec::new();
+        let mut result = Vec::new();
 
         for child in &self.root.children {
             if let SprottyElement::Node(node) = child {
-                nodes.push(node);
+                result.push(node);
             }
         }
 
-        nodes
+        result
     }
 
     /// Get all edges in the graph
     pub fn get_all_edges(&self) -> Vec<&SprottyEdge> {
-        let mut edges = Vec::new();
+        let mut result = Vec::new();
 
         for child in &self.root.children {
             if let SprottyElement::Edge(edge) = child {
-                edges.push(edge);
+                result.push(edge);
             }
         }
 
-        edges
+        result
     }
 }
 

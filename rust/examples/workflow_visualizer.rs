@@ -253,8 +253,14 @@ async fn main() -> Result<()> {
         let workflow = orchestrator::OrchestratorWorkflow::new(engine, llm_client, input_data);
 
         // Initialize visualization
-        let _graph_manager =
-            initialize_visualization(&terminal_system, Some(engine_arc), vec![]).await;
+        let _graph_manager = initialize_visualization(
+            &terminal_system,
+            Some(engine_arc.clone()),
+            vec![],
+            Vec::<Arc<dyn std::any::Any + Send + Sync>>::new(),
+            None::<Arc<dyn std::any::Any + Send + Sync>>,
+        )
+        .await;
 
         // Print instructions
         println!("\n{}", "Workflow Visualization Demo".bold().green());

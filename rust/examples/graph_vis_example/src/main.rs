@@ -144,7 +144,8 @@ async fn handle_socket(socket: WebSocket, state: Arc<GraphState>) {
 
 // Handler for the index page
 async fn index_handler() -> Html<String> {
-    Html(r#"<!DOCTYPE html>
+    Html(
+        r#"<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -486,7 +487,9 @@ async fn index_handler() -> Html<String> {
         });
     </script>
 </body>
-</html>"#.to_string())
+</html>"#
+            .to_string(),
+    )
 }
 
 #[tokio::main]
@@ -503,7 +506,7 @@ async fn main() {
     // Run server
     let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
     println!("Listening on http://{}", addr);
-    
+
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
     axum::serve(listener, app).await.unwrap();
 }
